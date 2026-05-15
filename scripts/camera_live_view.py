@@ -127,12 +127,13 @@ class Source:
         self.device.StreamDisable()
 
     def grab(self):
-        """Grab one frame. Returns (raw_array, block_id) or (None, None)."""
+        """Grab latest frame. Returns (img_bgr, block_id) or (None, None)."""
         result, buffer, op_result = self.pipeline.RetrieveNextBuffer(TIMEOUT_MS)
         if result.IsFailure() or not op_result.IsOK():
             return None, None
 
-        raw      = buffer.GetImage().GetDataPointer().copy()
+        image    = buffer.GetImage()
+        raw      = image.GetDataPointer().copy()
         block_id = buffer.GetBlockID()
         self.pipeline.ReleaseBuffer(buffer)
         return raw, block_id
@@ -222,11 +223,6 @@ snapshot_n    = 0
 fps_times     = []
 last_frames   = [None, None, None]   # keep last good frame per source
 
-# Stable NIR normalization — exponential moving average of max value
-# Prevents per-frame gain jumps that cause flickering
-_nir_max      = [64.0, 64.0]   # one per NIR source (ch1, ch2)
-_EMA_ALPHA    = 0.05            # low alpha = slow update = stable brightness
-
 try:
     while True:
         t0 = time.perf_counter()
@@ -253,17 +249,9 @@ try:
             if src.pixel_format == "BayerRG8":
                 img_bgr = cv2.cvtColor(raw, cv2.COLOR_BayerBG2BGR)
             else:
-                # NIR: use slowly-updating EMA max to avoid per-frame flicker
-                nir_idx = i - 1   # Source1→0, Source2→1
+                # NIR: normalize for display if enabled
                 if normalize_nir:
-                    cur_max = float(raw.max()) if raw.max() > 0 else 1.0
-                    _nir_max[nir_idx] = (
-                        (1 - _EMA_ALPHA) * _nir_max[nir_idx]
-                        + _EMA_ALPHA * cur_max
-                    )
-                    scale = 255.0 / max(_nir_max[nir_idx], 1.0)
-                    stretched = np.clip(raw.astype(np.float32) * scale,
-                                        0, 255).astype(np.uint8)
+                    stretched = cv2.normalize(raw, None, 0, 255, cv2.NORM_MINMAX)
                 else:
                     stretched = raw
                 img_bgr = cv2.cvtColor(stretched, cv2.COLOR_GRAY2BGR)
@@ -283,9 +271,9 @@ try:
 
             panels.append(panel)
 
-        # Sync indicator — all blockIDs must match exactly
-        synced = (None not in block_ids and
-                  len(set(block_ids)) == 1)
+        # Sync indicator — show if all blockIDs match
+        synced = (len(set(b for b in block_ids if b is not None)) == 1
+                  and None not in block_ids)
 
         # Compose side-by-side display
         display = np.hstack(panels)
