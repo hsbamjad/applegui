@@ -160,65 +160,96 @@ for pvbuf in buffer_list:
     stream.QueueBuffer(pvbuf)
 print(f"  Allocated and queued {buffer_count} buffers")
 
-# ── 7. Acquire ────────────────────────────────────────────────────────────────
-print("\n── acquire_images ────────────────────────────────────────────────────")
-device.StreamEnable()
-start_cmd.Execute()
-print(f"  AcquisitionStart sent — waiting up to {TIMEOUT_MS}ms for buffer…")
+# ── 7. Enumerate sources & acquire one buffer per source ─────────────────────
+print("\n── acquire_images (all sources) ──────────────────────────────────────")
 
-import time
-time.sleep(0.5)
+# Find which SourceSelector values exist
+source_param = nm.Get("SourceSelector")
+source_names = []
+if source_param is not None:
+    try:
+        entries = source_param.GetEntries()
+        source_names = [e.GetName() for e in entries]
+    except Exception:
+        pass
 
-result, pvbuffer, op_result = stream.RetrieveBuffer(TIMEOUT_MS)
+if not source_names:
+    source_names = ["Source0", "Source1", "Source2"]   # fallback
 
-w_buf, h_buf = 0, 0
+print(f"  Sources found: {source_names}")
 
-if result.IsOK():
-    if op_result.IsOK():
+source_results = []
+
+for ch_idx, src_name in enumerate(source_names):
+    print(f"\n  ── {src_name} (CH{ch_idx+1}) ──────────────────────────────────────")
+
+    # Switch source selector
+    try:
+        r, _ = source_param.SetValue(src_name)
+        if not r.IsOK():
+            print(f"  ⚠️  SetValue({src_name}) failed: {r.GetCodeString()}")
+    except Exception as e:
+        print(f"  ⚠️  SetValue error: {e}")
+
+    pf   = get_p(nm, "PixelFormat")
+    w    = get_p(nm, "Width")
+    h    = get_p(nm, "Height")
+    exp  = get_p(nm, "ExposureTime")
+    gain = get_p(nm, "Gain")
+    print(f"  PixelFormat={pf}  {w}×{h}  Exp={exp}µs  Gain={gain}")
+
+    # Allocate a fresh buffer for this source
+    p_size = device.GetPayloadSize()
+    pvbuf  = eb.PvBuffer()
+    pvbuf.Alloc(p_size)
+    stream.QueueBuffer(pvbuf)
+
+    # Start / stop acquisition for this source
+    device.StreamEnable()
+    start_cmd.Execute()
+    time.sleep(0.3)
+
+    result, pvbuffer, op_result = stream.RetrieveBuffer(3000)
+
+    w_src, h_src = 0, 0
+
+    if result.IsOK() and op_result.IsOK():
         pt = pvbuffer.GetPayloadType()
-        print(f"  ✅  Buffer received — PayloadType = {pt}")
-
         if pt == eb.PvPayloadTypeImage:
             image     = pvbuffer.GetImage()
-            w_buf     = image.GetWidth()
-            h_buf     = image.GetHeight()
-            pix_type  = image.GetPixelType()
-            img_data  = image.GetDataPointer()   # numpy array (uint8)
-            print(f"  Single image: {w_buf}×{h_buf}  PixelType={pix_type}")
-            cv2.imwrite(str(OUT_DIR / "ch1.png"), img_data)
-            print(f"  ch1.png saved  shape={img_data.shape}  "
+            w_src     = image.GetWidth()
+            h_src     = image.GetHeight()
+            img_data  = image.GetDataPointer()   # numpy array
+            fname     = OUT_DIR / f"ch{ch_idx+1}.png"
+            cv2.imwrite(str(fname), img_data)
+            print(f"  ✅  {fname.name}  {w_src}×{h_src}  "
                   f"min={img_data.min()} max={img_data.max()} mean={img_data.mean():.1f}")
-
-        elif pt == eb.PvPayloadTypeMultiPart:
-            container = pvbuffer.GetMultiPartContainer()
-            n_parts   = container.GetPartCount()
-            print(f"  MultiPart: {n_parts} parts (3-sensor JAI)")
-            for i in range(n_parts):
-                part    = container.GetPart(i)
-                img2    = part.GetImage()
-                w2, h2  = img2.GetWidth(), img2.GetHeight()
-                pix2    = img2.GetPixelType()
-                data2   = img2.GetDataPointer()
-                if i == 0:
-                    w_buf, h_buf = w2, h2
-                fname = OUT_DIR / f"ch{i+1}.png"
-                cv2.imwrite(str(fname), data2)
-                print(f"  CH{i+1}: {w2}×{h2}  fmt={pix2}  "
-                      f"min={data2.min()} max={data2.max()} mean={data2.mean():.1f}")
-
         else:
-            print(f"  Payload type {pt} not handled by this probe")
-
+            print(f"  PayloadType={pt} (unexpected for single source)")
+        stream.QueueBuffer(pvbuffer)
     else:
-        print(f"  ⚠️  Buffer retrieved but op_result: {op_result.GetCodeString()}")
+        if result.IsOK():
+            print(f"  ⚠️  op_result: {op_result.GetCodeString()}")
+            stream.QueueBuffer(pvbuffer)
+        else:
+            print(f"  ❌  {result.GetCodeString()}")
 
-    stream.QueueBuffer(pvbuffer)   # re-queue
-else:
-    print(f"  ❌  RetrieveBuffer failed: {result.GetCodeString()}")
-    print("  Possible causes:")
-    print("    - NegotiatePacketSize / SetStreamDestination not applied")
-    print("    - Firewall blocking UDP (disable Windows Firewall temporarily)")
-    print("    - Wrong NIC / subnet  (camera IP: 169.254.133.151)")
+    stop_cmd.Execute()
+    device.StreamDisable()
+
+    source_results.append({
+        "source":       src_name,
+        "pixel_format": pf,
+        "width":        w_src or int(w),
+        "height":       h_src or int(h),
+        "exposure_us":  exp,
+        "gain":         gain,
+    })
+
+# Re-queue any remaining buffers and drain
+stream.AbortQueuedBuffers()
+while stream.GetQueuedBufferCount() > 0:
+    r, pvb, _ = stream.RetrieveBuffer()
 
 # ── 8. Stop and clean up ──────────────────────────────────────────────────────
 print("\n── Cleanup ───────────────────────────────────────────────────────────")
@@ -236,23 +267,22 @@ eb.PvDevice.Free(device)
 print("  ✅  Disconnected cleanly")
 
 # ── 9. Config summary ─────────────────────────────────────────────────────────
-if w_buf:
-    params["Width"]  = str(w_buf)
-    params["Height"] = str(h_buf)
-
 print(f"""
 {'═'*62}
   PASTE INTO config.yaml → camera.jai
 {'═'*62}
-  ip:           "{dev_info_cached.GetIPAddress()}"
-  mac:          "{dev_info_cached.GetMACAddress()}"
-  serial:       "{dev_info_cached.GetSerialNumber()}"
-  resolution:   [{params.get('Width','?')}, {params.get('Height','?')}]
-  pixel_format: "{params.get('PixelFormat','?')}"
-  fps:          {params.get('AcquisitionFrameRate', params.get('ResultingFrameRate','?'))}
-  exposure_us:  {params.get('ExposureTime','?')}
-  gain:         {params.get('Gain','?')}
-{'═'*62}
+  ip:     "{dev_info_cached.GetIPAddress()}"
+  mac:    "{dev_info_cached.GetMACAddress()}"
+  serial: "{dev_info_cached.GetSerialNumber()}"
+  fps:    {params.get('AcquisitionFrameRate','?')}
+  sources:""")
+for sr in source_results:
+    print(f"    {sr['source']}:")
+    print(f"      pixel_format: \"{sr['pixel_format']}\"")
+    print(f"      resolution:   [{sr['width']}, {sr['height']}]")
+    print(f"      exposure_us:  {sr['exposure_us']}")
+    print(f"      gain:         {sr['gain']}")
+print(f"""{'═'*62}
   PNGs → {OUT_DIR.resolve()}
 {'═'*62}
 """)
