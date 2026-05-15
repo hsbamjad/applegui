@@ -25,11 +25,11 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 # Import name derived from wheel package name (underscored)
 
 CANDIDATES = [
-    "ebus_python",      # ← most likely: matches wheel package name exactly
-    "eBUSPython",       # alternate capitalisation
+    "eBUS",          # ← correct name: eBUS.py inside site-packages
+    "ebus_python",   # fallback
+    "eBUSPython",
     "PyeBUSSDK",
     "jai",
-    "jai_sdk",
 ]
 
 eb = None
