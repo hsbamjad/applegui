@@ -85,10 +85,20 @@ def try_pvsystem():
     return sys_obj, n_iface
 
 def try_connect_and_probe(sys_obj):
-    """Connect to first camera and read all parameters."""
+    """Connect to first camera found across all interfaces."""
     try:
-        iface    = sys_obj.GetInterface(0)
-        dev_info = iface.GetDeviceInfo(0)
+        # Find which interface actually has our camera
+        dev_info = None
+        for i in range(sys_obj.GetInterfaceCount()):
+            iface = sys_obj.GetInterface(i)
+            if iface.GetDeviceCount() > 0:
+                dev_info = iface.GetDeviceInfo(0)
+                print(f"\n  Camera on interface [{i}]: {dev_info.GetDisplayID()}")
+                break
+
+        if dev_info is None:
+            print("  ❌  No camera found on any interface")
+            return
 
         print("\n── Connecting ────────────────────────────────────────────────────")
 
