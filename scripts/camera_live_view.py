@@ -130,8 +130,6 @@ class Source:
         """Grab latest frame. Returns (img_bgr, block_id) or (None, None)."""
         result, buffer, op_result = self.pipeline.RetrieveNextBuffer(TIMEOUT_MS)
         if result.IsFailure() or not op_result.IsOK():
-            if self.pipeline.GetQueuedBufferCount() < self.BUFFER_COUNT // 2:
-                pass   # pipeline draining — normal under load
             return None, None
 
         image    = buffer.GetImage()
