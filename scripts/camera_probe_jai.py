@@ -277,10 +277,17 @@ for ch_idx, src in enumerate(sources):
     if pf == "BayerRG8":
         img_save = cv2.cvtColor(img_data, cv2.COLOR_BayerBG2BGR)
     else:
-        img_save = img_data   # Mono8 NIR
+        img_save = img_data   # Mono8 NIR — raw, unchanged
 
+    # Raw save (correct pixel values for processing)
     cv2.imwrite(str(fname), img_save)
-    print(f"  ✅  {fname.name}  saved")
+
+    # Normalized save (for visual inspection — stretches dark images to full range)
+    norm_fname = OUT_DIR / f"ch{ch_idx+1}_norm.png"
+    img_norm = cv2.normalize(img_save, None, 0, 255, cv2.NORM_MINMAX)
+    cv2.imwrite(str(norm_fname), img_norm)
+    print(f"  ✅  {fname.name}  (raw)    min={img_data.min()} max={img_data.max()} mean={img_data.mean():.1f}")
+    print(f"       {norm_fname.name}  (display-normalized)")
 
     source_results.append({
         "source":       src.source_name,
