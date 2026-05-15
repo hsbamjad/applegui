@@ -240,7 +240,26 @@ print("\n── Start Acquisition (all sources) ──────────�
 for src in sources:
     src.start_acquisition()
 print(f"  ✅  AcquisitionStart sent to all {len(sources)} sources")
-time.sleep(0.5)    # allow first frames to arrive
+
+# Allow sensors to reach steady-state exposure before retrieving
+# (simultaneous cold-start: first frames may be dark as sensors stabilize)
+WARMUP_S     = 2.0    # seconds to warm up
+DRAIN_FRAMES = 30     # discard this many initial frames per source
+
+print(f"  Warming up ({WARMUP_S}s) …", end="", flush=True)
+time.sleep(WARMUP_S)
+print(" done")
+
+# Drain stale/early frames from each pipeline
+print(f"  Draining first {DRAIN_FRAMES} frames per source …")
+for src in sources:
+    discarded = 0
+    for _ in range(DRAIN_FRAMES):
+        r, buf, op = src.pipeline.RetrieveNextBuffer(200)
+        if r.IsOK():
+            src.pipeline.ReleaseBuffer(buf)
+            discarded += 1
+    print(f"    {src.source_name}: discarded {discarded} frames")
 
 # ── 7. Retrieve one synchronized frame per source ────────────────────────────
 print("\n── Retrieve Synchronized Triplet ─────────────────────────────────────")
