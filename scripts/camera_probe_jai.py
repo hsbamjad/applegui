@@ -145,22 +145,6 @@ if isinstance(device, eb.PvDeviceGEV):
 else:
     print("  ⚠️  Not a PvDeviceGEV — skipping GEV config")
 
-# ── 6. Allocate buffers ───────────────────────────────────────────────────────
-print("\n── configure_stream_buffers ──────────────────────────────────────────")
-payload_size  = device.GetPayloadSize()
-buffer_count  = min(stream.GetQueuedBufferMaximum(), BUFFER_COUNT)
-print(f"  Payload size: {payload_size} bytes")
-print(f"  Buffer count: {buffer_count}")
-
-buffer_list = []
-for _ in range(buffer_count):
-    pvbuf = eb.PvBuffer()
-    pvbuf.Alloc(payload_size)
-    buffer_list.append(pvbuf)
-for pvbuf in buffer_list:
-    stream.QueueBuffer(pvbuf)
-print(f"  Allocated and queued {buffer_count} buffers")
-
 # ── 7. Enumerate sources & acquire one buffer per source ─────────────────────
 print("\n── acquire_images (all sources) ──────────────────────────────────────")
 
@@ -199,13 +183,23 @@ for ch_idx, src_name in enumerate(source_names):
     gain = get_p(nm, "Gain")
     print(f"  PixelFormat={pf}  {w}×{h}  Exp={exp}µs  Gain={gain}")
 
-    # Allocate a fresh buffer for this source
-    p_size = device.GetPayloadSize()
-    pvbuf  = eb.PvBuffer()
-    pvbuf.Alloc(p_size)
-    stream.QueueBuffer(pvbuf)
+    # Drain any stale buffers from previous iteration
+    stream.AbortQueuedBuffers()
+    while stream.GetQueuedBufferCount() > 0:
+        stream.RetrieveBuffer()
 
-    # Start / stop acquisition for this source
+    # Allocate fresh buffers for this source
+    p_size      = device.GetPayloadSize()
+    buf_count   = min(stream.GetQueuedBufferMaximum(), BUFFER_COUNT)
+    source_bufs = []
+    for _ in range(buf_count):
+        pvbuf = eb.PvBuffer()
+        pvbuf.Alloc(p_size)
+        source_bufs.append(pvbuf)
+    for pvbuf in source_bufs:
+        stream.QueueBuffer(pvbuf)
+
+    # Start acquisition for this source
     device.StreamEnable()
     start_cmd.Execute()
     time.sleep(0.3)
@@ -246,11 +240,6 @@ for ch_idx, src_name in enumerate(source_names):
         "exposure_us":  exp,
         "gain":         gain,
     })
-
-# Re-queue any remaining buffers and drain
-stream.AbortQueuedBuffers()
-while stream.GetQueuedBufferCount() > 0:
-    r, pvb, _ = stream.RetrieveBuffer()
 
 # ── 8. Stop and clean up ──────────────────────────────────────────────────────
 print("\n── Cleanup ───────────────────────────────────────────────────────────")
