@@ -278,11 +278,9 @@ for src in sources:
     img_data, pf = src.retrieve_one()
     frames[src.source_name]    = (img_data, pf)
 
-# Synchronization check — all block IDs should match for hardware sync
-print("\n  BlockID synchronization check:")
-for src in sources:
-    pass
+# Synchronization check — blockIDs printed per-source above; verify they match
 print("  ↑ Verify blockIDs above are identical across all 3 sources")
+
 
 # Stream packet-loss diagnostics (dark images → check for errors here)
 print("\n── Stream Statistics (packet loss check) ─────────────────────────────")
