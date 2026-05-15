@@ -217,35 +217,12 @@ for ch_idx, src_name in enumerate(source_names):
             img_data  = image.GetDataPointer()   # numpy array (H×W, uint8)
             fname     = OUT_DIR / f"ch{ch_idx+1}.png"
 
+            # Source0 (BayerRG8) → debayer to BGR color using BayerBG pattern
+            # Source1/2 (Mono8 NIR) → save as-is (grayscale)
             if pf == "BayerRG8":
-                # Save all 4 Bayer pattern interpretations so you can pick
-                # the one that looks most natural (correct pattern has vivid,
-                # accurate colors — not bluish or reddish)
-                patterns = {
-                    "RG": cv2.COLOR_BayerRG2BGR,   # GenICam BayerRG = RGGB
-                    "BG": cv2.COLOR_BayerBG2BGR,   # BGGR (often works for JAI)
-                    "GR": cv2.COLOR_BayerGR2BGR,   # GRBG
-                    "GB": cv2.COLOR_BayerGB2BGR,   # GBRG
-                }
-                for pat_name, code in patterns.items():
-                    converted = cv2.cvtColor(img_data, code)
-                    out_name  = OUT_DIR / f"ch{ch_idx+1}_bayer{pat_name}.png"
-                    cv2.imwrite(str(out_name), converted)
-
-                # Default output: BayerBG2BGR (most common correct result for JAI)
-                img_bgr  = cv2.cvtColor(img_data, cv2.COLOR_BayerBG2BGR)
-
-                # Also save a gray-world white-balanced version
-                img_f = img_bgr.astype(np.float32)
-                means = img_f.mean(axis=(0, 1))        # mean per B,G,R channel
-                scale = means.mean() / (means + 1e-6)  # scale to equalize
-                img_wb = np.clip(img_f * scale, 0, 255).astype(np.uint8)
-                cv2.imwrite(str(OUT_DIR / f"ch{ch_idx+1}_wb.png"), img_wb)
-
-                img_save = img_bgr
-                print(f"  (Bayer patterns saved: _bayerRG, _bayerBG, _bayerGR, _bayerGB + _wb)")
+                img_save = cv2.cvtColor(img_data, cv2.COLOR_BayerBG2BGR)
             else:
-                img_save = img_data   # Mono8 NIR — already grayscale
+                img_save = img_data
 
             cv2.imwrite(str(fname), img_save)
             print(f"  ✅  {fname.name}  {w_src}×{h_src}  "
