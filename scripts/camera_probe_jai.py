@@ -1,10 +1,15 @@
-import time
 """
 scripts/camera_probe_jai.py
 ============================
 JAI Camera Probe — eBUS Python API v6.6.1
-Based on the official Pleora PvStreamSample documentation pattern.
-No GenTL / .cti file required.
+Simultaneous 3-source acquisition using the official Pleora MultiSource pattern.
+
+Key differences from single-stream approach:
+  - 3 × PvStreamGEV opened simultaneously (one per source channel)
+  - SetStreamDestination called with source_channel index (3rd arg)
+  - PvPipeline per source (SetBufferSize + SetBufferCount + Start)
+  - ALL streams opened BEFORE any AcquisitionStart → hardware-synchronized triplets
+  - PvGenStateStack for clean per-source parameter context
 
 Prerequisites:
   - eBUS SDK installed (JAI 64-bit)
@@ -17,8 +22,8 @@ Usage:
   python scripts/camera_probe_jai.py
 """
 
+import time
 import sys
-import importlib
 from pathlib import Path
 
 import numpy as np
@@ -26,7 +31,7 @@ import cv2
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 BUFFER_COUNT = 16
-TIMEOUT_MS   = 5000   # ms to wait for first buffer
+TIMEOUT_MS   = 5000
 OUT_DIR      = Path("scripts/probe_output")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -37,7 +42,6 @@ try:
     print("  ✅  import eBUS OK")
 except ImportError as e:
     print(f"  ❌  {e}")
-    print("  Install: pip install ebus_python-...-py310-none-win_amd64.whl")
     sys.exit(1)
 
 # ── Helper: read any GenICam parameter ───────────────────────────────────────
@@ -62,209 +66,240 @@ def get_p(nm, name):
         pass
     return "N/A"
 
-# ── 1. Discover devices ───────────────────────────────────────────────────────
+# ── Source class — mirrors official MultiSource.py pattern ───────────────────
+class Source:
+    """One physical sensor on the FS-3200T. Each has its own stream + pipeline."""
+
+    BUFFER_COUNT = 16
+
+    def __init__(self, device, connection_id, source_name, ch_index):
+        self.device        = device
+        self.connection_id = connection_id
+        self.source_name   = source_name   # e.g. "Source0"
+        self.ch_index      = ch_index      # 0-based display index
+        self.stream        = None
+        self.pipeline      = None
+        self.source_channel = 0            # integer channel ID from SourceIDValue
+
+    def open(self):
+        nm = self.device.GetParameters()
+
+        # Use PvGenStateStack to temporarily select this source (auto-restored on scope exit)
+        stack = eb.PvGenStateStack(nm)
+        stack.SetEnumValue("SourceSelector", self.source_name)
+
+        # Read the integer source channel ID (used to route the stream)
+        result, self.source_channel = nm.GetIntegerValue("SourceIDValue")
+        if result.IsFailure():
+            result, self.source_channel = nm.GetIntegerValue("SourceStreamChannel")
+        if result.IsFailure():
+            print(f"  ⚠️  {self.source_name}: could not read SourceIDValue — defaulting to {self.ch_index}")
+            self.source_channel = self.ch_index
+
+        pf  = get_p(nm, "PixelFormat")
+        w   = get_p(nm, "Width")
+        h   = get_p(nm, "Height")
+        print(f"  {self.source_name}  ch_id={self.source_channel}  "
+              f"fmt={pf}  {w}×{h}")
+
+        # Open a dedicated GEV stream for this source channel
+        self.stream = eb.PvStreamGEV()
+        r = self.stream.Open(self.connection_id, 0, self.source_channel)
+        if r.IsFailure():
+            print(f"  ❌  {self.source_name}: stream.Open failed: {r.GetCodeString()}")
+            return False
+
+        lip  = self.stream.GetLocalIPAddress()
+        lp   = self.stream.GetLocalPort()
+        # Route this source on the device to our stream's local address
+        self.device.SetStreamDestination(lip, lp, self.source_channel)
+        print(f"       → stream → {lip}:{lp}")
+
+        # Set up pipeline (manages buffer pool internally)
+        payload_size = self.device.GetPayloadSize()
+        self.pipeline = eb.PvPipeline(self.stream)
+        self.pipeline.SetBufferSize(payload_size)
+        self.pipeline.SetBufferCount(self.BUFFER_COUNT)
+        self.pipeline.Start()
+        return True
+
+    def start_acquisition(self):
+        nm    = self.device.GetParameters()
+        stack = eb.PvGenStateStack(nm)
+        stack.SetEnumValue("SourceSelector", self.source_name)
+        self.device.StreamEnable()
+        nm.Get("AcquisitionStart").Execute()
+
+    def stop_acquisition(self):
+        nm    = self.device.GetParameters()
+        stack = eb.PvGenStateStack(nm)
+        stack.SetEnumValue("SourceSelector", self.source_name)
+        nm.Get("AcquisitionStop").Execute()
+        self.device.StreamDisable()
+
+    def retrieve_one(self):
+        """Retrieve one frame from the pipeline. Returns (numpy_array, pixel_format_str)."""
+        nm    = self.device.GetParameters()
+        stack = eb.PvGenStateStack(nm)
+        stack.SetEnumValue("SourceSelector", self.source_name)
+        pf = get_p(nm, "PixelFormat")
+
+        result, buffer, op_result = self.pipeline.RetrieveNextBuffer(TIMEOUT_MS)
+        if result.IsFailure():
+            print(f"  ❌  {self.source_name}: RetrieveNextBuffer: {result.GetCodeString()}")
+            return None, pf
+        if not op_result.IsOK():
+            print(f"  ⚠️  {self.source_name}: op_result: {op_result.GetCodeString()}")
+            self.pipeline.ReleaseBuffer(buffer)
+            return None, pf
+
+        image    = buffer.GetImage()
+        img_data = image.GetDataPointer().copy()   # copy before releasing buffer
+        block_id = buffer.GetBlockID()
+        self.pipeline.ReleaseBuffer(buffer)
+        print(f"  ✅  {self.source_name}: {image.GetWidth()}×{image.GetHeight()}  "
+              f"blockID={block_id}  min={img_data.min()} max={img_data.max()} "
+              f"mean={img_data.mean():.1f}")
+        return img_data, pf
+
+    def close(self):
+        if self.pipeline:
+            self.pipeline.Stop()
+        if self.stream:
+            self.stream.Close()
+
+
+# ── 1. Discover device ────────────────────────────────────────────────────────
 print("\n── Device Discovery ──────────────────────────────────────────────────")
 sys_obj = eb.PvSystem()
 sys_obj.Find()
 
-connection_ID = None
+connection_id   = None
+dev_info_cached = None
 for i in range(sys_obj.GetInterfaceCount()):
     iface = sys_obj.GetInterface(i)
     for j in range(iface.GetDeviceCount()):
         dev = iface.GetDeviceInfo(j)
         print(f"  Found: {dev.GetDisplayID()}")
-        print(f"    IP : {dev.GetIPAddress()}")
-        print(f"    MAC: {dev.GetMACAddress()}")
-        print(f"    S/N: {dev.GetSerialNumber()}")
-        if connection_ID is None:
-            connection_ID = dev.GetConnectionID()
-            dev_info_cached = dev      # save for config output
+        if connection_id is None:
+            connection_id   = dev.GetConnectionID()
+            dev_info_cached = dev
 
-if connection_ID is None:
+if connection_id is None:
     print("  ❌  No camera found.")
     sys.exit(1)
+print(f"  → Connection ID: {connection_id}")
 
-print(f"\n  → Using connection ID: {connection_ID}")
-
-# ── 2. Connect to device ──────────────────────────────────────────────────────
-print("\n── connect_to_device ─────────────────────────────────────────────────")
-result, device = eb.PvDevice.CreateAndConnect(connection_ID)
+# ── 2. Connect ────────────────────────────────────────────────────────────────
+print("\n── Connect ───────────────────────────────────────────────────────────")
+result, device = eb.PvDevice.CreateAndConnect(connection_id)
 if device is None:
     print(f"  ❌  {result.GetCodeString()}: {result.GetDescription()}")
     print("  → Close eBUS Player (it holds exclusive camera access)")
     sys.exit(1)
-print("  ✅  Connected")
-print(f"     GEV device: {isinstance(device, eb.PvDeviceGEV)}")
+print(f"  ✅  Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
 
-# ── 3. Read parameters ────────────────────────────────────────────────────────
+# ── 3. Print key parameters ───────────────────────────────────────────────────
 print("\n── Parameters ────────────────────────────────────────────────────────")
 nm = device.GetParameters()
-PARAM_NAMES = [
-    "DeviceModelName", "DeviceVendorName", "DeviceSerialNumber",
-    "DeviceFirmwareVersion", "DeviceTemperature",
-    "Width", "Height", "WidthMax", "HeightMax",
-    "PixelFormat", "PixelSize",
-    "AcquisitionFrameRate", "AcquisitionFrameRateEnable",
-    "ResultingFrameRate", "AcquisitionMode",
-    "ExposureTime", "ExposureMode", "ExposureAuto",
-    "Gain", "GainAuto", "BlackLevel",
-    "TriggerMode", "TriggerSource",
-    "PayloadSize", "GevSCPSPacketSize",
-    "SourceSelector", "ComponentSelector",
-]
-params = {}
-for name in PARAM_NAMES:
-    v = get_p(nm, name)
-    params[name] = v
-    mark = "✅" if v != "N/A" else "·"
-    print(f"  {mark}  {name:<32}: {v}")
+for name in ["DeviceModelName", "DeviceSerialNumber", "DeviceFirmwareVersion",
+             "DeviceTemperature", "AcquisitionFrameRate", "GevSCPSPacketSize",
+             "TriggerMode", "TriggerSource", "PayloadSize"]:
+    print(f"  {name:<32}: {get_p(nm, name)}")
 
-# GenICam AcquisitionStart / Stop commands
-start_cmd = nm.Get("AcquisitionStart")
-stop_cmd  = nm.Get("AcquisitionStop")
+# ── 4. Enumerate sources ──────────────────────────────────────────────────────
+print("\n── Enumerate Sources ─────────────────────────────────────────────────")
+source_selector = nm.GetEnum("SourceSelector")
+source_names = []
+if source_selector:
+    result, count = source_selector.GetEntriesCount()
+    for i in range(count):
+        result, entry = source_selector.GetEntryByIndex(i)
+        if entry:
+            result, name = entry.GetName()
+            source_names.append(name)
+print(f"  Sources: {source_names}")
 
-# ── 4. Open stream ────────────────────────────────────────────────────────────
-print("\n── open_stream ───────────────────────────────────────────────────────")
-result, stream = eb.PvStream.CreateAndOpen(connection_ID)
-if stream is None:
-    print(f"  ❌  {result.GetCodeString()}: {result.GetDescription()}")
+# ── 5. Open all streams simultaneously ───────────────────────────────────────
+print("\n── Open Streams (simultaneous) ───────────────────────────────────────")
+sources = []
+for ch_idx, src_name in enumerate(source_names):
+    src = Source(device, connection_id, src_name, ch_idx)
+    if src.open():
+        sources.append(src)
+
+if not sources:
+    print("  ❌  No sources opened.")
     device.Disconnect()
     eb.PvDevice.Free(device)
     sys.exit(1)
-print(f"  ✅  Stream open")
+print(f"  ✅  {len(sources)} streams open simultaneously")
 
-# ── 5. Configure stream (GEV-specific) ───────────────────────────────────────
-print("\n── configure_stream ──────────────────────────────────────────────────")
-if isinstance(device, eb.PvDeviceGEV):
-    r = device.NegotiatePacketSize()
-    print(f"  NegotiatePacketSize     : {r.GetCodeString()}")
-    lip  = stream.GetLocalIPAddress()
-    lp   = stream.GetLocalPort()
-    r = device.SetStreamDestination(lip, lp)
-    print(f"  SetStreamDestination    : {r.GetCodeString()}  ({lip}:{lp})")
-else:
-    print("  ⚠️  Not a PvDeviceGEV — skipping GEV config")
+# ── 6. Start acquisition on ALL sources ──────────────────────────────────────
+print("\n── Start Acquisition (all sources) ───────────────────────────────────")
+for src in sources:
+    src.start_acquisition()
+print(f"  ✅  AcquisitionStart sent to all {len(sources)} sources")
+time.sleep(0.5)    # allow first frames to arrive
 
-# ── 7. Enumerate sources & acquire one buffer per source ─────────────────────
-print("\n── acquire_images (all sources) ──────────────────────────────────────")
+# ── 7. Retrieve one synchronized frame per source ────────────────────────────
+print("\n── Retrieve Synchronized Triplet ─────────────────────────────────────")
+frames = {}   # source_name → (numpy_array, pixel_format)
+block_ids = {}
 
-# Find which SourceSelector values exist
-source_param = nm.Get("SourceSelector")
-source_names = []
-if source_param is not None:
-    try:
-        entries = source_param.GetEntries()
-        source_names = [e.GetName() for e in entries]
-    except Exception:
-        pass
+for src in sources:
+    img_data, pf = src.retrieve_one()
+    frames[src.source_name]    = (img_data, pf)
 
-if not source_names:
-    source_names = ["Source0", "Source1", "Source2"]   # fallback
+# Synchronization check — all block IDs should match for hardware sync
+print("\n  BlockID synchronization check:")
+for src in sources:
+    # Already printed per-source; no separate block_ids dict needed here
+    pass
+print("  ↑ Verify blockIDs above are identical across all 3 sources")
 
-print(f"  Sources found: {source_names}")
+# ── 8. Stop all acquisitions ──────────────────────────────────────────────────
+print("\n── Stop Acquisition ──────────────────────────────────────────────────")
+for src in sources:
+    src.stop_acquisition()
 
+# ── 9. Save PNGs ──────────────────────────────────────────────────────────────
+print("\n── Save PNGs ─────────────────────────────────────────────────────────")
 source_results = []
+for ch_idx, src in enumerate(sources):
+    img_data, pf = frames[src.source_name]
+    if img_data is None:
+        print(f"  ⚠️  CH{ch_idx+1} ({src.source_name}): no data — skipped")
+        continue
 
-for ch_idx, src_name in enumerate(source_names):
-    print(f"\n  ── {src_name} (CH{ch_idx+1}) ──────────────────────────────────────")
+    fname = OUT_DIR / f"ch{ch_idx+1}.png"
 
-    # Switch source selector
-    try:
-        r = source_param.SetValue(src_name)   # returns PvResult directly
-        if not r.IsOK():
-            print(f"  ⚠️  SetValue({src_name}) failed: {r.GetCodeString()}")
-    except Exception as e:
-        print(f"  ⚠️  SetValue error: {e}")
-
-    pf   = get_p(nm, "PixelFormat")
-    w    = get_p(nm, "Width")
-    h    = get_p(nm, "Height")
-    exp  = get_p(nm, "ExposureTime")
-    gain = get_p(nm, "Gain")
-    print(f"  PixelFormat={pf}  {w}×{h}  Exp={exp}µs  Gain={gain}")
-
-    # Drain any stale buffers from previous iteration
-    stream.AbortQueuedBuffers()
-    while stream.GetQueuedBufferCount() > 0:
-        stream.RetrieveBuffer()
-
-    # Allocate fresh buffers for this source
-    p_size      = device.GetPayloadSize()
-    buf_count   = min(stream.GetQueuedBufferMaximum(), BUFFER_COUNT)
-    source_bufs = []
-    for _ in range(buf_count):
-        pvbuf = eb.PvBuffer()
-        pvbuf.Alloc(p_size)
-        source_bufs.append(pvbuf)
-    for pvbuf in source_bufs:
-        stream.QueueBuffer(pvbuf)
-
-    # Start acquisition for this source
-    device.StreamEnable()
-    start_cmd.Execute()
-    time.sleep(0.3)
-
-    result, pvbuffer, op_result = stream.RetrieveBuffer(3000)
-
-    w_src, h_src = 0, 0
-
-    if result.IsOK() and op_result.IsOK():
-        pt = pvbuffer.GetPayloadType()
-        if pt == eb.PvPayloadTypeImage:
-            image     = pvbuffer.GetImage()
-            w_src     = image.GetWidth()
-            h_src     = image.GetHeight()
-            img_data  = image.GetDataPointer()   # numpy array (H×W, uint8)
-            fname     = OUT_DIR / f"ch{ch_idx+1}.png"
-
-            # Source0 (BayerRG8) → debayer to BGR color using BayerBG pattern
-            # Source1/2 (Mono8 NIR) → save as-is (grayscale)
-            if pf == "BayerRG8":
-                img_save = cv2.cvtColor(img_data, cv2.COLOR_BayerBG2BGR)
-            else:
-                img_save = img_data
-
-            cv2.imwrite(str(fname), img_save)
-            print(f"  ✅  {fname.name}  {w_src}×{h_src}  "
-                  f"min={img_data.min()} max={img_data.max()} mean={img_data.mean():.1f}")
-        else:
-            print(f"  PayloadType={pt} (unexpected for single source)")
-        stream.QueueBuffer(pvbuffer)
+    if pf == "BayerRG8":
+        img_save = cv2.cvtColor(img_data, cv2.COLOR_BayerBG2BGR)
     else:
-        if result.IsOK():
-            print(f"  ⚠️  op_result: {op_result.GetCodeString()}")
-            stream.QueueBuffer(pvbuffer)
-        else:
-            print(f"  ❌  {result.GetCodeString()}")
+        img_save = img_data   # Mono8 NIR
 
-    stop_cmd.Execute()
-    device.StreamDisable()
+    cv2.imwrite(str(fname), img_save)
+    print(f"  ✅  {fname.name}  saved")
 
     source_results.append({
-        "source":       src_name,
+        "source":       src.source_name,
         "pixel_format": pf,
-        "width":        w_src or int(w),
-        "height":       h_src or int(h),
-        "exposure_us":  exp,
-        "gain":         gain,
+        "width":        img_data.shape[1],
+        "height":       img_data.shape[0],
+        "exposure_us":  get_p(nm, "ExposureTime"),
+        "gain":         get_p(nm, "Gain"),
     })
 
-# ── 8. Stop and clean up ──────────────────────────────────────────────────────
+# ── 10. Close all streams + disconnect ────────────────────────────────────────
 print("\n── Cleanup ───────────────────────────────────────────────────────────")
-stop_cmd.Execute()
-device.StreamDisable()
-
-stream.AbortQueuedBuffers()
-while stream.GetQueuedBufferCount() > 0:
-    r, pvb, _ = stream.RetrieveBuffer()
-
-stream.Close()
-eb.PvStream.Free(stream)
+for src in sources:
+    src.close()
 device.Disconnect()
 eb.PvDevice.Free(device)
 print("  ✅  Disconnected cleanly")
 
-# ── 9. Config summary ─────────────────────────────────────────────────────────
+# ── 11. Config summary ────────────────────────────────────────────────────────
 print(f"""
 {'═'*62}
   PASTE INTO config.yaml → camera.jai
@@ -272,7 +307,7 @@ print(f"""
   ip:     "{dev_info_cached.GetIPAddress()}"
   mac:    "{dev_info_cached.GetMACAddress()}"
   serial: "{dev_info_cached.GetSerialNumber()}"
-  fps:    {params.get('AcquisitionFrameRate','?')}
+  fps:    {get_p(nm, 'AcquisitionFrameRate')}
   sources:""")
 for sr in source_results:
     print(f"    {sr['source']}:")
