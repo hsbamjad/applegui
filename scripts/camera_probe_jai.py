@@ -199,6 +199,12 @@ if device is None:
     sys.exit(1)
 print(f"  ✅  Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
 
+# Negotiate max packet size across the network path (CRITICAL — prevents packet loss)
+# Must be called BEFORE opening any streams
+if isinstance(device, eb.PvDeviceGEV):
+    r = device.NegotiatePacketSize()
+    print(f"  NegotiatePacketSize: {r.GetCodeString()}")
+
 # ── 3. Print key parameters ───────────────────────────────────────────────────
 print("\n── Parameters ────────────────────────────────────────────────────────")
 nm = device.GetParameters()
@@ -274,9 +280,21 @@ for src in sources:
 # Synchronization check — all block IDs should match for hardware sync
 print("\n  BlockID synchronization check:")
 for src in sources:
-    # Already printed per-source; no separate block_ids dict needed here
     pass
 print("  ↑ Verify blockIDs above are identical across all 3 sources")
+
+# Stream packet-loss diagnostics (dark images → check for errors here)
+print("\n── Stream Statistics (packet loss check) ─────────────────────────────")
+for src in sources:
+    sm = src.stream.GetParameters()
+    lost   = get_p(sm, "PacketResendRequestCount")
+    errors = get_p(sm, "PacketErrorCount")
+    missed = get_p(sm, "MissingPacketCount")
+    fps    = get_p(sm, "AcquisitionRate")
+    bw     = get_p(sm, "Bandwidth")
+    print(f"  {src.source_name}: FPS={fps}  BW={bw}  "
+          f"Resend={lost}  Errors={errors}  Missing={missed}")
+
 
 # ── 8. Stop all acquisitions ──────────────────────────────────────────────────
 print("\n── Stop Acquisition ──────────────────────────────────────────────────")
