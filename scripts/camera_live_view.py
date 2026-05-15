@@ -288,7 +288,7 @@ try:
         bar_y = DISPLAY_H - 28
         cv2.rectangle(display, (0, bar_y), (DISPLAY_W * len(panels), DISPLAY_H),
                       (20, 20, 20), -1)
-        sync_txt  = "SYNC ✓" if synced else "SYNC ✗"
+        sync_txt  = "SYNC OK" if synced else "SYNC !!"
         sync_col  = (0, 220, 0) if synced else (0, 60, 220)
         norm_txt  = "NIR: normalized" if normalize_nir else "NIR: raw"
         status    = f"FPS: {fps:.1f}  |  {sync_txt}  |  {norm_txt}  |  [Q] quit  [S] snap  [N] toggle NIR"
