@@ -1,3 +1,4 @@
+import time
 """
 scripts/camera_probe_jai.py
 ============================
@@ -185,7 +186,7 @@ for ch_idx, src_name in enumerate(source_names):
 
     # Switch source selector
     try:
-        r, _ = source_param.SetValue(src_name)
+        r = source_param.SetValue(src_name)   # returns PvResult directly
         if not r.IsOK():
             print(f"  ⚠️  SetValue({src_name}) failed: {r.GetCodeString()}")
     except Exception as e:
