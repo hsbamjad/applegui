@@ -91,10 +91,22 @@ def try_connect_and_probe(sys_obj):
         dev_info = iface.GetDeviceInfo(0)
 
         print("\n── Connecting ────────────────────────────────────────────────────")
-        # eBUS Python: CreateAndConnect returns (PvResult, PvDevice)
-        result, device = eb.PvDevice.CreateAndConnect(dev_info)
+
+        # Print connection ID for debugging
+        conn_id = dev_info.GetConnectionID()
+        print(f"  Connection ID: {conn_id}")
+        print(f"  NOTE: Close eBUS Player before running this script!")
+        print(f"        (It holds exclusive camera access)")
+
+        # eBUS Python: CreateAndConnect accepts a connection ID string
+        result, device = eb.PvDevice.CreateAndConnect(conn_id)
+        if not result.IsOK():
+            # Fallback: try DeviceInfo object directly
+            print(f"  String connect failed ({result.GetCodeString()}), trying DeviceInfo...")
+            result, device = eb.PvDevice.CreateAndConnect(dev_info)
         if not result.IsOK():
             print(f"  ❌  Connect failed: {result.GetCodeString()}")
+            print(f"  → Make sure eBUS Player is CLOSED before running this script")
             return
         print("  ✅  Connected")
 
