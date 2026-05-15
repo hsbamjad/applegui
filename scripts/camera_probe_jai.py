@@ -87,103 +87,135 @@ def try_pvsystem():
 def try_connect_and_probe(sys_obj):
     """Connect to first camera and read all parameters."""
     try:
-        iface = sys_obj.GetInterface(0)
+        iface    = sys_obj.GetInterface(0)
         dev_info = iface.GetDeviceInfo(0)
 
         print("\n── Connecting ────────────────────────────────────────────────────")
-        device = eb.PvDevice.CreateAndConnect(dev_info)
-        if device is None:
-            print("  ❌  PvDevice.CreateAndConnect returned None")
+        # eBUS Python: CreateAndConnect returns (PvResult, PvDevice)
+        result, device = eb.PvDevice.CreateAndConnect(dev_info)
+        if not result.IsOK():
+            print(f"  ❌  Connect failed: {result.GetCodeString()}")
             return
-
         print("  ✅  Connected")
+
         nm = device.GetParameters()
 
-        # Read key parameters safely
+        # Helper: safely read any GenICam parameter value
         def get_p(name):
             try:
-                p = nm.Get(name)
-                v = p.GetValue() if hasattr(p, "GetValue") else str(p)
-                return v
+                param = nm.Get(name)
+                if param is None:
+                    return "N/A"
+                # Try GetValueString first (works for enums, strings, ints, floats)
+                r, v = param.GetValueString()
+                return v if r.IsOK() else "N/A"
             except Exception:
                 return "N/A"
 
         params = {
-            "DeviceModelName":        get_p("DeviceModelName"),
-            "DeviceVendorName":       get_p("DeviceVendorName"),
-            "DeviceSerialNumber":     get_p("DeviceSerialNumber"),
-            "DeviceFirmwareVersion":  get_p("DeviceFirmwareVersion"),
-            "Width":                  get_p("Width"),
-            "Height":                 get_p("Height"),
-            "PixelFormat":            get_p("PixelFormat"),
-            "AcquisitionFrameRate":   get_p("AcquisitionFrameRate"),
-            "ExposureTime":           get_p("ExposureTime"),
-            "Gain":                   get_p("Gain"),
-            "TriggerMode":            get_p("TriggerMode"),
+            "DeviceModelName":       get_p("DeviceModelName"),
+            "DeviceVendorName":      get_p("DeviceVendorName"),
+            "DeviceSerialNumber":    get_p("DeviceSerialNumber"),
+            "DeviceFirmwareVersion": get_p("DeviceFirmwareVersion"),
+            "Width":                 get_p("Width"),
+            "Height":                get_p("Height"),
+            "PixelFormat":           get_p("PixelFormat"),
+            "AcquisitionFrameRate":  get_p("AcquisitionFrameRate"),
+            "ExposureTime":          get_p("ExposureTime"),
+            "Gain":                  get_p("Gain"),
+            "TriggerMode":           get_p("TriggerMode"),
+            "PayloadSize":           get_p("PayloadSize"),
+            "DeviceTemperature":     get_p("DeviceTemperature"),
         }
 
         print("\n── Parameters ────────────────────────────────────────────────────")
         for k, v in params.items():
             print(f"  {k:<30}: {v}")
 
-        # Stream one buffer
-        print("\n── Streaming one buffer ──────────────────────────────────────────")
-        stream = eb.PvStream.CreateAndOpen(dev_info)
+        # ── Stream one buffer ─────────────────────────────────────────────────
+        print("\n── Opening stream ────────────────────────────────────────────────")
+        result, stream = eb.PvStream.CreateAndOpen(dev_info)
+        if not result.IsOK():
+            print(f"  ❌  Stream open failed: {result.GetCodeString()}")
+            eb.PvDevice.Free(device)
+            return
+        print("  ✅  Stream open")
+
         pipeline = eb.PvPipeline(stream)
         pipeline.SetBufferCount(4)
         pipeline.Start()
         device.StreamEnable()
-        cmd = nm.Get("AcquisitionStart")
-        cmd.Execute()
 
-        import time; time.sleep(0.5)
-        result, buf, op_result = pipeline.RetrieveNextBuffer(1000)
-        if result.IsOK() and buf:
-            payload = buf.GetPayload()
-            n_comp  = payload.GetImageCount() if hasattr(payload, "GetImageCount") else 1
-            print(f"  Buffer OK — {n_comp} image(s) in payload")
+        # Start acquisition
+        acq_start = nm.Get("AcquisitionStart")
+        acq_start.Execute()
 
-            try:
-                import numpy as np, cv2
-                for ci in range(n_comp):
-                    img = payload.GetImage(ci) if hasattr(payload, "GetImage") else payload
-                    w   = img.GetWidth()
-                    h   = img.GetHeight()
-                    fmt = img.GetPixelType() if hasattr(img, "GetPixelType") else "?"
-                    arr = np.frombuffer(img.GetDataPointer(), dtype=np.uint8).reshape(h, w)
-                    cv2.imwrite(str(OUT_DIR / f"ch{ci+1}.png"), arr)
-                    print(f"  CH{ci+1}: {w}×{h}  fmt={fmt}  "
-                          f"min={arr.min()} max={arr.max()} mean={arr.mean():.1f}")
-            except Exception as e:
-                print(f"  Image extraction error: {e}")
+        import time, numpy as np, cv2
+        time.sleep(0.5)
 
+        print("\n── Grabbing buffer ───────────────────────────────────────────────")
+        result, buf, op_result = pipeline.RetrieveNextBuffer(2000)
+        if result.IsOK() and buf.GetPayloadType() == eb.PvPayloadTypeImage:
+            img  = buf.GetImage()
+            w, h = img.GetWidth(), img.GetHeight()
+            fmt  = img.GetPixelType()
+            print(f"  Payload type: Image  {w}×{h}  fmt={fmt}")
+
+            # Save as PNG
+            arr = np.frombuffer(img.GetDataPointer(), dtype=np.uint8)
+            arr = arr.reshape(h, w) if arr.size == h * w else arr
+            cv2.imwrite(str(OUT_DIR / "ch1.png"), arr)
+            print(f"  CH1 saved → {OUT_DIR}/ch1.png  "
+                  f"min={arr.min()} max={arr.max()} mean={arr.mean():.1f}")
             pipeline.ReleaseBuffer(buf)
 
-        cmd_stop = nm.Get("AcquisitionStop")
-        cmd_stop.Execute()
+        elif result.IsOK():
+            pt = buf.GetPayloadType()
+            print(f"  Payload type: {pt} (MultiPart? — need MultiSource approach)")
+            # For MultiPart (3-sensor) payload
+            if pt == eb.PvPayloadTypeMultiPart:
+                mp  = buf.GetMultiPartContainer()
+                cnt = mp.GetSectionCount()
+                print(f"  MultiPart sections: {cnt}")
+                for i in range(cnt):
+                    sec = mp.GetSection(i)
+                    img = sec.GetImage() if hasattr(sec, "GetImage") else None
+                    if img:
+                        w2, h2 = img.GetWidth(), img.GetHeight()
+                        arr2 = np.frombuffer(img.GetDataPointer(), dtype=np.uint8).reshape(h2, w2)
+                        cv2.imwrite(str(OUT_DIR / f"ch{i+1}.png"), arr2)
+                        print(f"  CH{i+1}: {w2}×{h2}  min={arr2.min()} max={arr2.max()}")
+            pipeline.ReleaseBuffer(buf)
+        else:
+            print(f"  ❌  Buffer retrieve failed: {result.GetCodeString()}")
+
+        # Stop
+        nm.Get("AcquisitionStop").Execute()
         device.StreamDisable()
         pipeline.Stop()
-        stream.Close()
         eb.PvStream.Free(stream)
         eb.PvDevice.Free(device)
 
-        # Print config.yaml block
+        # ── Config summary ────────────────────────────────────────────────────
         print(f"""
 {'═'*62}
   PASTE INTO config.yaml
 {'═'*62}
   camera:
     jai:
+      ip: "{dev_info.GetIPAddress()}"
+      mac: "{dev_info.GetMACAddress()}"
+      serial: "{params['DeviceSerialNumber']}"
       resolution: [{params['Width']}, {params['Height']}]
       pixel_format: "{params['PixelFormat']}"
       fps: {params['AcquisitionFrameRate']}
       exposure_us: {params['ExposureTime']}
 {'═'*62}
-  Saved PNGs → {OUT_DIR.resolve()}
+  PNGs saved → {OUT_DIR.resolve()}
 {'═'*62}
 """)
     except Exception as e:
-        print(f"  Connect/probe error: {e}")
+        print(f"  Error: {e}")
         import traceback; traceback.print_exc()
 
 # ── Run ───────────────────────────────────────────────────────────────────────
