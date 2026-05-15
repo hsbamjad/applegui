@@ -1,0 +1,20 @@
+QT is preferred 
+C++ is not mandatory
+I can go with Python
+I will stick to QT
+
+https://charleswan111.medium.com/pyqt-vs-pyside-a-comprehensive-comparison-for-python-qt-development-4f525f879cc4
+
+JAI camera
+
+https://www.jai.com/products/product-lines/fusion-series-2-sensor-area-scan
+https://www.jai.com/products/fsfe-3200t-10ge
+
+grading information - channels
+
+1- model switching
+2- channel interface
+3- sorter control
+4- DAQ
+5- Evaluate Performance
+6- realtime conveyer speed

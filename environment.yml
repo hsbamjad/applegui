@@ -1,0 +1,67 @@
+name: applegui
+
+channels:
+  - pytorch        # CUDA-enabled PyTorch builds
+  - conda-forge    # Community packages, broad compatibility
+  - defaults
+
+dependencies:
+  # ── Core ──────────────────────────────────────────────────────────────────
+  - python=3.10
+
+  # ── GUI Framework ─────────────────────────────────────────────────────────
+  # PyQt6 and PyQtGraph installed via pip (conda-forge versions lag behind)
+
+  # ── AI / Vision ───────────────────────────────────────────────────────────
+  # PyTorch installed via pip with CUDA 12.4 index for RTX 4050 support
+
+  # ── pip-installed packages ────────────────────────────────────────────────
+  - pip
+  - pip:
+    # GUI
+    - PyQt6==6.11.0
+    - pyqtgraph==0.14.0
+
+    # AI / Vision
+    - --extra-index-url https://download.pytorch.org/whl/cu124
+    - torch==2.6.0+cu124          # RTX 4050 — CUDA 12.4
+    - torchvision==0.21.0+cu124   # Paired with torch version above
+    - opencv-python==4.13.0.92
+    - numpy==2.2.6
+
+    # Config & Data
+    - pyyaml==6.0.3
+
+    # Camera Interface (GenICam GenTL consumer)
+    - harvesters==1.4.3
+
+    # Hardware Control
+    - pyserial==3.5
+
+    # Dev Tools
+    - pytest==9.0.3
+    - black==26.3.1
+    - flake8==7.3.0
+    - isort==8.0.1
+
+# ── Notes ──────────────────────────────────────────────────────────────────
+# Setup (laptop & shuttle):
+#   conda env create -f environment.yml
+#   conda activate applegui
+#
+# Update after pulling changes:
+#   conda env update -f environment.yml --prune
+#
+# Recreate from scratch:
+#   conda env remove -n applegui
+#   conda env create -f environment.yml
+#
+# Shuttle PC only (not in this file — install separately):
+#   - JAI eBUS SDK (GenTL producer .cti file) → jai.com/support-software
+#   - nidaqmx → pip install nidaqmx  (only if using NI-DAQ hardware)
+#
+# PyTorch CUDA note:
+#   torch+cu124 requires CUDA 12.x driver. Verified on RTX 4050 Laptop GPU.
+#   For CPU-only (no GPU), replace with:
+#     - torch==2.6.0
+#     - torchvision==0.21.0

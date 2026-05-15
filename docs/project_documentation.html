@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multispectral Apple Sorting GUI - Complete Project Documentation</title>
+
+    <!-- Mermaid for diagrams -->
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'dark',
+            themeVariables: {
+                primaryColor: '#4CAF50',
+                primaryTextColor: '#fff',
+                primaryBorderColor: '#66BB6A',
+                lineColor: '#81C784',
+                secondaryColor: '#2196F3',
+                tertiaryColor: '#FF9800'
+            }
+        });
+    </script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #4CAF50;
+            --primary-dark: #388E3C;
+            --secondary: #2196F3;
+            --accent: #FF9800;
+            --bg-dark: #0a0e27;
+            --bg-card: #1a1f3a;
+            --bg-card-hover: #252b4a;
+            --text: #e0e0e0;
+            --text-dim: #b0b0b0;
+            --border: #2d3351;
+            --success: #66BB6A;
+            --warning: #FFA726;
+            --info: #42A5F5;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+            font-size: 0.95rem;
+        }
+
+        /* Header */
+        header {
+            background: linear-gradient(135deg, var(--primary-dark) 0%, var(--primary) 100%);
+            padding: 1.5rem 1.5rem;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(76, 175, 80, 0.3);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(10px);
+            transition: transform 0.3s ease, opacity 0.3s ease;
+        }
+
+        header.hidden {
+            transform: translateY(-100%);
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        header h1 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.3rem;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        header p {
+            font-size: 0.95rem;
+            opacity: 0.95;
+        }
+
+        .subtitle {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin-top: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 0.3rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            backdrop-filter: blur(10px);
+        }
+
+        /* Navigation */
+        nav {
+            background: var(--bg-card);
+            padding: 0.75rem 1.5rem;
+            position: sticky;
+            top: 90px;
+            z-index: 99;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            border-bottom: 2px solid var(--primary);
+            transition: top 0.3s ease;
+        }
+
+        nav.top {
+            top: 0;
+        }
+
+        nav ul {
+            list-style: none;
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        nav a {
+            color: var(--text);
+            text-decoration: none;
+            padding: 0.4rem 0.75rem;
+            border-radius: 8px;
+            transition: all 0.3s;
+            font-size: 0.9rem;
+        }
+
+        nav a:hover {
+            background: var(--primary);
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        /* Main Container */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+        }
+
+        /* Section Styling */
+        section {
+            background: var(--bg-card);
+            margin: 1.5rem 0;
+            padding: 1.75rem;
+            border-radius: 12px;
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border);
+            transition: transform 0.3s, box-shadow 0.3s;
+            scroll-margin-top: 140px;
+        }
+
+        section:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 32px rgba(76, 175, 80, 0.2);
+        }
+
+        h2 {
+            color: var(--primary);
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            padding-bottom: 0.4rem;
+            border-bottom: 2px solid var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        h3 {
+            color: var(--secondary);
+            font-size: 1.2rem;
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        h4 {
+            color: var(--accent);
+            font-size: 1rem;
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th {
+            background: var(--primary);
+            color: white;
+            padding: 0.875rem;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        td {
+            padding: 0.75rem 0.875rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        tr:hover {
+            background: rgba(76, 175, 80, 0.1);
+        }
+
+        /* Lists */
+        ul,
+        ol {
+            margin: 1rem 0 1rem 2rem;
+        }
+
+        li {
+            margin: 0.5rem 0;
+            color: var(--text-dim);
+        }
+
+        /* Alert Boxes */
+        .alert {
+            padding: 1rem;
+            margin: 1.5rem 0;
+            border-radius: 8px;
+            border-left: 4px solid;
+        }
+
+        .alert-success {
+            background: rgba(102, 187, 106, 0.1);
+            border-color: var(--success);
+        }
+
+        .alert-warning {
+            background: rgba(255, 167, 38, 0.1);
+            border-color: var(--warning);
+        }
+
+        .alert-info {
+            background: rgba(66, 165, 245, 0.1);
+            border-color: var(--info);
+        }
+
+        /* Code blocks */
+        pre {
+            background: rgba(0, 0, 0, 0.4);
+            padding: 1.5rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 1rem 0;
+            border: 1px solid var(--border);
+        }
+
+        code {
+            font-family: 'Consolas', 'Monaco', monospace;
+            color: var(--primary);
+        }
+
+        /* Mermaid diagrams */
+        .mermaid {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 1.5rem;
+            border-radius: 12px;
+            margin: 1.5rem 0;
+            border: 1px solid var(--border);
+        }
+
+        /* Feature Cards */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+
+        .feature-card {
+            background: linear-gradient(135deg, rgba(76, 175, 80, 0.1) 0%, rgba(33, 150, 243, 0.1) 100%);
+            padding: 1.25rem;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            transition: all 0.3s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 6px 20px rgba(76, 175, 80, 0.3);
+            border-color: var(--primary);
+        }
+
+        .feature-card h4 {
+            margin-top: 0;
+        }
+
+        /* Timeline */
+        .timeline {
+            position: relative;
+            padding-left: 2rem;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: linear-gradient(to bottom, var(--primary), var(--secondary));
+        }
+
+        .timeline-item {
+            position: relative;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            background: rgba(76, 175, 80, 0.05);
+            border-radius: 8px;
+            border-left: 3px solid var(--primary);
+        }
+
+        .timeline-item.complete {
+            border-left-color: var(--success);
+        }
+
+        .timeline-item.next {
+            border-left-color: var(--warning);
+        }
+
+        /* Checklist */
+        .checklist {
+            list-style: none;
+            margin-left: 0;
+        }
+
+        .checklist li::before {
+            content: '✓';
+            color: var(--success);
+            font-weight: bold;
+            margin-right: 0.5rem;
+        }
+
+        .checklist li.pending::before {
+            content: '○';
+            color: var(--text-dim);
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            padding: 1rem;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 4px 16px rgba(76, 175, 80, 0.3);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: white;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.9;
+            margin-top: 0.5rem;
+        }
+
+        /* Footer */
+        footer {
+            background: var(--bg-card);
+            padding: 3rem 2rem;
+            text-align: center;
+            margin-top: 4rem;
+            border-top: 2px solid var(--primary);
+        }
+
+        /* Scroll to top button */
+        .scroll-top {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            background: var(--primary);
+            color: white;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 4px 16px rgba(76, 175, 80, 0.4);
+            transition: all 0.3s;
+            z-index: 1000;
+        }
+
+        .scroll-top:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 6px 24px rgba(76, 175, 80, 0.6);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            header h1 {
+                font-size: 1.8rem;
+            }
+
+            nav ul {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+
+            .container {
+                padding: 1.5rem 1rem;
+            }
+
+            section {
+                padding: 1.5rem;
+            }
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        section {
+            animation: fadeIn 0.6s ease-out;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>Multispectral Apple Sorting GUI</h1>
+        <p>Complete Project Documentation</p>
+        <div class="subtitle">
+            <span class="badge">Michigan State University</span>
+            <span class="badge">ASABE AIM26</span>
+            <span class="badge">January 2026</span>
+        </div>
+    </header>
+
+    <nav>
+        <ul>
+            <li><a href="#summary">Executive Summary</a></li>
+            <li><a href="#overview">Overview</a></li>
+            <li><a href="#architecture">Architecture</a></li>
+            <li><a href="#gui-mockup">GUI Mockup</a></li>
+            <li><a href="#hardware">Hardware</a></li>
+            <li><a href="#tech-stack">Tech Stack</a></li>
+            <li><a href="#requirements">Requirements</a></li>
+            <li><a href="#roadmap">0-100 Roadmap</a></li>
+        </ul>
+    </nav>
+
+    <div class="container">
+        <!-- Executive Summary -->
+        <section id="summary">
+            <h2>Executive Summary</h2>
+            <p>This project develops a <strong>modular, open-source GUI application</strong> for an innovative
+                multispectral vision-based apple sorting system. The system integrates a JAI 3-sensor camera with AI
+                models for automated fruit quality inspection, grading, and sorting in real-time.</p>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value">3</div>
+                    <div class="stat-label">Sensor Channels</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">107</div>
+                    <div class="stat-label">Max FPS</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">3.2</div>
+                    <div class="stat-label">Megapixels/Sensor</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">&lt;150ms</div>
+                    <div class="stat-label">End-to-End Latency</div>
+                </div>
+            </div>
+
+            <h3>Key Innovation</h3>
+            <p>Unlike proprietary industrial systems, this GUI is <strong>open-source</strong>,
+                <strong>modular</strong>, and designed for <strong>rapid technology iteration</strong>, addressing a
+                critical software gap in automated agricultural inspection systems.
+            </p>
+
+            <h3>Core Capabilities</h3>
+            <ul class="checklist">
+                <li>Real-time multispectral imaging (3 customizable wavebands)</li>
+                <li>Dynamic AI model switching and comparison</li>
+                <li>Automated sorting based on quality grading</li>
+                <li>Comprehensive data visualization and logging</li>
+                <li>Production-ready reliability and performance</li>
+            </ul>
+        </section>
+
+        <!-- Project Overview -->
+        <section id="overview">
+            <h2>Project Overview</h2>
+
+            <h3>Problem Statement</h3>
+            <p>Agricultural automation faces a critical gap:</p>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h4>Hardware</h4>
+                    <p>Advanced multispectral imaging technology exists</p>
+                </div>
+                <div class="feature-card">
+                    <h4>AI</h4>
+                    <p>Sophisticated quality detection models available</p>
+                </div>
+                <div class="feature-card">
+                    <h4>Software</h4>
+                    <p>Lack of flexible, open-source integration tools</p>
+                </div>
+            </div>
+
+            <h3>Research Contribution</h3>
+            <ul>
+                <li><strong>Fills software gap</strong> in automated fruit sorting</li>
+                <li><strong>Accelerates innovation</strong> through open-source availability</li>
+                <li><strong>Enables rapid prototyping</strong> of new AI models and hardware</li>
+                <li><strong>Provides reference implementation</strong> for research community</li>
+            </ul>
+        </section>
+
+        <!-- System Architecture -->
+        <section id="architecture">
+            <h2>System Architecture</h2>
+
+            <h3>High-Level Architecture</h3>
+            <div class="mermaid">
+                graph TB
+                subgraph "Hardware Layer"
+                CAM[JAI FSFE-3200T-10GE<br />3-Sensor Camera]
+                CONV[Conveyor System<br />Variable Speed]
+                SORT[Sorting Actuators<br />Multi-Grade]
+                end
+
+                subgraph "Software Layer"
+                GUI[Qt-based GUI]
+                CAMERA[Camera Interface<br />Harvesters GenTL]
+                AI[AI Inference Engine<br />PyTorch/TensorFlow]
+                CTRL[Hardware Controller<br />Sorting & Conveyor]
+                LOG[Data Logger<br />Images & Results]
+                end
+
+                subgraph "User Interface"
+                DASH[Visualization Dashboard]
+                MODEL[Model Manager]
+                CONTROL[System Controls]
+                end
+
+                CAM -->|10 GigE| CAMERA
+                CONV --> CTRL
+                SORT --> CTRL
+
+                CAMERA --> AI
+                AI --> CTRL
+                AI --> LOG
+                CAMERA --> DASH
+                AI --> DASH
+
+                GUI --> DASH
+                GUI --> MODEL
+                GUI --> CONTROL
+                MODEL --> AI
+                CONTROL --> CTRL
+                CONTROL --> CAMERA
+            </div>
+
+            <h3>Multi-Threaded Architecture</h3>
+            <p>To ensure real-time performance and responsive GUI:</p>
+            <div class="mermaid">
+                graph LR
+                subgraph "Thread 1: Main"
+                MAIN[GUI Event Loop<br />Qt Main Thread]
+                end
+
+                subgraph "Thread 2: Acquisition"
+                ACQ[Image Acquisition<br />Continuous Capture]
+                end
+
+                subgraph "Thread 3: Processing"
+                PROC[AI Inference<br />Model Execution]
+                end
+
+                subgraph "Thread 4: Control"
+                SORT[Sorting Control<br />Actuator Commands]
+                end
+
+                subgraph "Thread 5: Logging"
+                LOG[Data Logging<br />Async Write]
+                end
+
+                ACQ -->|Signal/Slot| MAIN
+                ACQ -->|Queue| PROC
+                PROC -->|Signal/Slot| MAIN
+                PROC -->|Queue| SORT
+                PROC -->|Queue| LOG
+            </div>
+
+            <div class="alert alert-info">
+                <strong>Key Design Principle:</strong> Qt Signal/Slot mechanism for thread-safe communication
+            </div>
+
+            <h3>Data Flow</h3>
+            <div class="mermaid">
+                sequenceDiagram
+                participant Camera
+                participant Buffer
+                participant AI
+                participant Sorter
+                participant GUI
+
+                Camera->>Buffer: Capture 3-channel image (107 FPS)
+                Buffer->>AI: Synchronized triplet
+                AI->>AI: Preprocess & Inference (~50ms)
+                AI->>Sorter: Grading result
+                AI->>GUI: Update statistics
+                Sorter->>Sorter: Trigger actuator
+                Camera->>GUI: Display preview
+
+                Note over Camera,GUI: Total latency: 70-150ms
+            </div>
+        </section>
+
+        <!-- GUI Mockup Visualization -->
+        <section id="gui-mockup">
+            <h2>GUI Mockup - Application Design</h2>
+
+            <h3>Application Interface Preview</h3>
+            <p>Below is a visual representation of how the completed apple sorting GUI will look:</p>
+
+            <div style="text-align: center; margin: 2rem 0;">
+                <img src="file:///C:/Users/hasee/.gemini/antigravity/brain/9f05f37a-296d-450c-badf-fcbf730dceae/apple_sorting_gui_mockup_v4_1769270273851.png"
+                    alt="Apple Sorting GUI Mockup"
+                    style="max-width: 85%; height: auto; border-radius: 12px; box-shadow: 0 8px 32px rgba(76, 175, 80, 0.3);">
+            </div>
+
+            <h3>Interface Components</h3>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h4>Left Sidebar</h4>
+                    <ul>
+                        <li>Camera Controls (Start/Stop)</li>
+                        <li>Model Selection & Switching</li>
+                        <li>Conveyor Speed Control</li>
+                        <li>Data Logging Toggle</li>
+                    </ul>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Center Display</h4>
+                    <ul>
+                        <li>Triple Multispectral Views (RGB, NIR, Custom)</li>
+                        <li>Real-time Grade Distribution Chart</li>
+                        <li>Throughput Line Graph</li>
+                        <li>System Status Gauge</li>
+                    </ul>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Right Sidebar</h4>
+                    <ul>
+                        <li>Recent Grading Results</li>
+                        <li>Status Indicators (Camera, AI, Sorter)</li>
+                        <li>Speed Monitor</li>
+                        <li>System Health</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="alert alert-success">
+                <strong>Design Philosophy:</strong> Dark theme with green accents for agriculture context, professional
+                industrial software aesthetic, clear information hierarchy, and real-time data visualization.
+            </div>
+
+            <div class="alert alert-info">
+                <strong>Model Control:</strong> The GUI provides full control over trained computer vision models -
+                including model selection, loading, switching between different models in real-time, and parameter
+                adjustments for optimal performance during operation.
+            </div>
+        </section>
+
+
+
+        <!-- Hardware Specifications -->
+        <section id="hardware">
+            <h2>Hardware Specifications</h2>
+
+            <h3>JAI FSFE-3200T-10GE Camera</h3>
+            <div class="mermaid">
+                graph LR
+                subgraph "JAI Camera"
+                PRISM[Dichroic Prism]
+                S1[Sensor 1<br />2048x1536]
+                S2[Sensor 2<br />2048x1536]
+                S3[Sensor 3<br />2048x1536]
+
+                PRISM --> S1
+                PRISM --> S2
+                PRISM --> S3
+                end
+
+                LENS[C-Mount Lens] --> PRISM
+                S1 -->|Band 1| OUT[10 GigE<br />Triple Stream]
+                S2 -->|Band 2| OUT
+                S3 -->|Band 3| OUT
+            </div>
+
+            <h4>Technical Specifications</h4>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Parameter</th>
+                        <th>Specification</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Sensor Type</strong></td>
+                        <td>3 × Sony IMX252 CMOS (Pregius)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Resolution</strong></td>
+                        <td>3 × 3.2 MP (2048 × 1536 per sensor)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Frame Rate</strong></td>
+                        <td>Up to 107 FPS</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Shutter</strong></td>
+                        <td>Global shutter (motion-artifact free)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Spectral Range</strong></td>
+                        <td>405-1000 nm (customizable)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Wavebands</strong></td>
+                        <td>3 custom, as narrow as 25 nm</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Interface</strong></td>
+                        <td>10 GigE Vision (auto-negotiates to 1G)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Synchronization</strong></td>
+                        <td>Hardware (prism-based, perfect alignment)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Bit Depth</strong></td>
+                        <td>8/10/12-bit selectable</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Dimensions</strong></td>
+                        <td>62 × 62 × 86.5 mm</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Weight</strong></td>
+                        <td>270 grams</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h4>Recommended Waveband Configuration</h4>
+            <p>For Apple Quality Inspection:</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Channel</th>
+                        <th>Waveband</th>
+                        <th>Purpose</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>1</td>
+                        <td>400-700 nm (RGB Bayer)</td>
+                        <td>Surface defects, color grading</td>
+                    </tr>
+                    <tr>
+                        <td>2</td>
+                        <td>750-950 nm (NIR)</td>
+                        <td>Internal defects, bruises</td>
+                    </tr>
+                    <tr>
+                        <td>3</td>
+                        <td>850-900 nm (Narrow NIR)</td>
+                        <td>Water content, firmness</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>Computing Hardware</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Component</th>
+                        <th>Minimum</th>
+                        <th>Recommended</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>CPU</strong></td>
+                        <td>Intel i7 8th gen / Ryzen 7</td>
+                        <td>Intel i9 10th gen / Ryzen 9</td>
+                    </tr>
+                    <tr>
+                        <td><strong>GPU</strong></td>
+                        <td>Integrated graphics</td>
+                        <td>NVIDIA RTX 3060+</td>
+                    </tr>
+                    <tr>
+                        <td><strong>RAM</strong></td>
+                        <td>16 GB</td>
+                        <td>32 GB</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Storage</strong></td>
+                        <td>512 GB SSD</td>
+                        <td>1 TB NVMe SSD</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Network</strong></td>
+                        <td>10 GigE NIC (Intel X550-T2)</td>
+                        <td>Dual 10 GigE NIC</td>
+                    </tr>
+                    <tr>
+                        <td><strong>OS</strong></td>
+                        <td>Windows 10 / Ubuntu 20.04</td>
+                        <td>Windows 11 / Ubuntu 22.04</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Technology Stack -->
+        <section id="tech-stack">
+            <h2>Technology Stack</h2>
+
+            <div class="mermaid">
+                graph TB
+                subgraph "Development"
+                LANG[Python 3.9+]
+                end
+
+                subgraph "GUI Framework"
+                QT[Qt-based / Qt 6.2+]
+                GRAPH[PyQtGraph<br />Real-time Plotting]
+                end
+
+                subgraph "Camera Interface"
+                HARV[Harvesters<br />GenICam GenTL]
+                JAI[JAI SDK]
+                end
+
+                subgraph "AI/ML Stack"
+                TORCH[PyTorch 2.0+]
+                CV[OpenCV 4.8+]
+                NP[NumPy]
+                end
+
+                subgraph "Data Management"
+                YAML[PyYAML<br />Configuration]
+                CSV[CSV/JSON<br />Export]
+                end
+
+                LANG --> QT
+                LANG --> HARV
+                LANG --> TORCH
+                LANG --> YAML
+
+                QT --> GRAPH
+                HARV --> JAI
+                TORCH --> CV
+                TORCH --> NP
+            </div>
+
+            <h3>Technology Choices</h3>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h4>GUI: Qt-based</h4>
+                    <ul>
+                        <li>LGPL license (research-friendly)</li>
+                        <li>Industry-standard performance</li>
+                        <li>Cross-platform support</li>
+                        <li>Built-in multi-threading</li>
+                    </ul>
+                </div>
+                <div class="feature-card">
+                    <h4>Camera: Harvesters</h4>
+                    <ul>
+                        <li>GenICam GenTL compliant</li>
+                        <li>Open-source license</li>
+                        <li>JAI SDK compatible</li>
+                        <li>Cross-platform Python</li>
+                    </ul>
+                </div>
+                <div class="feature-card">
+                    <h4>AI: PyTorch</h4>
+                    <ul>
+                        <li>Easy model loading/switching</li>
+                        <li>GPU acceleration</li>
+                        <li>ONNX export support</li>
+                        <li>Excellent for research</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- Requirements -->
+        <section id="requirements">
+            <h2>Requirements Specification</h2>
+
+            <h3>Performance Requirements</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Metric</th>
+                        <th>Target</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Image Acquisition</strong></td>
+                        <td>30-107 FPS</td>
+                        <td>Camera capability</td>
+                    </tr>
+                    <tr>
+                        <td><strong>AI Inference Latency</strong></td>
+                        <td>≤100ms</td>
+                        <td>Per apple</td>
+                    </tr>
+                    <tr>
+                        <td><strong>End-to-End Latency</strong></td>
+                        <td>≤150ms</td>
+                        <td>Image → sorting decision</td>
+                    </tr>
+                    <tr>
+                        <td><strong>GUI Responsiveness</strong></td>
+                        <td>≤100ms</td>
+                        <td>User interaction</td>
+                    </tr>
+                    <tr>
+                        <td><strong>System Throughput</strong></td>
+                        <td>60-120 apples/min</td>
+                        <td>Speed-dependent</td>
+                    </tr>
+                    <tr>
+                        <td><strong>CPU Usage</strong></td>
+                        <td>
+                            <80%< /td>
+                        <td>During operation</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Memory Usage</strong></td>
+                        <td>
+                            <4 GB RAM</td>
+                        <td>With image buffers</td>
+                    </tr>
+                    <tr>
+                        <td><strong>System Uptime</strong></td>
+                        <td>≥99%</td>
+                        <td>8-hour operation</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>Latency Budget</h3>
+            <div class="mermaid">
+                graph LR
+                A[Image Capture<br />9ms] --> B[Network Transfer<br />5-10ms]
+                B --> C[Preprocessing<br />5-10ms]
+                C --> D[AI Inference<br />50-100ms]
+                D --> E[Sorting Command<br />1-5ms]
+                E --> F[Total: 70-135ms<br />Meets <150ms target] </div>
+
+                    <h3>Throughput Analysis</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Conveyor Speed</th>
+                                <th>Apples/min</th>
+                                <th>Required FPS</th>
+                                <th>Camera FPS</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>0.5 m/s</td>
+                                <td>~40</td>
+                                <td>~30</td>
+                                <td>107</td>
+                                <td>Exceeds</td>
+                            </tr>
+                            <tr>
+                                <td>1.0 m/s</td>
+                                <td>~80</td>
+                                <td>~60</td>
+                                <td>107</td>
+                                <td>Exceeds</td>
+                            </tr>
+                            <tr>
+                                <td>1.5 m/s</td>
+                                <td>~120</td>
+                                <td>~90</td>
+                                <td>107</td>
+                                <td>Meets</td>
+                            </tr>
+                        </tbody>
+                    </table>
+
+                    <div class="alert alert-success">
+                        <strong>Conclusion:</strong> Camera can handle all expected speeds with headroom!
+                    </div>
+        </section>
+
+
+
+        <!-- 0-100 Roadmap -->
+        <section id="roadmap">
+            <h2>Getting Started: 0-100 Roadmap</h2>
+
+            <h3>Quick Start Guide</h3>
+
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h4>Step 1: Prerequisites</h4>
+                    <ul>
+                        <li>✓ Understand project requirements</li>
+                        <li>✓ Review planning documents</li>
+                        <li>○ Acquire hardware</li>
+                        <li>○ Set timeline and milestones</li>
+                    </ul>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Step 2: Environment Setup</h4>
+                    <ul>
+                        <li>Install Python 3.9+</li>
+                        <li>Install 10 GigE network card</li>
+                        <li>Configure network settings</li>
+                        <li>Install JAI SDK</li>
+                        <li>Test camera connection</li>
+                    </ul>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Step 3: Project Skeleton</h4>
+                    <ul>
+                        <li>Create directory structure</li>
+                        <li>Initialize Git repository</li>
+                        <li>Create requirements.txt</li>
+                        <li>Write basic README.md</li>
+                    </ul>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Step 4: Camera Integration</h4>
+                    <ul>
+                        <li>Implement CameraInterface</li>
+                        <li>Test 3-channel acquisition</li>
+                        <li>Create image buffer system</li>
+                        <li>Write unit tests</li>
+                    </ul>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Step 5: Basic GUI</h4>
+                    <ul>
+                        <li>Create main window</li>
+                        <li>Add camera controls</li>
+                        <li>Add image display</li>
+                        <li>Implement threading</li>
+                    </ul>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Step 6: AI Integration</h4>
+                    <ul>
+                        <li>Implement model loader</li>
+                        <li>Create inference engine</li>
+                        <li>Integrate with camera</li>
+                        <li>Test with sample model</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="alert alert-warning">
+                <strong>Next Action:</strong> Begin Phase 2 - Environment Setup. Follow the setup guide to install all
+                required software and test camera connection.
+            </div>
+        </section>
+
+        <!-- Key Features -->
+        <section>
+            <h2>Key Features & Innovation</h2>
+
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h4>Dynamic Model Switching</h4>
+                    <p><strong>Problem:</strong> Traditional systems hardcode AI models</p>
+                    <p><strong>Solution:</strong> Runtime model loading and switching</p>
+                    <p><strong>Benefits:</strong> Compare models, A/B testing, rapid iteration</p>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Perfect Multispectral Sync</h4>
+                    <p><strong>Advantage:</strong> Hardware-synchronized via prism</p>
+                    <p><strong>Benefit:</strong> No software sync complexity</p>
+                    <p><strong>Result:</strong> All 3 sensors capture simultaneously</p>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Modular Architecture</h4>
+                    <p><strong>Design:</strong> Plug-and-play components</p>
+                    <p><strong>Flexibility:</strong> Swap camera, change hardware easily</p>
+                    <p><strong>Community:</strong> Clear APIs, easy to extend</p>
+                </div>
+
+                <div class="feature-card">
+                    <h4>Open Source</h4>
+                    <p><strong>Transparency:</strong> Fully open code</p>
+                    <p><strong>Reproducibility:</strong> Research-grade quality</p>
+                    <p><strong>Community:</strong> Free to use and modify</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Success Metrics -->
+        <section>
+            <h2>Success Metrics</h2>
+
+            <h3>Technical Metrics</h3>
+            <ul class="checklist">
+                <li>Real-time performance at 1.0 m/s conveyor speed</li>
+                <li>
+                    <150ms end-to-end latency</li>
+                <li>>99% uptime during 8-hour test</li>
+                <li>Support 3+ different AI models</li>
+            </ul>
+
+            <h3>Usability Metrics</h3>
+            <ul class="checklist">
+                <li>Operator can start system in <2 minutes</li>
+                <li>Model switch in <10 seconds</li>
+                <li>Positive feedback from 3+ testers</li>
+            </ul>
+
+            <h3>Research Impact Metrics</h3>
+            <ul class="checklist">
+                <li>Paper accepted at ASABE AIM26</li>
+                <li>Code repository with >10 stars (first month)</li>
+                <li>At least 1 external contribution/inquiry</li>
+            </ul>
+        </section>
+    </div>
+
+    <footer>
+        <h3>Project Information</h3>
+        <p><strong>Institution:</strong> Michigan State University</p>
+        <p><strong>Conference:</strong> ASABE AIM26</p>
+        <p><strong>Document Version:</strong> 1.0 | <strong>Last Updated:</strong> January 15, 2026</p>
+        <p style="margin-top: 1rem; opacity: 0.7;">Complete Project Planning & Documentation</p>
+    </footer>
+
+    <div class="scroll-top" onclick="window.scrollTo({top: 0, behavior: 'smooth'}); showHeader();">
+        ↑
+    </div>
+
+    <script>
+        let lastScrollTop = 0;
+        const header = document.querySelector('header');
+        const nav = document.querySelector('nav');
+        const navLinks = document.querySelectorAll('nav a');
+
+        // Hide header on scroll down, show on scroll up
+        window.addEventListener('scroll', () => {
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+
+            // If scrolled past header, hide it
+            if (scrollTop > 200) {
+                header.classList.add('hidden');
+                nav.classList.add('top');
+            } else {
+                header.classList.remove('hidden');
+                nav.classList.remove('top');
+            }
+
+            lastScrollTop = scrollTop;
+        });
+
+        // Hide header when clicking navigation links
+        navLinks.forEach(link => {
+            link.addEventListener('click', () => {
+                setTimeout(() => {
+                    header.classList.add('hidden');
+                    nav.classList.add('top');
+                }, 100);
+            });
+        });
+
+        // Function to show header (used by scroll-to-top button)
+        function showHeader() {
+            header.classList.remove('hidden');
+            nav.classList.remove('top');
+        }
+    </script>
+</body>
+
+</html>

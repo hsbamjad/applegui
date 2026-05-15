@@ -1,0 +1,151 @@
+# Apple Sorting GUI — Master Configuration
+# Michigan State University | ASABE AIM26 | 2026
+# ─────────────────────────────────────────────
+# Hardware: JAI FSFE-3200T-10GE camera + 3-lane screw conveyor
+#           + 3× pneumatic sorting units controlled via Arduino
+
+# ══════════════════════════════════════════════════════════════
+# CAMERA
+# ══════════════════════════════════════════════════════════════
+camera:
+  mode: "mock"          # Options: "mock" | "jai"
+
+  mock:
+    fps: 60             # Match JAI real-capture rate
+    resolution: [2048, 1536]   # Match JAI Sony IMX252 native res
+    replay_folder: null         # Path to real captured frames, or null for synthetic
+
+  jai:
+    gentl_path: "C:/Program Files/JAI/eBUS SDK/bin/PvGenTL.cti"
+    device_index: 0
+    fps: 60             # Camera supports up to 107 FPS; 60 used for 3-apple/s lane
+    exposure_us: 5000
+    pixel_format: "Mono8"          # Mono8 per channel
+    trigger_mode: "Off"            # "Off"=free-run | "On"=encoder-triggered
+    num_channels: 3
+
+# ══════════════════════════════════════════════════════════════
+# SPECTRAL CHANNELS
+# 5-band (RGB + NIR1 + NIR2) from JAI — 3 used for sorting
+# ══════════════════════════════════════════════════════════════
+channels:
+  ch1:
+    name: "RG"
+    description: "Red-Green visible band"
+    wavelength_nm: 660
+    sensor_index: 0     # buffer.payload.components[0]
+    color: "#60A5FA"
+
+  ch2:
+    name: "NIR1"
+    description: "Near-infrared band 1 — bruising / internal structure"
+    wavelength_nm: 800
+    sensor_index: 1     # buffer.payload.components[1]
+    color: "#34D399"
+
+  ch3:
+    name: "NIR2"
+    description: "Near-infrared band 2 — water content / firmness"
+    wavelength_nm: 900
+    sensor_index: 2     # buffer.payload.components[2]
+    color: "#A78BFA"
+
+# ══════════════════════════════════════════════════════════════
+# CONVEYOR
+# 3-lane screw conveyor; apples spin as they travel
+# ══════════════════════════════════════════════════════════════
+conveyor:
+  lanes: 3                         # Number of physical lanes
+  speed_apples_per_sec: 1          # Nominal: 1 | 2 | 3 apples/s/lane
+  camera_to_gate_m: 0.5            # Physical distance: camera center → sorter gate (meters)
+  # Timing delay (ms) = (camera_to_gate_m / conveyor_speed_m_s) * 1000
+  # Software computes this dynamically — set conveyor_speed_m_s at runtime
+
+# ══════════════════════════════════════════════════════════════
+# SORTER HARDWARE
+# 3 sorting units — one per lane — at end of conveyor
+# Each unit: Submodule A (Fresh→Outlet A) + Submodule B (Processing→Outlet B)
+# Default (no signal): apple falls to Outlet C (Cull)
+# Control path: PC → USB/Serial → Arduino → Solenoid valve → Air cylinder → Paddle
+# ══════════════════════════════════════════════════════════════
+sorter:
+  mode: "simulation"    # Options: "simulation" | "serial" (Arduino)
+
+  # Grade → outlet mapping (DO NOT CHANGE without physical verification)
+  grade_outlet_map:
+    Fresh:      "A"     # Submodule A fires → paddle deflects → Outlet A
+    Processing: "B"     # Submodule B fires → paddle deflects → Outlet B
+    Cull:       "C"     # No signal → apple falls through → Outlet C (default/safe)
+
+  # Serial (Arduino) configuration
+  serial:
+    port: "COM3"        # Update to actual Arduino COM port on Shuttle PC
+    baudrate: 9600
+    timeout_s: 1.0
+
+  # Arduino command protocol (single byte commands)
+  # Arduino sketch must listen and fire the appropriate solenoid
+  arduino_commands:
+    lane_1_submodule_A: "1A"    # Lane 1 → Fresh
+    lane_1_submodule_B: "1B"    # Lane 1 → Processing
+    lane_2_submodule_A: "2A"    # Lane 2 → Fresh
+    lane_2_submodule_B: "2B"    # Lane 2 → Processing
+    lane_3_submodule_A: "3A"    # Lane 3 → Fresh
+    lane_3_submodule_B: "3B"    # Lane 3 → Processing
+    # Cull (C) requires NO command — apple falls to Outlet C by default
+
+  # NIR switch (arrival sensor at sorter gate — optional)
+  nir_switch:
+    enabled: false      # Set true if Arduino reports apple-arrival confirmation
+    timeout_ms: 200     # If apple not detected within this window, log a miss
+
+  # Pneumatic system safety
+  valve_pulse_ms: 80    # Duration the solenoid valve stays open (milliseconds)
+                        # Too short → paddle doesn't extend fully
+                        # Too long  → apple not cleared, next apple collision risk
+
+# ══════════════════════════════════════════════════════════════
+# AI INFERENCE
+# YOLOv8m-seg trained on Gala apples (Fresh / Processing / Cull)
+# ══════════════════════════════════════════════════════════════
+inference:
+  model_dir: "models/"
+  default_model: null              # Filename of model to auto-load on startup
+  device: "cuda"                   # "cuda" | "cpu"
+  confidence_threshold: 0.5
+  iou_threshold: 0.45              # NMS IoU threshold
+
+  # Multi-view weighted voting (apple tracked across multiple frames)
+  tracking:
+    enabled: true
+    grade_line_x: 0.85             # Normalized X position in frame; apple graded when it crosses
+    vote_weight_confidence: true   # Weight votes by per-frame confidence score
+
+# ══════════════════════════════════════════════════════════════
+# DATA LOGGING
+# ══════════════════════════════════════════════════════════════
+logging:
+  enabled: false
+  output_dir: "data/"
+  save_images: false
+  save_every_n: 10                 # Save 3-channel TIFF every N apples
+  csv_columns:
+    - timestamp
+    - apple_id
+    - lane
+    - grade
+    - confidence
+    - diameter_px
+    - conveyor_speed_aps
+    - outlet_fired
+
+# ══════════════════════════════════════════════════════════════
+# DISPLAY
+# ══════════════════════════════════════════════════════════════
+display:
+  fps_limit: 30                    # Max GUI refresh rate (sub-sample camera frames)
+  image_width: 480                 # Display width per channel panel
+  image_height: 360                # Display height per channel panel
+  show_bounding_boxes: true
+  show_tracking_id: true
+  show_grade_label: true

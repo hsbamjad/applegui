@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Conda — environment is reproduced from environment.yml, not committed
+.conda/
+conda-meta/
+
+# Runtime data — generated during operation, not source code
+data/logs/
+data/images/
+data/sessions/
+
+# AI model weights — too large for Git, share via separate link
+models/*.pt
+models/*.pth
+models/*.onnx
+models/*.bin
+
+# Environment & secrets
+.env
+*.env
+
+# IDE
+.vscode/settings.json
+.idea/
+*.suo
+*.user
+.vs/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Temporary / scratch
+*.tmp
+*.bak
+output.txt
+
+# Hardware docs — large binary files (share separately)
+docs/hardware/*.png
+docs/hardware/*.jpg
