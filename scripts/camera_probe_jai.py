@@ -115,6 +115,16 @@ class Source:
         self.device.SetStreamDestination(lip, lp, self.source_channel)
         print(f"       → stream → {lip}:{lp}")
 
+        # Negotiate packet size FOR THIS SPECIFIC CHANNEL
+        # (global NegotiatePacketSize only covers channel 0 by default;
+        #  each stream channel needs its own negotiation to avoid NIR packet loss)
+        if isinstance(self.device, eb.PvDeviceGEV):
+            r = self.device.NegotiatePacketSize(self.source_channel)
+            pkt = get_p(self.device.GetParameters(), "GevSCPSPacketSize")
+            print(f"       NegotiatePacketSize ch{self.source_channel}: "
+                  f"{r.GetCodeString()}  (pkt={pkt})")
+
+
         # Set up pipeline (manages buffer pool internally)
         payload_size = self.device.GetPayloadSize()
         self.pipeline = eb.PvPipeline(self.stream)
