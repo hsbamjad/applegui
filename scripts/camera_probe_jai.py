@@ -214,9 +214,17 @@ for ch_idx, src_name in enumerate(source_names):
             image     = pvbuffer.GetImage()
             w_src     = image.GetWidth()
             h_src     = image.GetHeight()
-            img_data  = image.GetDataPointer()   # numpy array
+            img_data  = image.GetDataPointer()   # numpy array (H×W, uint8)
             fname     = OUT_DIR / f"ch{ch_idx+1}.png"
-            cv2.imwrite(str(fname), img_data)
+
+            # BayerRG8 → debayer to BGR color for proper visualization
+            if pf == "BayerRG8":
+                img_save = cv2.cvtColor(img_data, cv2.COLOR_BayerRG2BGR)
+                print(f"  (BayerRG8 → debayered BGR color)")
+            else:
+                img_save = img_data   # Mono8 NIR — already grayscale
+
+            cv2.imwrite(str(fname), img_save)
             print(f"  ✅  {fname.name}  {w_src}×{h_src}  "
                   f"min={img_data.min()} max={img_data.max()} mean={img_data.mean():.1f}")
         else:
