@@ -190,6 +190,9 @@ class JAICamera:
         self._latest: Optional[FrameTriplet] = None
         self._latest_lock  = threading.Lock()
         self._grab_thread: Optional[threading.Thread] = None
+        # EMA-stabilized gain for NIR channels — prevents per-frame flicker
+        self._nir_ema_max  = [64.0, 64.0]   # one per NIR source
+        self._EMA_ALPHA    = 0.05            # low = slow/stable, high = fast/reactive
 
     def connect(self) -> bool:
         try:
@@ -362,20 +365,27 @@ class JAICamera:
             ch1 = raw0
         ch1 = cv2.resize(ch1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
 
-        # CH2/CH3: normalize at FULL resolution first (matches camera_live_view.py quality),
-        # then resize — preserves correct min/max and avoids amplifying resize artifacts
+        # CH2/CH3: EMA-stabilized normalization — prevents per-frame brightness flicker
+        # EMA tracks the slowly-changing max value; gain is stable across frames
         mn1, mx1 = int(raw1.min()), int(raw1.max())
         mn2, mx2 = int(raw2.min()), int(raw2.max())
 
-        # Log pixel stats every 90 frames (~once per 3s) to diagnose dark NIR
         if self._frame_idx % 90 == 0:
             log.info("NIR stats — CH2: min=%d max=%d  |  CH3: min=%d max=%d",
                      mn1, mx1, mn2, mx2)
 
-        ch2_norm = cv2.normalize(raw1, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) \
-                   if mx1 > mn1 else np.full_like(raw1, 128)
-        ch3_norm = cv2.normalize(raw2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) \
-                   if mx2 > mn2 else np.full_like(raw2, 128)
+        def _ema_normalize(raw: np.ndarray, ch_idx: int) -> np.ndarray:
+            cur_max = float(raw.max())
+            if cur_max > 0:
+                self._nir_ema_max[ch_idx] = (
+                    (1 - self._EMA_ALPHA) * self._nir_ema_max[ch_idx]
+                    + self._EMA_ALPHA * cur_max
+                )
+            scale = 255.0 / max(self._nir_ema_max[ch_idx], 1.0)
+            return np.clip(raw.astype(np.float32) * scale, 0, 255).astype(np.uint8)
+
+        ch2_norm = _ema_normalize(raw1, 0)
+        ch3_norm = _ema_normalize(raw2, 1)
 
         ch2 = cv2.resize(ch2_norm, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
         ch3 = cv2.resize(ch3_norm, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
