@@ -192,38 +192,66 @@ class JAICamera:
             log.error("eBUS SDK not installed — cannot connect to JAI camera")
             return False
 
-        jai_cfg       = self._cfg.get("jai", {})
-        target_ip     = jai_cfg.get("ip", None)
+        jai_cfg    = self._cfg.get("jai", {})
+        target_mac = jai_cfg.get("mac", None)   # MAC is stable; IP can change
+        target_ip  = jai_cfg.get("ip",  None)   # IP as fallback hint
 
         # ── Discover ──────────────────────────────────────────────
-        log.info("JAICamera: scanning for FS-3200T …")
-        sys_obj = eb.PvSystem()
-        sys_obj.Find()
+        log.info("JAICamera: scanning network for FS-3200T …")
+        try:
+            sys_obj = eb.PvSystem()
+            sys_obj.Find()
+        except Exception as e:
+            log.error("JAICamera: PvSystem.Find() failed: %s", e)
+            return False
 
         connection_id = None
         for i in range(sys_obj.GetInterfaceCount()):
             iface = sys_obj.GetInterface(i)
             for j in range(iface.GetDeviceCount()):
                 dev = iface.GetDeviceInfo(j)
+                mac = dev.GetMACAddress()
                 ip  = dev.GetIPAddress()
-                log.info("  Found: %s (%s)", dev.GetDisplayID(), ip)
+                log.info("  Found: %s  IP=%s  MAC=%s", dev.GetDisplayID(), ip, mac)
+
+                # Prefer MAC match (stable), fall back to IP match, else first device
                 if connection_id is None:
-                    if target_ip is None or ip == target_ip:
+                    if target_mac and mac.lower() == target_mac.lower():
                         connection_id = dev.GetConnectionID()
+                        log.info("  → Selected by MAC match")
+                    elif target_ip and ip == target_ip:
+                        connection_id = dev.GetConnectionID()
+                        log.info("  → Selected by IP match")
+
+        # Last resort: use first found device if no match
+        if connection_id is None:
+            for i in range(sys_obj.GetInterfaceCount()):
+                iface = sys_obj.GetInterface(i)
+                for j in range(iface.GetDeviceCount()):
+                    connection_id = iface.GetDeviceInfo(j).GetConnectionID()
+                    log.info("  → No MAC/IP match — using first found device")
+                    break
+                if connection_id:
+                    break
 
         if connection_id is None:
-            log.error("JAICamera: no camera found")
+            log.error("JAICamera: no camera found on network")
             return False
 
         # ── Connect ───────────────────────────────────────────────
-        result, self._device = eb.PvDevice.CreateAndConnect(connection_id)
+        try:
+            result, self._device = eb.PvDevice.CreateAndConnect(connection_id)
+        except Exception as e:
+            log.error("JAICamera: CreateAndConnect raised: %s", e)
+            return False
+
         if self._device is None:
-            log.error("JAICamera: connect failed: %s — close eBUS Player first",
+            log.error("JAICamera: connect failed: %s — is eBUS Player open?",
                       result.GetCodeString())
             return False
         log.info("JAICamera: connected (GEV: %s)", isinstance(self._device, eb.PvDeviceGEV))
 
-        # Negotiate packet size BEFORE opening any streams (prevents packet loss)
+        # Negotiate packet size BEFORE opening any streams (prevents dark NIR)
         if isinstance(self._device, eb.PvDeviceGEV):
             r = self._device.NegotiatePacketSize()
             log.info("NegotiatePacketSize: %s", r.GetCodeString())
@@ -255,11 +283,10 @@ class JAICamera:
 
         log.info("JAICamera: %d streams open simultaneously", len(self._sources))
 
-        # ── Start acquisition on ALL sources ──────────────────────
+        # ── Start acquisition + warmup + drain ────────────────────
         for src in self._sources:
             src.start_acquisition()
 
-        # Warmup + interleaved drain (prevents dark cold-start frames + blockID drift)
         log.info("JAICamera: warming up %.1fs …", self.WARMUP_S)
         time.sleep(self.WARMUP_S)
 
@@ -270,10 +297,11 @@ class JAICamera:
                 if r.IsOK():
                     src.pipeline.ReleaseBuffer(buf)
                     counts[src._source_name] += 1
-        log.info("JAICamera: drained %s frames — ready", counts)
+        log.info("JAICamera: drained %s — ready", counts)
 
         self._running = True
         return True
+
 
     def grab(self) -> Optional[FrameTriplet]:
         """
@@ -351,13 +379,18 @@ class CameraInterface:
         """Connect to camera. Returns True on success."""
         if self._mode == "jai":
             self._backend = JAICamera(self._cfg)
-            ok = self._backend.connect()
+            try:
+                ok = self._backend.connect()
+            except Exception as e:
+                log.error("JAICamera.connect() raised unexpected error: %s", e)
+                ok = False
             if not ok:
-                log.warning("JAICamera failed — falling back to mock")
+                log.warning("JAICamera failed — falling back to mock mode")
                 self._mode    = "mock"
                 self._backend = None
             else:
                 return True
+
 
         # Mock backend
         log.info("MockCamera: connected (synthetic frames)")
