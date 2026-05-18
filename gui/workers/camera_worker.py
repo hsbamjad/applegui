@@ -28,9 +28,10 @@ log = logging.getLogger(__name__)
 class CameraWorker(QThread):
     """Background QThread: grabs synchronized frame triplets, emits to GUI."""
 
-    sig_frame            = pyqtSignal(object, object, object, float)  # ch1, ch2, ch3, fps
-    sig_status           = pyqtSignal(str, bool)                       # message, is_error
-    sig_exposure_readback = pyqtSignal(int)   # actual exposure µs read back from firmware
+    sig_frame             = pyqtSignal(object, object, object, float)  # ch1, ch2, ch3, display_fps
+    sig_status            = pyqtSignal(str, bool)                       # message, is_error
+    sig_exposure_readback = pyqtSignal(int)    # actual exposure µs read back from firmware
+    sig_cam_fps           = pyqtSignal(float)  # actual camera acquisition FPS (grab thread)
 
     def __init__(self, config: dict, display_fps: int = 30) -> None:
         super().__init__()
@@ -59,6 +60,7 @@ class CameraWorker(QThread):
         fps_start      = time.perf_counter()
         fps            = 0.0
         last_frame_idx = -1
+        cam_fps_t      = time.perf_counter()   # for reporting grab thread FPS
         # NOTE: min_interval is NOT cached — read self._display_fps each iteration
         # so that set_fps() takes effect immediately without restarting the thread.
 
@@ -82,6 +84,10 @@ class CameraWorker(QThread):
                 fps         = frame_count / elapsed
                 frame_count = 0
                 fps_start   = time.perf_counter()
+                # Also report actual camera grab FPS every second
+                cam_fps = self._camera.grab_fps()
+                if cam_fps > 0:
+                    self.sig_cam_fps.emit(cam_fps)
 
             self.sig_frame.emit(triplet.ch1, triplet.ch2, triplet.ch3, fps)
 

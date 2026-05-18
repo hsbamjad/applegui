@@ -190,10 +190,19 @@ class JAICamera:
         self._latest: Optional[FrameTriplet] = None
         self._latest_lock  = threading.Lock()
         self._grab_thread: Optional[threading.Thread] = None
-        # EMA-stabilized gain for NIR channels — prevents per-frame flicker
-        self._nir_ema_min  = [0.0, 0.0]     # one per NIR source
-        self._nir_ema_max  = [64.0, 64.0]   # one per NIR source
-        self._EMA_ALPHA    = 0.05            # low = slow/stable, high = fast/reactive
+        # EMA-stabilized gain for NIR channels
+        self._nir_ema_min  = [0.0, 0.0]
+        self._nir_ema_max  = [64.0, 64.0]
+        self._EMA_ALPHA    = 0.05
+        # Camera-side FPS tracking (grab thread measures actual acquisition rate)
+        self._grab_fps      = 0.0
+        self._grab_count    = 0
+        self._grab_fps_t    = 0.0
+
+    @property
+    def grab_fps(self) -> float:
+        """Actual camera acquisition FPS measured in the background grab thread."""
+        return self._grab_fps
 
     def connect(self) -> bool:
         try:
@@ -321,10 +330,11 @@ class JAICamera:
 
     def _grab_loop(self) -> None:
         """
-        Runs in a daemon thread at full camera speed (30fps).
+        Runs in a daemon thread at camera acquisition speed.
+        Measures actual grab FPS independently of display FPS.
         Always stores the latest processed triplet in self._latest.
-        The worker thread reads this cache non-blocking via grab().
         """
+        self._grab_fps_t = time.time()
         try:
             while self._running:
                 raws     = []
@@ -342,6 +352,14 @@ class JAICamera:
 
                 if not ok or len(raws) < len(self._sources):
                     continue
+
+                # Track actual camera FPS
+                self._grab_count += 1
+                elapsed = time.time() - self._grab_fps_t
+                if elapsed >= 1.0:
+                    self._grab_fps   = self._grab_count / elapsed
+                    self._grab_count = 0
+                    self._grab_fps_t = time.time()
 
                 triplet = self._process_raws(raws, block_id)
                 with self._latest_lock:
@@ -692,6 +710,12 @@ class CameraInterface:
         if self._mode == "jai" and self._backend:
             return self._backend.get_exposure()
         return -1
+
+    def grab_fps(self) -> float:
+        """Actual camera acquisition FPS from grab thread. 0.0 in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.grab_fps
+        return 0.0
 
     @property
     def mode(self) -> str:

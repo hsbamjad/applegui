@@ -347,6 +347,7 @@ class MainWindow(QMainWindow):
         self._cam_w.sig_frame.connect(self._on_frame)
         self._cam_w.sig_status.connect(self._on_cam_status)
         self._cam_w.sig_exposure_readback.connect(self._on_exposure_readback)
+        self._cam_w.sig_cam_fps.connect(self._on_cam_fps)
         self._cam_w.start()
 
         # ── Inference worker ───────────────────────────────────────
@@ -501,3 +502,23 @@ class MainWindow(QMainWindow):
         """
         self._left._spn_exposure.setValue(actual_us)
         log.info("Exposure spinbox synced to firmware value: %d µs", actual_us)
+
+    @pyqtSlot(float)
+    def _on_cam_fps(self, cam_fps: float) -> None:
+        """
+        Shows real camera hardware FPS (from grab thread) in the status bar.
+
+        TWO DIFFERENT FPS NUMBERS:
+          Camera FPS  = how fast the hardware sensor grabs frames (what you set)
+          Display FPS = how fast Qt renders 3 channel images to screen (~30 max)
+
+        Qt physically cannot paint 3 x 640x480 QImages faster than ~30 times/sec
+        on a single core. The camera IS running at the FPS you set. Only inference
+        uses camera FPS; display FPS is a visual smoothness limit.
+        """
+        display_fps = int(self._cam_w._display_fps) if self._cam_w else 0
+        self.statusBar().showMessage(
+            f"Cam: {cam_fps:.0f} FPS (hardware)   |   "
+            f"Display: ~{display_fps} FPS (Qt render limit ≈ 30 for 3 channels)   |   "
+            f"Max exposure at {cam_fps:.0f} FPS: {int(1_000_000 / max(cam_fps, 1)):,} µs"
+        )
