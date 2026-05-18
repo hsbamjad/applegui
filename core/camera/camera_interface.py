@@ -132,10 +132,14 @@ class _JAISource:
         return True
 
     def start_acquisition(self) -> bool:
-        nm = self._device.GetParameters()
-        r  = nm.SetEnumValue("SourceSelector", self._source_name)
+        nm  = self._device.GetParameters()
+        sel = nm.Get("SourceSelector")
+        if sel is None:
+            log.error("  %s: SourceSelector param not found", self._source_name)
+            return False
+        r = sel.SetValue(self._source_name)
         if not r.IsOK():
-            log.error("  %s: SetEnumValue SourceSelector failed: %s",
+            log.error("  %s: SetValue SourceSelector failed: %s",
                       self._source_name, r.GetCodeString())
             return False
         r = self._device.StreamEnable()
@@ -145,10 +149,13 @@ class _JAISource:
         return r.IsOK()
 
     def stop_acquisition(self) -> None:
-        nm = self._device.GetParameters()
-        nm.SetEnumValue("SourceSelector", self._source_name)
+        nm  = self._device.GetParameters()
+        sel = nm.Get("SourceSelector")
+        if sel:
+            sel.SetValue(self._source_name)
         nm.Get("AcquisitionStop").Execute()
         self._device.StreamDisable()
+
 
 
     def grab(self, timeout_ms: int = 500) -> tuple[Optional[np.ndarray], int]:
