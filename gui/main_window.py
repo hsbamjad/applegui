@@ -336,9 +336,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Starting camera pipeline…")
 
         # ── Camera worker ──────────────────────────────────────────
+        display_fps = self._cfg.get("display", {}).get("fps_limit", 24)
         self._cam_w = CameraWorker(
             config      = self._cfg.get("camera", {}),
-            display_fps = 30,
+            display_fps = display_fps,
         )
         self._cam_w.sig_frame.connect(self._on_frame)
         self._cam_w.sig_status.connect(self._on_cam_status)

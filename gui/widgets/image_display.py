@@ -184,18 +184,30 @@ class ChannelPanel(QWidget):
 
         if frame.dtype != np.uint8:
             frame = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
-        if frame.ndim == 2:
-            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-        elif frame.ndim == 3 and frame.shape[2] == 3:
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         h, w = frame.shape[:2]
-        qt_img = QImage(frame.data, w, h, 3 * w, QImage.Format.Format_RGB888)
-        pixmap = QPixmap.fromImage(qt_img).scaled(
-            self._display.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.FastTransformation,
-        )
+
+        # 1. Direct Grayscale Wrapping: Use Grayscale8 for Mono8 to bypass GRAY2RGB CPU conversions
+        if frame.ndim == 2:
+            qt_img = QImage(frame.data, w, h, w, QImage.Format.Format_Grayscale8)
+        elif frame.ndim == 3 and frame.shape[2] == 3:
+            # Color channel: Convert to RGB in-place before wrapping
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            qt_img = QImage(rgb_frame.data, w, h, 3 * w, QImage.Format.Format_RGB888)
+        else:
+            return
+
+        # 2. Viewport-Matching Scaling Bypass: Skip expensive QPixmap.scaled() if viewport matches frame dimensions
+        disp_size = self._display.size()
+        if w == disp_size.width() and h == disp_size.height():
+            pixmap = QPixmap.fromImage(qt_img)
+        else:
+            pixmap = QPixmap.fromImage(qt_img).scaled(
+                disp_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation,
+            )
+
         self._display.setPixmap(pixmap)
         self._frames += 1
         self._lbl_res.setText(f"{w}×{h}")
