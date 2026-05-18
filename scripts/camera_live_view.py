@@ -26,7 +26,7 @@ import cv2
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 BUFFER_COUNT  = 16
-TIMEOUT_MS    = 500        # short timeout — we're in a live loop
+TIMEOUT_MS    = 50         # one frame @ 30fps = 33ms; keep short to avoid loop stalls
 DISPLAY_W     = 640        # width per channel panel
 DISPLAY_H     = 480        # height per channel panel
 OUT_DIR       = Path("scripts/probe_output")
@@ -126,17 +126,23 @@ class Source:
         nm.Get("AcquisitionStop").Execute()
         self.device.StreamDisable()
 
-    def grab(self):
-        """Grab latest frame. Returns (img_bgr, block_id) or (None, None)."""
-        result, buffer, op_result = self.pipeline.RetrieveNextBuffer(TIMEOUT_MS)
-        if result.IsFailure() or not op_result.IsOK():
-            return None, None
-
-        image    = buffer.GetImage()
-        raw      = image.GetDataPointer().copy()
-        block_id = buffer.GetBlockID()
-        self.pipeline.ReleaseBuffer(buffer)
-        return raw, block_id
+    def grab_latest(self):
+        """Drain pipeline queue and return only the most recent frame.
+        Prevents display lag from backlogged frames when processing is slow.
+        Returns (raw_array, block_id) or (None, None) if no frame available.
+        """
+        latest_raw = None
+        latest_bid = None
+        while True:
+            result, buffer, op_result = self.pipeline.RetrieveNextBuffer(TIMEOUT_MS)
+            if result.IsFailure():
+                break   # queue empty
+            if op_result.IsOK():
+                # Keep overwriting — end of loop gives us the most recent frame
+                latest_raw = buffer.GetImage().GetDataPointer().copy()
+                latest_bid = buffer.GetBlockID()
+            self.pipeline.ReleaseBuffer(buffer)
+        return latest_raw, latest_bid
 
     def close(self):
         if self.pipeline:
@@ -231,13 +237,12 @@ try:
         block_ids = []
 
         for i, src in enumerate(sources):
-            raw, bid = src.grab()
+            raw, bid = src.grab_latest()
 
             if raw is not None:
                 last_frames[i] = (raw, bid)
 
             if last_frames[i] is None:
-                # No frame yet — show black panel
                 panels.append(np.zeros((DISPLAY_H, DISPLAY_W, 3), dtype=np.uint8))
                 block_ids.append(None)
                 continue
@@ -245,19 +250,24 @@ try:
             raw, bid = last_frames[i]
             block_ids.append(bid)
 
-            # Convert to BGR display image
+            # ── Process at DISPLAY resolution (not full 3MP) for speed ──────
             if src.pixel_format == "BayerRG8":
-                img_bgr = cv2.cvtColor(raw, cv2.COLOR_BayerBG2BGR)
+                # Resize Bayer raw first (INTER_NEAREST preserves pixel grid),
+                # then debayer the small image — 3× faster than debayer-then-resize
+                raw_small = cv2.resize(raw, (DISPLAY_W, DISPLAY_H),
+                                       interpolation=cv2.INTER_NEAREST)
+                img_bgr = cv2.cvtColor(raw_small, cv2.COLOR_BayerBG2BGR)
             else:
-                # NIR: normalize for display if enabled
+                # NIR: resize first (INTER_AREA = good quality downscale),
+                # then normalize the small image
+                raw_small = cv2.resize(raw, (DISPLAY_W, DISPLAY_H),
+                                       interpolation=cv2.INTER_AREA)
                 if normalize_nir:
-                    stretched = cv2.normalize(raw, None, 0, 255, cv2.NORM_MINMAX)
-                else:
-                    stretched = raw
-                img_bgr = cv2.cvtColor(stretched, cv2.COLOR_GRAY2BGR)
+                    raw_small = cv2.normalize(raw_small, None, 0, 255,
+                                              cv2.NORM_MINMAX)
+                img_bgr = cv2.cvtColor(raw_small, cv2.COLOR_GRAY2BGR)
 
-            # Resize to display panel
-            panel = cv2.resize(img_bgr, (DISPLAY_W, DISPLAY_H))
+            panel = img_bgr   # already at display resolution
 
             # Overlay label
             cv2.rectangle(panel, (0, 0), (DISPLAY_W, 28), (30, 30, 30), -1)
