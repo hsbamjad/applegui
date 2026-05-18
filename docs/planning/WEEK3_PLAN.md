@@ -1,217 +1,534 @@
-# 📅 Week 3 Plan — YOLOv8 Multispectral Inference & Sorter Automation
-
-**Michigan State University | ASABE AIM26**  
-**Week of: May 20, 2026**  
-**Status: 🔵 Initializing — Track A, B, & C Defined**
+# Week 3 Plan — Multispectral Apple Sorting GUI
+**Week of: May 26, 2026**
+**Status: 🔴 Not Started**
 
 ---
 
-## 🎯 High-Level Objectives
+## Context: Where We Are
 
-Week 2 successfully achieved 3-channel hardware-synchronized acquisition at 30 FPS with stabilized display normalization (EMA).
-Week 3 focuses on **intelligence and execution**: running multispectral deep learning models in real time and synchronizing pneumatic sorting gates with physical conveyor movement.
+### What Week 2 Delivered
+```
+Camera Pipeline (COMPLETE)
+─────────────────────────────────────────────────────────────
+  JAI FS-3200T  →  eBUS SDK  →  JAICamera (background thread)
+       │                              │
+  3× hardware-sync                   ▼
+  streams (BlockID              FrameTriplet (ch1, ch2, ch3)
+   validated)                        │
+                                     ▼
+                              CameraWorker (QThread)
+                                     │
+                                     ▼
+                              GUI: 3-channel live display
+                              EMA-normalized NIR, 21+ FPS
+```
 
-```
-       JAI Camera (30 FPS)
-              │
-              ▼
-   Synchronized FrameTriplet
-              │
-              ├───────────────────────────────┐
-              ▼                               ▼
-     [Track A: Inference]             [Track B: GUI Panel]
-     • Fixed-Range Normalization       • Real-time Bounding Boxes
-     • Custom 5-Channel YOLOv8         • Grade Statistics Updates
-     • Thread-safe Bounding Boxes      • PyQtGraph live charts
-              │
-              ▼
-    Grading Decision (Fresh / Processing / Cull)
-              │
-              ▼
-    [Track C: Arduino Automation]
-    • Millisecond Conveyor Delay Sync
-    • Serial Protocol (COM3)
-    • Pneumatic Actuator Solenoids
-```
+### What Is Still Mock / Stub
+| Component | Current State | Week 3 Goal |
+|---|---|---|
+| `InferenceWorker` | MockInferenceWorker — random grades | Real YOLOv8 on actual frames |
+| `SorterController` | Simulation mode — log only | Real Arduino serial commands |
+| `DataLogger` | Disabled / stub | Async CSV + image capture |
+| Preprocessing for inference | Not yet built | Full-res pipeline, no EMA |
 
 ---
 
-## 🛠️ Track A — YOLOv8 Multispectral Inference Pipeline
+## Week 3 Tracks
+
+```
+TRACK A (Inference)               TRACK B (Sorter)              TRACK C (Logging)
+──────────────────────────────    ──────────────────────────    ──────────────────────────
+Wire real frames into             Connect SorterController       Implement DataLogger
+InferenceWorker                   to real Arduino hardware        (CSV + TIFF, async)
+Build inference preprocessing     Implement timing offset         Wire to InferenceWorker
+Load/run YOLOv8 model             Test pneumatic actuators        Enable from GUI toggle
+Display real grades in GUI        Verify sorting accuracy
+```
+
+**Priority:** A → B → C (A is highest — nothing else matters without real inference)
+
+---
+
+## Track A — AI Inference Integration
 
 ### Goal
-Implement a robust `InferenceWorker(QThread)` that performs real-time multispectral object detection and grading on synchronized `FrameTriplet` streams.
+Replace the `MockInferenceWorker` with a real inference pipeline that receives synchronized FrameTriplets from the camera and outputs apple grades using a YOLOv8 model.
 
 ---
 
-### A1 — Define Multispectral Model Input Strategy
-**Time estimate: 1.5 hrs**
+### A1 — Build the Inference Preprocessing Pipeline
+**Time estimate: 2–3 hrs**
 
-Since the JAI camera captures 5 spectral bands (RGB from CH1, NIR1 from CH2, NIR2 from CH3), we must choose how to feed this data to YOLOv8:
+The display preprocessing (EMA gain, 640×480 resize) must NOT go to the model.
+A separate preprocessing path is needed:
 
+```python
+# core/inference/preprocessing.py
+
+import numpy as np
+import cv2
+
+INFER_W = 640   # YOLOv8 standard input width
+INFER_H = 640   # YOLOv8 standard input height
+
+def preprocess_for_inference(triplet: FrameTriplet) -> np.ndarray:
+    """
+    Convert FrameTriplet to model input tensor.
+    NO EMA. NO display resizing. Consistent normalization.
+
+    Returns:
+        np.ndarray shape (1, 5, INFER_H, INFER_W) float32
+        Channels: [R, G, B, NIR1_norm, NIR2_norm]
+    """
+    # CH1: Bayer already demosaiced to BGR in JAICamera
+    ch1 = cv2.resize(triplet.ch1, (INFER_W, INFER_H), interpolation=cv2.INTER_LINEAR)
+    ch1 = ch1.astype(np.float32) / 255.0   # Normalize to [0, 1]
+
+    # CH2/CH3: Fixed-range normalization (not EMA — must be reproducible)
+    # NIR simultaneous mode raw max = 50 (confirmed in probe output)
+    NIR_MAX = 50.0
+    ch2_full = np.clip(triplet.ch2.astype(np.float32) / NIR_MAX, 0.0, 1.0)
+    ch3_full = np.clip(triplet.ch3.astype(np.float32) / NIR_MAX, 0.0, 1.0)
+    ch2 = cv2.resize(ch2_full, (INFER_W, INFER_H), interpolation=cv2.INTER_LINEAR)
+    ch3 = cv2.resize(ch3_full, (INFER_W, INFER_H), interpolation=cv2.INTER_LINEAR)
+
+    # Stack into 5-channel tensor: [R, G, B, NIR1, NIR2]
+    r, g, b = ch1[:, :, 2], ch1[:, :, 1], ch1[:, :, 0]
+    tensor = np.stack([r, g, b, ch2, ch3], axis=0)  # (5, H, W)
+    return tensor[np.newaxis, ...]                    # (1, 5, H, W)
 ```
-                  CH1: Color BGR ────► [R, G, B]
-                                          │
-                  CH2: NIR1 ~800nm ──► [NIR1]
-                                          │
-                  CH3: NIR2 ~900nm ──► [NIR2]
-```
 
-We will build the inference worker to support **two configurable input modes** in `config.yaml`:
-1. **Stacked RGB-NIR Mode (Standard YOLO):**
-   * Feed `[R, G, average(NIR1, NIR2)]` or `[R, NIR1, NIR2]` directly to a standard 3-channel YOLOv8 model.
-   * *Benefit:* Allows running standard pre-trained models without custom PyTorch layer modifications.
-2. **True 5-Channel Mode (Custom YOLO):**
-   * Stack channels into a `[5, H, W]` tensor: `[R, G, B, NIR1, NIR2]`.
-   * Modify the model's first convolutional layer (`model.model[0].conv`) to accept 5 input channels instead of 3.
+> [!IMPORTANT]
+> NIR_MAX = 50.0 was confirmed empirically in the probe:
+> Source1: min=7 max=57 mean=9.7 and Source2: min=7 max=43 mean=8.0
+> This is a fixed physical constant for simultaneous mode. Do NOT use EMA here.
+
+**Deliverable:** `core/inference/preprocessing.py` with unit test confirming output shape and value range.
 
 ---
 
-### A2 — Fixed-Range Normalization for ML
+### A2 — Build ModelManager
+**Time estimate: 2 hrs**
+
+```python
+# core/inference/model_manager.py
+
+from pathlib import Path
+import logging
+from ultralytics import YOLO
+
+log = logging.getLogger(__name__)
+
+class ModelManager:
+    """Loads and manages YOLOv8 models from the models/ folder."""
+
+    def __init__(self, models_dir: str = "models/"):
+        self._models_dir = Path(models_dir)
+        self._model = None
+        self._model_name = None
+
+    def available_models(self) -> list[str]:
+        return [p.name for p in self._models_dir.glob("*.pt")]
+
+    def load(self, model_name: str) -> bool:
+        path = self._models_dir / model_name
+        if not path.exists():
+            log.error("Model not found: %s", path)
+            return False
+        try:
+            self._model = YOLO(str(path))
+            self._model_name = model_name
+            log.info("Loaded model: %s", model_name)
+            return True
+        except Exception as e:
+            log.error("Failed to load model %s: %s", model_name, e)
+            return False
+
+    def predict(self, tensor: np.ndarray) -> tuple[str, float]:
+        """
+        Run inference on preprocessed tensor.
+        Returns: (grade_label, confidence) e.g. ("Fresh", 0.94)
+        """
+        if self._model is None:
+            return "No Model", 0.0
+        results = self._model(tensor)
+        # Parse results based on model type (classifier vs detector)
+        # Adapt after confirming model format with Dr. Lu
+        ...
+        return grade, confidence
+```
+
+**Key questions to confirm with Dr. Lu before writing predict():**
+- Is the model a **classifier** (image → class) or **detector** (image → bounding boxes)?
+- Input channels: RGB only, or 5-channel (RGB + NIR1 + NIR2)?
+- Grade classes: `Fresh` / `Processing` / `Cull` or different labels?
+
+**Deliverable:** `core/inference/model_manager.py` with `available_models()`, `load()`, `predict()`.
+
+---
+
+### A3 — Replace MockInferenceWorker with Real InferenceWorker
+**Time estimate: 2 hrs**
+
+```python
+# gui/workers/inference_worker.py (replace mock version)
+
+class InferenceWorker(QThread):
+    sig_grade   = pyqtSignal(str, float, int)   # grade, confidence, lane
+    sig_status  = pyqtSignal(str, bool)
+
+    def __init__(self, model_manager: ModelManager, config: dict):
+        super().__init__()
+        self._mm      = model_manager
+        self._cfg     = config
+        self._queue   = Queue(maxsize=2)   # small — drop stale frames
+        self._running = False
+
+    def submit_frame(self, triplet: FrameTriplet, lane: int) -> None:
+        try:
+            self._queue.put_nowait((triplet, lane))
+        except Full:
+            pass   # inference can't keep up — drop frame
+
+    def run(self) -> None:
+        self._running = True
+        while self._running:
+            try:
+                triplet, lane = self._queue.get(timeout=0.1)
+            except Empty:
+                continue
+            tensor = preprocess_for_inference(triplet)
+            grade, conf = self._mm.predict(tensor)
+            self.sig_grade.emit(grade, conf, lane)
+
+    def stop(self) -> None:
+        self._running = False
+        self.wait(3000)
+```
+
+**Deliverable:** Real InferenceWorker wired to CameraWorker, grades displayed in GUI.
+
+---
+
+### A4 — Wire Grade Output to GUI + Downstream Workers
 **Time estimate: 1 hr**
 
-Display-only EMA normalization is highly variable (non-reproducible). The inference pipeline must use **strict, mathematical normalization** to prevent degrading model accuracy.
+```python
+# In main_window.py
+self._infer_w.sig_grade.connect(self._on_grade)
+
+def _on_grade(self, grade: str, confidence: float, lane: int) -> None:
+    self._grade_summary.increment(grade)
+    self._recent_list.add_result(grade, confidence, lane)
+    self._sorter_w.submit_grade(grade, lane)      # Track B
+    self._logger_w.log_result(grade, confidence, lane)  # Track C
+```
+
+**Deliverable:** Real grades flowing to UI, sorter, and logger simultaneously.
+
+---
+
+### A5 — Model Hot-Swap UI
+**Time estimate: 1 hr**
+
+Wire the existing `Load Model` button in the left panel:
 
 ```python
-# PREPROCESSING FOR INFERENCE
-# 1. Keep full resolution 2048 x 1536 (no resizing!)
-# 2. Demosaic Color channel
-ch1_bgr = cv2.cvtColor(raw0, cv2.COLOR_BayerBG2BGR)
+self._model_combo.currentTextChanged.connect(self._on_model_selected)
 
-# 3. Fixed-range normalization for low-intensity NIR (values max around 50)
-ch2_norm = (raw1.astype(np.float32) / 50.0).clip(0.0, 1.0)
-ch3_norm = (raw2.astype(np.float32) / 50.0).clip(0.0, 1.0)
-
-# 4. Stack channels to create network input
-# E.g. [5, 1536, 2048] tensor
+def _on_model_selected(self, model_name: str) -> None:
+    ok = self._model_manager.load(model_name)
+    self._load_status.setText("Loaded" if ok else "Failed")
 ```
 
----
-
-### A3 — Build the `InferenceWorker(QThread)`
-**Time estimate: 3 hrs**
-
-Create `gui/workers/inference_worker.py`. It should:
-* Queue incoming raw frames from `JAICamera` to prevent frame drops.
-* Run inference asynchronously on the GPU (if CUDA is available) or CPU.
-* Output detected bounding boxes, class indices, confidence scores, and lane IDs.
-* Emit `sig_inference_ready(results: dict)` to the main GUI.
+**Deliverable:** User can switch model files from the GUI without restarting.
 
 ---
 
-## 🖥️ Track B — Real-Time GUI Visualization & Analytics
+## Track B — Sorter Hardware Integration
 
 ### Goal
-Render bounding boxes over the live video panels and feed sorting metrics to the dashboard charts.
+Move `SorterController` from simulation mode to real Arduino serial commands with timed actuation based on conveyor speed and camera-to-gate distance.
 
+---
+
+### B1 — Confirm Hardware Interface (Meeting with Dr. Lu)
+**Time estimate: 30 min**
+
+Before any code, confirm:
+
+| Question | Why Needed |
+|---|---|
+| Which COM port is the Arduino on? | config.yaml sorter.serial.port |
+| Arduino command protocol? | What byte/string triggers each lane's actuator? |
+| Actuator dwell time? | How long to hold the signal (ms)? |
+| Camera-to-gate distance? | Timing offset calculation |
+| Conveyor speed (m/s)? | Timing offset calculation |
+
+**Timing offset formula:**
 ```
-+-------------------------------------------------------------+
-| [CH1 Color]              [CH2 NIR1]             [CH3 NIR2]  |
-|  +-------+                +-------+              +-------+  |
-|  | Apple | [Fresh 96%]    | Apple |              | Apple |  |
-|  +-------+                +-------+              +-------+  |
-+-------------------------------------------------------------+
+delay_ms = (camera_to_gate_m / conveyor_speed_m_s) × 1000
 ```
+Example: gate 0.5m away, conveyor at 0.3 m/s → wait 1,667ms after grading.
 
 ---
 
-### B1 — Draw Overlaid Bounding Boxes
-**Time estimate: 2 hrs**
-
-In `gui/widgets/image_display.py`, implement class-specific color overlay:
-* **Fresh:** Green bounding boxes (`#10B981`)
-* **Processing:** Yellow bounding boxes (`#F59E0B`)
-* **Cull:** Red bounding boxes (`#EF4444`)
-
-Ensure that labels and confidence scores are cleanly visible at 640×480 display scaling.
-
----
-
-### B2 — PyQtGraph Live Analytics Integration
-**Time estimate: 2 hrs**
-
-Wire the inference results to update the main dashboard:
-* **Grade Summary Panel:** Real-time counters incrementing based on classification results.
-* **Throughput Chart:** A running line chart showing processed apples per minute.
-* **Distribution Chart:** A dynamic bar chart showing the ratio of Fresh vs. Processing vs. Cull.
-
----
-
-## 🔌 Track C — Sorter Serial Control & Conveyor Sync
-
-### Goal
-Connect the serial dispatcher to the physical sorting hardware and synchronize pneumatic solenoid timing to matching conveyor speeds.
-
-```
-       Camera Field of View
-       [   Apple detected   ]  ◄── t = 0 ms
-              │
-              │  Conveyor movement (distance = 0.50 meters)
-              ▼
-         Sorting Gate
-       [ Solenoid fires! ]     ◄── t = Capture time + Delay (e.g. 500 ms)
-```
-
----
-
-### C1 — Establish Arduino Serial Interface
-**Time estimate: 1.5 hrs**
-
-Implement `core/control/sorter_controller.py` using Python's `pyserial`:
-* Read Arduino parameters from `config.yaml` (`COM3`, 9600 Baud).
-* Implement safe command dispatching (sending single-byte commands like `1A`, `2B` to fire solenoids).
-* Implement asynchronous writing so serial delays never block the main loop.
-
----
-
-### C2 — Microsecond Sorter Actuation Timing
-**Time estimate: 2 hrs**
-
-To guarantee that the physical paddle hits the correct apple as it travels down the conveyor, we must calculate the exact millisecond delay:
-
-$$\text{Delay (seconds)} = \frac{\text{Distance: Camera to Gate (meters)}}{\text{Conveyor Speed (m/s)}} - \text{System Latencies}$$
+### B2 — Build SorterWorker with Timing Logic
+**Time estimate: 2–3 hrs**
 
 ```python
-# core/control/timing_sync.py
-class SorterSynchronizer:
-    def __init__(self, camera_to_gate_m: float, system_latency_s: float = 0.05):
-        self.distance = camera_to_gate_m
-        self.latency = system_latency_s
+# gui/workers/sorter_worker.py
 
-    def calculate_delay_ms(self, conveyor_speed_m_s: float) -> int:
-        if conveyor_speed_m_s <= 0:
-            return 0
-        travel_time = self.distance / conveyor_speed_m_s
-        net_delay = travel_time - self.latency
-        return max(0, int(net_delay * 1000))
+class SorterWorker(QThread):
+    sig_sort_fired = pyqtSignal(str, int)   # grade, lane
+
+    def __init__(self, controller, config: dict):
+        super().__init__()
+        self._ctrl    = controller
+        self._cfg     = config
+        self._queue   = Queue()
+        self._running = False
+
+    def submit_grade(self, grade: str, lane: int) -> None:
+        speed   = self._cfg["conveyor"]["speed_m_s"]
+        dist    = self._cfg["conveyor"]["camera_to_gate_m"]
+        delay   = dist / max(speed, 0.01)
+        fire_at = time.time() + delay
+        self._queue.put((grade, lane, fire_at))
+
+    def run(self) -> None:
+        self._running = True
+        while self._running:
+            try:
+                grade, lane, fire_at = self._queue.get(timeout=0.05)
+            except Exception:
+                continue
+            wait = fire_at - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            self._ctrl.sort(grade, lane)
+            self.sig_sort_fired.emit(grade, lane)
+
+    def stop(self) -> None:
+        self._running = False
+        self.wait(3000)
 ```
 
-* Task: Implement a QTimer queue in `SorterController` to schedule physical serial writes at exactly $t + \text{delay\_ms}$.
+**Deliverable:** `SorterWorker` with timed dispatch queue committed.
 
 ---
 
-## 📈 Week 3 Deliverables Checklist
+### B3 — Enable Real Serial Mode in SorterController
+**Time estimate: 1–2 hrs**
 
-### Track A (Inference Pipeline)
-- [ ] Configurable input mode (3-channel stacked vs 5-channel native) in `config.yaml`
-- [ ] Strict fixed-range normalization for low-intensity NIR channels
-- [ ] Functional `InferenceWorker` thread with CUDA/GPU acceleration support
-- [ ] Bounding box coordinates mapped correctly from 2048x1536 to 640x480 display size
+```python
+# core/control/sorter_controller.py (real serial)
+import serial
 
-### Track B (GUI Panel & Visualization)
-- [ ] Colored bounding boxes overlaid on live display panels
-- [ ] Grade Summary dashboard counters updating dynamically
-- [ ] PyQtGraph running charts displaying sorting stats and throughput
+def connect(self) -> bool:
+    if self._mode == "simulation":
+        log.info("Sorter: simulation mode")
+        return True
+    try:
+        self._serial = serial.Serial(
+            port=self._cfg["port"],
+            baudrate=self._cfg["baudrate"],
+            timeout=self._cfg["timeout_s"]
+        )
+        log.info("Sorter: connected to %s", self._cfg["port"])
+        return True
+    except serial.SerialException as e:
+        log.error("Sorter serial failed: %s", e)
+        return False
 
-### Track C (Arduino & Synchronization)
-- [ ] Serial communication established with Arduino on `COM3`
-- [ ] Safe-fallback protection (default to Outlet C/Cull on serial loss)
-- [ ] Travel-time delay calculator synced to conveyor speed
-- [ ] Multi-threaded timed execution of solenoid actuators
+def sort(self, grade: str, lane: int) -> None:
+    outlet = self._grade_outlet_map.get(grade, "C")
+    cmd = f"{lane}{outlet}\n"   # e.g. "1A\n" = Lane 1, Fresh
+    if self._mode == "serial" and self._serial:
+        self._serial.write(cmd.encode())
+    log.info("SORT: lane=%d grade=%s outlet=%s", lane, grade, outlet)
+```
+
+**Deliverable:** `SorterController` working in both `simulation` and `serial` modes.
 
 ---
 
-## ❓ Technical Questions for Dr. Lu
+### B4 — Physical Actuator Test (Shuttle PC)
+**Time estimate: 1 hr**
 
-1. **YOLO Model Training Specification:** What input shape was the trained model designed for? Are the channels ordered `[RGB, NIR1, NIR2]` or did you train a standard 3-channel model using specific bands?
-2. **Physical System Latency:** Has the actuation delay of the pneumatic solenoid and air cylinders already been calibrated? (e.g. typical values range from 30ms to 80ms).
-3. **Arduino Status Code:** Does the Arduino return acknowledgement bytes (e.g., `OK`) after firing a solenoid to monitor hardware health?
+```bash
+python scripts/test_sorter.py --lane 1 --grade Fresh
+python scripts/test_sorter.py --lane 2 --grade Processing
+python scripts/test_sorter.py --lane 3 --grade Cull
+```
+
+**Deliverable:** All 3 actuators firing correctly. `scripts/test_sorter.py` committed.
+
+---
+
+## Track C — Data Logging
+
+### Goal
+Async CSV grading log and optional TIFF image capture. Must never block camera or inference threads.
+
+---
+
+### C1 — Async CSV Logger
+**Time estimate: 2 hrs**
+
+```python
+# core/logging/data_logger.py
+
+class DataLogger:
+    def __init__(self, output_dir: str = "data/logs/"):
+        self._dir   = Path(output_dir)
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._queue = Queue()
+        self._running = False
+
+    def start(self, session_name: str) -> None:
+        self._csv_path = self._dir / f"{session_name}.csv"
+        self._running = True
+        threading.Thread(target=self._write_loop, daemon=True).start()
+
+    def log_result(self, grade: str, confidence: float, lane: int,
+                   frame_idx: int, timestamp: float) -> None:
+        """Non-blocking — queued, background thread writes."""
+        self._queue.put({
+            "timestamp": timestamp,
+            "frame_idx": frame_idx,
+            "lane": lane,
+            "grade": grade,
+            "confidence": round(confidence, 4),
+        })
+
+    def _write_loop(self) -> None:
+        with open(self._csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=[
+                "timestamp","frame_idx","lane","grade","confidence"
+            ])
+            writer.writeheader()
+            while self._running or not self._queue.empty():
+                try:
+                    row = self._queue.get(timeout=0.1)
+                    writer.writerow(row)
+                    f.flush()
+                except Empty:
+                    continue
+```
+
+**Deliverable:** `core/logging/data_logger.py` committed with async write.
+
+---
+
+### C2 — Wire Logger to GUI Toggle
+**Time estimate: 30 min**
+
+The `Enable Logging` checkbox already exists. Wire it:
+```python
+self._enable_logging_cb.toggled.connect(self._on_logging_toggled)
+
+def _on_logging_toggled(self, enabled: bool) -> None:
+    if enabled:
+        session = time.strftime("session_%Y%m%d_%H%M%S")
+        self._logger.start(session)
+    else:
+        self._logger.stop()
+```
+
+**Deliverable:** Logging starts/stops from GUI. CSV saved to `data/logs/`.
+
+---
+
+### C3 — TIFF Image Capture on Defect (Stretch Goal)
+**Time estimate: 1–2 hrs**
+
+Save full-resolution 5-channel TIFF when grade = "Cull":
+```python
+def log_image(self, triplet: FrameTriplet, grade: str, frame_idx: int) -> None:
+    if grade == "Cull":
+        import tifffile
+        stack = np.stack([
+            triplet.ch1[:,:,2],   # R
+            triplet.ch1[:,:,1],   # G
+            triplet.ch1[:,:,0],   # B
+            triplet.ch2,           # NIR1
+            triplet.ch3            # NIR2
+        ], axis=0)
+        tifffile.imwrite(str(img_dir / f"frame_{frame_idx:06d}_cull.tiff"), stack)
+```
+
+> [!NOTE]
+> Full-res TIFF = 15.7 MB per image. Only save on defects, never every frame.
+
+---
+
+## End-of-Week Deliverables
+
+### Track A Checklist
+- [ ] `core/inference/preprocessing.py` — 5-channel tensor builder, unit tested
+- [ ] `core/inference/model_manager.py` — load/predict interface
+- [ ] `gui/workers/inference_worker.py` — real inference on live frames
+- [ ] Model dropdown loads actual `.pt` files and hot-swaps
+- [ ] Real grade labels + confidence visible in GUI
+
+### Track B Checklist
+- [ ] `gui/workers/sorter_worker.py` — timed dispatch queue
+- [ ] `SorterController` real serial mode on Shuttle PC
+- [ ] `scripts/test_sorter.py` committed
+- [ ] Physical actuator test passed (all 3 lanes)
+- [ ] Timing offset configured in `config.yaml`
+
+### Track C Checklist
+- [ ] `core/logging/data_logger.py` async CSV logger
+- [ ] `Enable Logging` checkbox functional
+- [ ] CSV: timestamp, frame_idx, lane, grade, confidence
+- [ ] TIFF capture on Cull (stretch goal)
+
+---
+
+## Week 3 → Week 4 Gate
+
+**Do NOT start Week 4 (system validation + demo prep) until:**
+1. Real model running on live camera frames, correct grades showing ✅
+2. Sorter actuators firing on timed commands ✅
+3. Data logger writing CSV per session ✅
+4. End-to-end: Camera → Inference → Sort → Log running simultaneously ✅
+
+**Week 4 covers:**
+- Full end-to-end system test at conveyor speed
+- Latency measurement (target: camera → sort command < 150ms)
+- 1-hour endurance test in lab
+- GUI polish + ASABE demo preparation
+- README and final documentation
+
+---
+
+## Open Questions Needed from Dr. Lu
+
+| # | Question | Blocks |
+|---|---|---|
+| 1 | Exact grade classes the model outputs? (`Fresh`/`Processing`/`Cull`?) | A2, A3 |
+| 2 | Model type: classifier or detector? (YOLO bbox vs classification head) | A2 |
+| 3 | Input channels: RGB-only or 5-channel (RGB + NIR1 + NIR2)? | A1 |
+| 4 | Where is the model file (`.pt`)? Google Drive link? | A2, A3 |
+| 5 | Arduino COM port on Shuttle PC? | B3 |
+| 6 | Arduino command protocol? (byte per lane? ASCII? JSON?) | B3 |
+| 7 | Camera-to-gate distance on physical setup (meters)? | B2 |
+| 8 | Conveyor speed at test conditions (m/s)? | B2 |
+
+---
+
+## Risk Registry
+
+| Risk | Likelihood | Mitigation |
+|---|---|---|
+| Model file not yet trained | Medium | Use placeholder ResNet classifier on RGB to test pipeline |
+| Model expects RGB-only (not 5-ch) | Medium | Build adapter to pass ch1 only; NIR comes later |
+| Arduino COM port unknown | Low | Use `serial.tools.list_ports` script to discover |
+| Inference > 100ms on CPU | Medium | Export to ONNX; run on every 3rd frame |
+| Physical sorter not accessible | Low | Keep Track B in simulation; gate to Week 4 |
+
+---
+
+*Update Status at top when tasks complete. Created: 2026-05-18*
