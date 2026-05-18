@@ -1,22 +1,21 @@
 """
 core/camera/camera_interface.py
 ================================
-Camera interface — stub for Phase 3 implementation.
+Camera interface — mock and real JAI eBUS backends.
 
 Supports two backends controlled by config["camera"]["mode"]:
-  "mock" → MockCamera  (synthetic / replay frames, works on any machine)
+  "mock" → MockCamera  (synthetic frames, works on any machine)
   "jai"  → JAICamera   (real hardware, requires JAI eBUS SDK + 10 GigE NIC)
 
 Frame triplet format:
   Each acquisition returns a FrameTriplet of 3 NumPy arrays:
-    ch1: np.ndarray shape (1536, 2048) dtype uint8  — RG  ~660nm
-    ch2: np.ndarray shape (1536, 2048) dtype uint8  — NIR1 ~800nm
-    ch3: np.ndarray shape (1536, 2048) dtype uint8  — NIR2 ~900nm
+    ch1: np.ndarray shape (1536, 2048, 3) dtype uint8  — Color BGR (BayerBG2BGR)
+    ch2: np.ndarray shape (1536, 2048)    dtype uint8  — NIR1 ~800nm (Mono8, normalized)
+    ch3: np.ndarray shape (1536, 2048)    dtype uint8  — NIR2 ~900nm (Mono8, normalized)
 
 Threading:
   CameraInterface is NOT thread-safe on its own.
-  Use CameraWorker (gui/workers/camera_worker.py — Phase 3) to wrap it
-  in a QThread and emit frames via Qt signals.
+  Use CameraWorker (gui/workers/camera_worker.py) to wrap it in a QThread.
 """
 
 from __future__ import annotations
@@ -27,6 +26,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
+import cv2
 
 log = logging.getLogger(__name__)
 
@@ -34,79 +34,358 @@ log = logging.getLogger(__name__)
 @dataclass
 class FrameTriplet:
     """One synchronized capture from all 3 JAI sensors."""
-    ch1:        np.ndarray    # RG  ~660nm  shape (H, W) uint8
-    ch2:        np.ndarray    # NIR1 ~800nm shape (H, W) uint8
-    ch3:        np.ndarray    # NIR2 ~900nm shape (H, W) uint8
+    ch1:        np.ndarray    # Color BGR  shape (H, W, 3) uint8
+    ch2:        np.ndarray    # NIR1 ~800nm shape (H, W)   uint8
+    ch3:        np.ndarray    # NIR2 ~900nm shape (H, W)   uint8
     timestamp:  float         # time.time() at acquisition
     frame_idx:  int           # monotonically increasing frame counter
+    block_id:   int = -1      # GEV block ID (all 3 channels must match for sync)
 
+
+# ── JAI eBUS backend ──────────────────────────────────────────────────────────
+
+class _JAISource:
+    """
+    One physical sensor on the FS-3200T.
+    Mirrors the Source class proven in scripts/camera_probe_jai.py.
+    """
+
+    BUFFER_COUNT = 16
+
+    def __init__(self, device, connection_id: str, source_name: str, ch_index: int):
+        self._device         = device
+        self._connection_id  = connection_id
+        self._source_name    = source_name
+        self._ch_index       = ch_index
+        self.stream          = None
+        self.pipeline        = None
+        self.source_channel  = 0
+        self.pixel_format    = "Mono8"
+
+    @staticmethod
+    def _get_p(nm, name: str) -> str:
+        try:
+            param = nm.Get(name)
+            if param is None:
+                return "N/A"
+            try:
+                r, v = param.GetValue()
+                if r.IsOK():
+                    return str(v)
+            except Exception:
+                pass
+            try:
+                r, v = param.GetValueString()
+                if r.IsOK():
+                    return v
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return "N/A"
+
+    def open(self) -> bool:
+        try:
+            import eBUS as eb
+        except ImportError:
+            log.error("eBUS SDK not found — cannot open JAI source")
+            return False
+
+        nm    = self._device.GetParameters()
+        stack = eb.PvGenStateStack(nm)
+        stack.SetEnumValue("SourceSelector", self._source_name)
+
+        # Read integer source channel ID
+        result, self.source_channel = nm.GetIntegerValue("SourceIDValue")
+        if result.IsFailure():
+            result, self.source_channel = nm.GetIntegerValue("SourceStreamChannel")
+        if result.IsFailure():
+            self.source_channel = self._ch_index
+
+        self.pixel_format = self._get_p(nm, "PixelFormat")
+        log.info(
+            "  %s  ch_id=%d  fmt=%s  %s×%s",
+            self._source_name, self.source_channel,
+            self.pixel_format,
+            self._get_p(nm, "Width"), self._get_p(nm, "Height"),
+        )
+
+        # Open dedicated GEV stream for this source channel
+        self.stream = eb.PvStreamGEV()
+        r = self.stream.Open(self._connection_id, 0, self.source_channel)
+        if r.IsFailure():
+            log.error("  %s: stream.Open failed: %s",
+                      self._source_name, r.GetCodeString())
+            return False
+
+        lip = self.stream.GetLocalIPAddress()
+        lp  = self.stream.GetLocalPort()
+        self._device.SetStreamDestination(lip, lp, self.source_channel)
+        log.info("       → %s:%d", lip, lp)
+
+        # Pipeline
+        payload_size = self._device.GetPayloadSize()
+        self.pipeline = eb.PvPipeline(self.stream)
+        self.pipeline.SetBufferSize(payload_size)
+        self.pipeline.SetBufferCount(self.BUFFER_COUNT)
+        self.pipeline.Start()
+        return True
+
+    def start_acquisition(self) -> None:
+        import eBUS as eb
+        nm    = self._device.GetParameters()
+        stack = eb.PvGenStateStack(nm)
+        stack.SetEnumValue("SourceSelector", self._source_name)
+        self._device.StreamEnable()
+        nm.Get("AcquisitionStart").Execute()
+
+    def stop_acquisition(self) -> None:
+        import eBUS as eb
+        nm    = self._device.GetParameters()
+        stack = eb.PvGenStateStack(nm)
+        stack.SetEnumValue("SourceSelector", self._source_name)
+        nm.Get("AcquisitionStop").Execute()
+        self._device.StreamDisable()
+
+    def grab(self, timeout_ms: int = 500) -> tuple[Optional[np.ndarray], int]:
+        """
+        Retrieve one frame from the pipeline.
+        Returns (raw_array, block_id) or (None, -1) on timeout/error.
+        """
+        result, buffer, op_result = self.pipeline.RetrieveNextBuffer(timeout_ms)
+        if result.IsFailure() or not op_result.IsOK():
+            return None, -1
+
+        image    = buffer.GetImage()
+        raw      = image.GetDataPointer().copy()
+        block_id = buffer.GetBlockID()
+        self.pipeline.ReleaseBuffer(buffer)
+        return raw, block_id
+
+    def close(self) -> None:
+        if self.pipeline:
+            self.pipeline.Stop()
+        if self.stream:
+            self.stream.Close()
+
+
+class JAICamera:
+    """
+    Real JAI FS-3200T camera backend using eBUS Python SDK.
+    Simultaneous 3-source MultiSource acquisition with hardware sync.
+    """
+
+    WARMUP_S     = 2.0
+    DRAIN_FRAMES = 30
+
+    def __init__(self, config: dict) -> None:
+        self._cfg         = config
+        self._device      = None
+        self._sources: list[_JAISource] = []
+        self._running     = False
+        self._frame_idx   = 0
+
+    def connect(self) -> bool:
+        try:
+            import eBUS as eb
+        except ImportError:
+            log.error("eBUS SDK not installed — cannot connect to JAI camera")
+            return False
+
+        jai_cfg       = self._cfg.get("jai", {})
+        target_ip     = jai_cfg.get("ip", None)
+
+        # ── Discover ──────────────────────────────────────────────
+        log.info("JAICamera: scanning for FS-3200T …")
+        sys_obj = eb.PvSystem()
+        sys_obj.Find()
+
+        connection_id = None
+        for i in range(sys_obj.GetInterfaceCount()):
+            iface = sys_obj.GetInterface(i)
+            for j in range(iface.GetDeviceCount()):
+                dev = iface.GetDeviceInfo(j)
+                ip  = dev.GetIPAddress()
+                log.info("  Found: %s (%s)", dev.GetDisplayID(), ip)
+                if connection_id is None:
+                    if target_ip is None or ip == target_ip:
+                        connection_id = dev.GetConnectionID()
+
+        if connection_id is None:
+            log.error("JAICamera: no camera found")
+            return False
+
+        # ── Connect ───────────────────────────────────────────────
+        result, self._device = eb.PvDevice.CreateAndConnect(connection_id)
+        if self._device is None:
+            log.error("JAICamera: connect failed: %s — close eBUS Player first",
+                      result.GetCodeString())
+            return False
+        log.info("JAICamera: connected (GEV: %s)", isinstance(self._device, eb.PvDeviceGEV))
+
+        # Negotiate packet size BEFORE opening any streams (prevents packet loss)
+        if isinstance(self._device, eb.PvDeviceGEV):
+            r = self._device.NegotiatePacketSize()
+            log.info("NegotiatePacketSize: %s", r.GetCodeString())
+
+        # ── Enumerate sources ─────────────────────────────────────
+        nm              = self._device.GetParameters()
+        source_selector = nm.GetEnum("SourceSelector")
+        source_names    = []
+        if source_selector:
+            result, count = source_selector.GetEntriesCount()
+            for i in range(count):
+                result, entry = source_selector.GetEntryByIndex(i)
+                if entry:
+                    result, name = entry.GetName()
+                    source_names.append(name)
+        log.info("Sources: %s", source_names)
+
+        # ── Open all streams simultaneously ───────────────────────
+        for ch_idx, src_name in enumerate(source_names):
+            src = _JAISource(self._device, connection_id, src_name, ch_idx)
+            if src.open():
+                self._sources.append(src)
+
+        if not self._sources:
+            log.error("JAICamera: no sources opened")
+            self._device.Disconnect()
+            eb.PvDevice.Free(self._device)
+            return False
+
+        log.info("JAICamera: %d streams open simultaneously", len(self._sources))
+
+        # ── Start acquisition on ALL sources ──────────────────────
+        for src in self._sources:
+            src.start_acquisition()
+
+        # Warmup + interleaved drain (prevents dark cold-start frames + blockID drift)
+        log.info("JAICamera: warming up %.1fs …", self.WARMUP_S)
+        time.sleep(self.WARMUP_S)
+
+        counts = {src._source_name: 0 for src in self._sources}
+        for _ in range(self.DRAIN_FRAMES):
+            for src in self._sources:
+                r, buf, op = src.pipeline.RetrieveNextBuffer(200)
+                if r.IsOK():
+                    src.pipeline.ReleaseBuffer(buf)
+                    counts[src._source_name] += 1
+        log.info("JAICamera: drained %s frames — ready", counts)
+
+        self._running = True
+        return True
+
+    def grab(self) -> Optional[FrameTriplet]:
+        """
+        Retrieve one hardware-synchronized frame triplet.
+        Returns None if camera is not running or retrieval fails.
+        """
+        if not self._running:
+            return None
+
+        raws     = []
+        block_id = -1
+
+        for src in self._sources:
+            raw, bid = src.grab(timeout_ms=500)
+            if raw is None:
+                return None    # pipeline timeout — skip this frame
+            raws.append((raw, src.pixel_format, bid))
+            if block_id == -1:
+                block_id = bid
+
+        raw0, pf0, _ = raws[0]
+        raw1, _,   _ = raws[1]
+        raw2, _,   _ = raws[2]
+
+        # CH1: Bayer demosaic → BGR
+        if pf0 == "BayerRG8":
+            ch1 = cv2.cvtColor(raw0, cv2.COLOR_BayerBG2BGR)
+        else:
+            ch1 = raw0
+
+        # CH2/CH3: Mono8 — normalize for display
+        ch2 = cv2.normalize(raw1, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        ch3 = cv2.normalize(raw2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+        self._frame_idx += 1
+        return FrameTriplet(
+            ch1       = ch1,
+            ch2       = ch2,
+            ch3       = ch3,
+            timestamp = time.time(),
+            frame_idx = self._frame_idx,
+            block_id  = block_id,
+        )
+
+    def disconnect(self) -> None:
+        import eBUS as eb
+        self._running = False
+        for src in self._sources:
+            src.stop_acquisition()
+        for src in self._sources:
+            src.close()
+        self._sources.clear()
+        if self._device:
+            self._device.Disconnect()
+            eb.PvDevice.Free(self._device)
+            self._device = None
+        log.info("JAICamera: disconnected")
+
+
+# ── Unified CameraInterface ───────────────────────────────────────────────────
 
 class CameraInterface:
     """
-    Abstract camera interface — wraps mock or real JAI camera.
-
-    Phase 3 TODO:
-        Implement JAICamera subclass using Harvesters:
-            h = Harvester()
-            h.add_file(config["camera"]["jai"]["gentl_path"])
-            h.update_device_info_list()
-            ia = h.create_image_acquirer(0)
-            ia.start_image_acquisition()
-            with ia.fetch_buffer() as buf:
-                ch1 = buf.payload.components[0].data.reshape(1536, 2048)
-                ch2 = buf.payload.components[1].data.reshape(1536, 2048)
-                ch3 = buf.payload.components[2].data.reshape(1536, 2048)
+    Unified camera interface — wraps mock or real JAI camera.
+    Backend selected by config["mode"]: "mock" or "jai".
     """
 
     def __init__(self, config: dict) -> None:
         self._cfg      = config
         self._mode     = config.get("mode", "mock")
-        self._running  = False
+        self._backend  = None
         self._frame_idx = 0
 
     def connect(self) -> bool:
         """Connect to camera. Returns True on success."""
-        if self._mode == "mock":
-            log.info("MockCamera: connected (synthetic frames).")
-            self._running = True
-            return True
-        else:
-            # TODO Phase 3: Harvesters JAI connection
-            log.warning("JAI camera not yet implemented — falling back to mock.")
-            self._mode    = "mock"
-            self._running = True
-            return True
+        if self._mode == "jai":
+            self._backend = JAICamera(self._cfg)
+            ok = self._backend.connect()
+            if not ok:
+                log.warning("JAICamera failed — falling back to mock")
+                self._mode    = "mock"
+                self._backend = None
+            else:
+                return True
+
+        # Mock backend
+        log.info("MockCamera: connected (synthetic frames)")
+        self._backend = None   # mock uses inline generation
+        return True
 
     def disconnect(self) -> None:
-        self._running = False
-        log.info("Camera disconnected.")
+        if self._backend and self._mode == "jai":
+            self._backend.disconnect()
+        self._backend = None
+        log.info("Camera disconnected")
 
     def grab(self) -> Optional[FrameTriplet]:
-        """
-        Grab the next synchronized frame triplet.
-        Returns None if camera is not running.
-
-        Phase 3: replace mock implementation with real Harvesters fetch.
-        """
-        if not self._running:
-            return None
-
-        if self._mode == "mock":
-            return self._mock_frame()
-
-        # TODO Phase 3: real Harvesters fetch
+        """Grab next synchronized frame triplet."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.grab()
         return self._mock_frame()
 
     def _mock_frame(self) -> FrameTriplet:
-        """Generate a synthetic frame triplet for development."""
+        """Generate a synthetic frame triplet for development/testing."""
         cfg  = self._cfg.get("mock", {})
-        h, w = cfg.get("resolution", [2048, 1536])[1], cfg.get("resolution", [2048, 1536])[0]
+        h, w = (cfg.get("resolution", [2048, 1536])[1],
+                cfg.get("resolution", [2048, 1536])[0])
         fps  = cfg.get("fps", 60)
 
-        # Synthetic gradient noise — distinct per channel
-        ch1 = np.random.randint(60,  180, (h, w), dtype=np.uint8)
-        ch2 = np.random.randint(100, 200, (h, w), dtype=np.uint8)
-        ch3 = np.random.randint(80,  160, (h, w), dtype=np.uint8)
+        ch1 = np.random.randint(60,  180, (h, w, 3), dtype=np.uint8)  # BGR
+        ch2 = np.random.randint(100, 200, (h, w),    dtype=np.uint8)  # gray
+        ch3 = np.random.randint(80,  160, (h, w),    dtype=np.uint8)  # gray
 
         self._frame_idx += 1
         time.sleep(1.0 / fps)
@@ -117,11 +396,8 @@ class CameraInterface:
             ch3       = ch3,
             timestamp = time.time(),
             frame_idx = self._frame_idx,
+            block_id  = self._frame_idx,
         )
-
-    @property
-    def is_running(self) -> bool:
-        return self._running
 
     @property
     def mode(self) -> str:

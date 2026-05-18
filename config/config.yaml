@@ -16,13 +16,19 @@ camera:
     replay_folder: null         # Path to real captured frames, or null for synthetic
 
   jai:
-    gentl_path: "C:/Program Files/JAI/eBUS SDK/bin/PvGenTL.cti"
-    device_index: 0
-    fps: 60             # Camera supports up to 107 FPS; 60 used for 3-apple/s lane
-    exposure_us: 5000
-    pixel_format: "Mono8"          # Mono8 per channel
-    trigger_mode: "Off"            # "Off"=free-run | "On"=encoder-triggered
+    # Confirmed hardware (Shuttle PC) — from camera_probe_jai.py output
+    ip:          "169.254.100.252"   # Update if DHCP changes
+    mac:         "00:0c:df:0a:b8:e9"
+    serial:      "U320484"
+    fps:         30                  # Confirmed: 30.0 FPS stable at full res
+    exposure_us: 9229                # Confirmed default (ExposureAuto=Off)
+    trigger_mode: "Off"             # Free-run (encoder trigger = future)
     num_channels: 3
+    # Sources confirmed:
+    #   Source0 (ch_id=0): BayerRG8 2048×1536 — Color ~660nm
+    #   Source1 (ch_id=1): Mono8    2048×1536 — NIR1  ~800nm
+    #   Source2 (ch_id=2): Mono8    2048×1536 — NIR2  ~900nm
+
 
 # ══════════════════════════════════════════════════════════════
 # SPECTRAL CHANNELS
