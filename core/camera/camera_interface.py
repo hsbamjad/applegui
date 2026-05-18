@@ -355,22 +355,30 @@ class JAICamera:
         raw1, _,   _ = raws[1]
         raw2, _,   _ = raws[2]
 
-        # CH1: Bayer demosaic at full res → resize (Bayer pattern requires full-res demosaic)
+        # CH1: Bayer demosaic at full res → resize
         if pf0 == "BayerRG8":
             ch1 = cv2.cvtColor(raw0, cv2.COLOR_BayerBG2BGR)
         else:
             ch1 = raw0
         ch1 = cv2.resize(ch1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
 
-        # CH2/CH3: resize FIRST, then safe normalize (guard against flat frames)
-        ch2 = cv2.resize(raw1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
-        ch3 = cv2.resize(raw2, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
-        mn2, mx2 = int(ch2.min()), int(ch2.max())
-        mn3, mx3 = int(ch3.min()), int(ch3.max())
-        ch2 = cv2.normalize(ch2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) \
-              if mx2 > mn2 else np.full_like(ch2, 128)  # mid-grey if flat
-        ch3 = cv2.normalize(ch3, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) \
-              if mx3 > mn3 else np.full_like(ch3, 128)  # mid-grey if flat
+        # CH2/CH3: normalize at FULL resolution first (matches camera_live_view.py quality),
+        # then resize — preserves correct min/max and avoids amplifying resize artifacts
+        mn1, mx1 = int(raw1.min()), int(raw1.max())
+        mn2, mx2 = int(raw2.min()), int(raw2.max())
+
+        # Log pixel stats every 90 frames (~once per 3s) to diagnose dark NIR
+        if self._frame_idx % 90 == 0:
+            log.info("NIR stats — CH2: min=%d max=%d  |  CH3: min=%d max=%d",
+                     mn1, mx1, mn2, mx2)
+
+        ch2_norm = cv2.normalize(raw1, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) \
+                   if mx1 > mn1 else np.full_like(raw1, 128)
+        ch3_norm = cv2.normalize(raw2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) \
+                   if mx2 > mn2 else np.full_like(raw2, 128)
+
+        ch2 = cv2.resize(ch2_norm, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
+        ch3 = cv2.resize(ch3_norm, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
 
         self._frame_idx += 1
         return FrameTriplet(
@@ -381,6 +389,7 @@ class JAICamera:
             frame_idx = self._frame_idx,
             block_id  = block_id,
         )
+
 
     def grab(self) -> Optional[FrameTriplet]:
         """
