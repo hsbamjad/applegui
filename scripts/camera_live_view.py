@@ -223,10 +223,26 @@ logger.info("       Q = quit  |  S = save snapshot  |  N = toggle NIR normalize\
 # ── 4. Live display loop ──────────────────────────────────────────────────────
 LABELS    = ["CH1  Color (BayerRG8)", "CH2  NIR1 (Mono8)", "CH3  NIR2 (Mono8)"]
 FONT      = cv2.FONT_HERSHEY_SIMPLEX
-normalize_nir = True     # toggle with N
+normalize_nir = True     # toggle with N key
 snapshot_n    = 0
 fps_times     = []
 last_frames   = [None, None, None]   # keep last good frame per source
+
+# EMA state for stable NIR brightness (prevents per-frame flicker)
+# Tracks the slowly-changing max value per NIR source
+_nir_ema_max = [64.0, 64.0]   # one per NIR source (CH2, CH3)
+_EMA_ALPHA   = 0.05            # 0.05 = slow/stable; higher = faster but more flicker
+
+def ema_normalize(raw: np.ndarray, ch_idx: int) -> np.ndarray:
+    """Normalize using EMA-tracked max — eliminates per-frame brightness flicker."""
+    cur_max = float(raw.max())
+    if cur_max > 0:
+        _nir_ema_max[ch_idx] = (
+            (1 - _EMA_ALPHA) * _nir_ema_max[ch_idx]
+            + _EMA_ALPHA * cur_max
+        )
+    scale = 255.0 / max(_nir_ema_max[ch_idx], 1.0)
+    return np.clip(raw.astype(np.float32) * scale, 0, 255).astype(np.uint8)
 
 try:
     while True:
@@ -254,9 +270,11 @@ try:
             if src.pixel_format == "BayerRG8":
                 img_bgr = cv2.cvtColor(raw, cv2.COLOR_BayerBG2BGR)
             else:
-                # NIR: normalize for display if enabled
+                # NIR: EMA-stabilized normalization (stable brightness, no flicker)
+                # N key toggles between EMA-normalized and raw for comparison
+                nir_idx = i - 1   # CH2 → idx 0, CH3 → idx 1
                 if normalize_nir:
-                    stretched = cv2.normalize(raw, None, 0, 255, cv2.NORM_MINMAX)
+                    stretched = ema_normalize(raw, nir_idx)
                 else:
                     stretched = raw
                 img_bgr = cv2.cvtColor(stretched, cv2.COLOR_GRAY2BGR)
@@ -295,7 +313,7 @@ try:
                       (20, 20, 20), -1)
         sync_txt  = "SYNC OK" if synced else "SYNC !!"
         sync_col  = (0, 220, 0) if synced else (0, 60, 220)
-        norm_txt  = "NIR: normalized" if normalize_nir else "NIR: raw"
+        norm_txt  = "NIR: EMA-normalized" if normalize_nir else "NIR: raw"
         status    = f"FPS: {fps:.1f}  |  {sync_txt}  |  {norm_txt}  |  [Q] quit  [S] snap  [N] toggle NIR"
         cv2.putText(display, sync_txt, (10, DISPLAY_H - 8), FONT, 0.55, sync_col, 1)
         cv2.putText(display, f"FPS: {fps:.1f}", (90, DISPLAY_H - 8), FONT, 0.55, (180, 180, 180), 1)
