@@ -460,19 +460,22 @@ class JAICamera:
             log.warning("set_exposure: no device connected")
             return False
         try:
+            print(f"[CAM] set_exposure: writing {exposure_us} µs to device")
             nm = self._device.GetParameters()
-            # Disable auto-exposure first — manual value is ignored if auto is on
-            ae = nm.Get("ExposureAuto")
+            # Use GetEnum (not Get) for enum parameters in eBUS Python API
+            ae = nm.GetEnum("ExposureAuto")
             if ae:
                 ae.SetValue("Off")
             param = nm.GetFloat("ExposureTime")
             if param is None:
+                print("[CAM] set_exposure: ExposureTime param is None!")
                 log.error("set_exposure: ExposureTime parameter not found on device")
                 return False
             r = param.SetValue(float(exposure_us))
             if r.IsOK():
                 # Read back actual value — camera may have clamped it
                 _, actual = param.GetValue()
+                print(f"[CAM] set_exposure: OK, actual={actual:.0f} µs")
                 if abs(actual - exposure_us) > 50:
                     log.warning("set_exposure: requested %d µs, camera clamped to %.0f µs "
                                 "(FPS limit — reduce frame rate to allow longer exposure)",
@@ -480,10 +483,12 @@ class JAICamera:
                 else:
                     log.info("Camera: ExposureTime = %d µs", exposure_us)
                 return True
+            print(f"[CAM] set_exposure: REJECTED by camera: {r.GetCodeString()}")
             log.error("set_exposure: camera rejected value %d µs: %s",
                       exposure_us, r.GetCodeString())
             return False
         except Exception as e:
+            print(f"[CAM] set_exposure: EXCEPTION: {e}")
             log.error("set_exposure exception: %s", e)
             return False
 
@@ -512,6 +517,7 @@ class JAICamera:
             log.warning("set_fps: no device connected")
             return False
         try:
+            print(f"[CAM] set_fps: writing {fps} FPS to device")
             nm = self._device.GetParameters()
             # Must enable frame rate control before setting value
             enable = nm.GetBoolean("AcquisitionFrameRateEnable")
@@ -519,17 +525,21 @@ class JAICamera:
                 enable.SetValue(True)
             param = nm.GetFloat("AcquisitionFrameRate")
             if param is None:
+                print("[CAM] set_fps: AcquisitionFrameRate param is None!")
                 log.error("set_fps: AcquisitionFrameRate parameter not found on device")
                 return False
             r = param.SetValue(float(fps))
             if r.IsOK():
                 _, actual = param.GetValue()
+                print(f"[CAM] set_fps: OK, actual={actual:.1f} FPS")
                 log.info("Camera: AcquisitionFrameRate = %.1f FPS (max exposure now %.0f µs)",
                          actual, 1_000_000 / max(actual, 1))
                 return True
+            print(f"[CAM] set_fps: REJECTED by camera: {r.GetCodeString()}")
             log.error("set_fps: camera rejected %.1f FPS: %s", fps, r.GetCodeString())
             return False
         except Exception as e:
+            print(f"[CAM] set_fps: EXCEPTION: {e}")
             log.error("set_fps exception: %s", e)
             return False
 
