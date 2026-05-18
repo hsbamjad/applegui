@@ -150,7 +150,7 @@ logging:
 # DISPLAY
 # ══════════════════════════════════════════════════════════════
 display:
-  fps_limit: 24                    # Max GUI refresh rate (sub-sample camera frames)
+  fps_limit: 60                    # Max GUI refresh rate (sub-sample camera frames)
   image_width: 480                 # Display width per channel panel
   image_height: 360                # Display height per channel panel
   show_bounding_boxes: true

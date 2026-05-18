@@ -380,16 +380,14 @@ class JAICamera:
             log.info("NIR stats — CH2: min=%d max=%d  |  CH3: min=%d max=%d",
                      mn1, mx1, mn2, mx2)
 
-        # 4. Perform EMA normalization with a lower-bound guard of 128.0 to prevent low-signal noise blow-up
+        # 4. Perform EMA normalization on highly optimized 640x480 resolution using cv2.convertScaleAbs
         def _ema_normalize(raw_small: np.ndarray, cur_max: float, ch_idx: int) -> np.ndarray:
             if cur_max > 0:
                 self._nir_ema_max[ch_idx] = (
                     (1 - self._EMA_ALPHA) * self._nir_ema_max[ch_idx]
                     + self._EMA_ALPHA * cur_max
                 )
-            # Guard against extreme noise amplification on flat/dark signals (conveyor belt)
-            ema_max = max(self._nir_ema_max[ch_idx], 128.0)
-            scale = 255.0 / ema_max
+            scale = 255.0 / max(self._nir_ema_max[ch_idx], 1.0)
             return cv2.convertScaleAbs(raw_small, alpha=scale)
 
         ch2 = _ema_normalize(raw1_small, cur_max1, 0)
