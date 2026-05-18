@@ -195,6 +195,8 @@ class LeftControlPanel(QWidget):
     sig_sorter_toggled  = pyqtSignal(bool)
     sig_logging_toggled = pyqtSignal(bool)
     sig_speed_changed   = pyqtSignal(int)
+    sig_exposure_changed = pyqtSignal(int)   # exposure time in μs
+    sig_fps_changed      = pyqtSignal(float) # acquisition frame rate
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -269,9 +271,17 @@ class LeftControlPanel(QWidget):
         card.add(self._btn_connect)
 
         self._spn_exposure = _spinbox(100, 100_000, 5_000, 500)
-        self._spn_fps      = _spinbox(1, 107, 60, 1)
+        self._spn_fps      = _spinbox(1, 107, 30, 1)
         card.add(_field("Exposure (μs)", self._spn_exposure))
         card.add(_field("Frame Rate", self._spn_fps))
+
+        # Wire spinboxes: apply on Enter/focus-loss, not on every keystroke
+        self._spn_exposure.editingFinished.connect(
+            lambda: self.sig_exposure_changed.emit(self._spn_exposure.value())
+        )
+        self._spn_fps.editingFinished.connect(
+            lambda: self.sig_fps_changed.emit(float(self._spn_fps.value()))
+        )
         return card
 
     def _conveyor_card(self) -> QWidget:

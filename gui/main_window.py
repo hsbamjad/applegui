@@ -300,6 +300,9 @@ class MainWindow(QMainWindow):
         self._left.sig_sorter_toggled.connect(self._on_sorter_toggle)
         self._left.sig_logging_toggled.connect(self._on_logging_toggle)
         self._left.sig_speed_changed.connect(self._on_speed_changed)
+        # Camera hardware controls
+        self._left.sig_exposure_changed.connect(self._on_exposure_changed)
+        self._left.sig_fps_changed.connect(self._on_fps_changed)
 
     def _post_init(self) -> None:
         models_dir = Path(self._cfg.get("inference", {}).get("model_dir", "models/"))
@@ -456,3 +459,20 @@ class MainWindow(QMainWindow):
                 f"Speed updated: {speed} apple/s/lane  "
                 f"({speed * 3 * 60} apple/min total)"
             )
+
+    def _on_exposure_changed(self, exposure_us: int) -> None:
+        """Forward exposure change to camera worker while streaming."""
+        if hasattr(self, '_cam_w') and self._cam_w and self._cam_w.isRunning():
+            self._cam_w.set_exposure(exposure_us)
+            self.statusBar().showMessage(f"Exposure set: {exposure_us} μs")
+        else:
+            self.statusBar().showMessage("Exposure: camera not connected")
+
+    def _on_fps_changed(self, fps: float) -> None:
+        """Forward frame rate change to camera worker while streaming."""
+        if hasattr(self, '_cam_w') and self._cam_w and self._cam_w.isRunning():
+            self._cam_w.set_fps(fps)
+            self.statusBar().showMessage(f"Frame rate set: {fps:.0f} FPS")
+        else:
+            self.statusBar().showMessage("Frame rate: camera not connected")
+

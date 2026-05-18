@@ -435,6 +435,65 @@ class JAICamera:
 
 
 
+
+    def set_exposure(self, exposure_us: int) -> bool:
+        """
+        Set sensor exposure time in microseconds while streaming.
+        Range: 100-100000 us. Typical sorting value: 5000-15000 us.
+        NOTE: High FPS caps max exposure:
+          30 FPS -> max 33333 us
+          60 FPS -> max 16666 us
+         107 FPS -> max  9345 us
+        """
+        if self._device is None:
+            log.warning("set_exposure: no device connected")
+            return False
+        try:
+            nm = self._device.GetParameters()
+            ae = nm.Get("ExposureAuto")
+            if ae:
+                ae.SetValue("Off")
+            param = nm.GetFloat("ExposureTime")
+            if param is None:
+                log.error("set_exposure: ExposureTime param not found")
+                return False
+            r = param.SetValue(float(exposure_us))
+            if r.IsOK():
+                log.info("Camera: ExposureTime = %d us", exposure_us)
+                return True
+            log.error("set_exposure rejected: %s", r.GetCodeString())
+            return False
+        except Exception as e:
+            log.error("set_exposure exception: %s", e)
+            return False
+
+    def set_fps(self, fps: float) -> bool:
+        """
+        Set acquisition frame rate while streaming.
+        Range: 1-107 FPS for FS-3200T. High FPS auto-caps exposure time.
+        """
+        if self._device is None:
+            log.warning("set_fps: no device connected")
+            return False
+        try:
+            nm = self._device.GetParameters()
+            enable = nm.GetBoolean("AcquisitionFrameRateEnable")
+            if enable:
+                enable.SetValue(True)
+            param = nm.GetFloat("AcquisitionFrameRate")
+            if param is None:
+                log.error("set_fps: AcquisitionFrameRate param not found")
+                return False
+            r = param.SetValue(float(fps))
+            if r.IsOK():
+                log.info("Camera: AcquisitionFrameRate = %.1f FPS", fps)
+                return True
+            log.error("set_fps rejected: %s", r.GetCodeString())
+            return False
+        except Exception as e:
+            log.error("set_fps exception: %s", e)
+            return False
+
     def disconnect(self) -> None:
         import eBUS as eb
         self._running = False
@@ -485,6 +544,65 @@ class CameraInterface:
         log.info("MockCamera: connected (synthetic frames)")
         self._backend = None   # mock uses inline generation
         return True
+
+
+    def set_exposure(self, exposure_us: int) -> bool:
+        """
+        Set sensor exposure time in microseconds while streaming.
+        Range: 100-100000 us. Typical sorting value: 5000-15000 us.
+        NOTE: High FPS caps max exposure:
+          30 FPS -> max 33333 us
+          60 FPS -> max 16666 us
+         107 FPS -> max  9345 us
+        """
+        if self._device is None:
+            log.warning("set_exposure: no device connected")
+            return False
+        try:
+            nm = self._device.GetParameters()
+            ae = nm.Get("ExposureAuto")
+            if ae:
+                ae.SetValue("Off")
+            param = nm.GetFloat("ExposureTime")
+            if param is None:
+                log.error("set_exposure: ExposureTime param not found")
+                return False
+            r = param.SetValue(float(exposure_us))
+            if r.IsOK():
+                log.info("Camera: ExposureTime = %d us", exposure_us)
+                return True
+            log.error("set_exposure rejected: %s", r.GetCodeString())
+            return False
+        except Exception as e:
+            log.error("set_exposure exception: %s", e)
+            return False
+
+    def set_fps(self, fps: float) -> bool:
+        """
+        Set acquisition frame rate while streaming.
+        Range: 1-107 FPS for FS-3200T. High FPS auto-caps exposure time.
+        """
+        if self._device is None:
+            log.warning("set_fps: no device connected")
+            return False
+        try:
+            nm = self._device.GetParameters()
+            enable = nm.GetBoolean("AcquisitionFrameRateEnable")
+            if enable:
+                enable.SetValue(True)
+            param = nm.GetFloat("AcquisitionFrameRate")
+            if param is None:
+                log.error("set_fps: AcquisitionFrameRate param not found")
+                return False
+            r = param.SetValue(float(fps))
+            if r.IsOK():
+                log.info("Camera: AcquisitionFrameRate = %.1f FPS", fps)
+                return True
+            log.error("set_fps rejected: %s", r.GetCodeString())
+            return False
+        except Exception as e:
+            log.error("set_fps exception: %s", e)
+            return False
 
     def disconnect(self) -> None:
         if self._backend and self._mode == "jai":
