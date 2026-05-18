@@ -194,7 +194,7 @@ class ChannelPanel(QWidget):
         pixmap = QPixmap.fromImage(qt_img).scaled(
             self._display.size(),
             Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+            Qt.TransformationMode.FastTransformation,
         )
         self._display.setPixmap(pixmap)
         self._frames += 1

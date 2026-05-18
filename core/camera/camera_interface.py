@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import time
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Optional
 
@@ -181,11 +182,14 @@ class JAICamera:
     DISPLAY_H    = 480
 
     def __init__(self, config: dict) -> None:
-        self._cfg         = config
-        self._device      = None
+        self._cfg          = config
+        self._device       = None
         self._sources: list[_JAISource] = []
-        self._running     = False
-        self._frame_idx   = 0
+        self._running      = False
+        self._frame_idx    = 0
+        self._latest: Optional[FrameTriplet] = None
+        self._latest_lock  = threading.Lock()
+        self._grab_thread: Optional[threading.Thread] = None
 
     def connect(self) -> bool:
         try:
@@ -302,44 +306,64 @@ class JAICamera:
         log.info("JAICamera: drained %s — ready", counts)
 
         self._running = True
+        self._grab_thread = threading.Thread(
+            target=self._grab_loop, daemon=True, name="JAI-grab"
+        )
+        self._grab_thread.start()
+        log.info("JAICamera: background grab thread started — ready")
         return True
 
+    # ── Background grab loop ──────────────────────────────────────────────────
 
-    def grab(self) -> Optional[FrameTriplet]:
+    def _grab_loop(self) -> None:
         """
-        Retrieve one hardware-synchronized frame triplet.
-        Returns None if camera is not running or retrieval fails.
+        Runs in a daemon thread at full camera speed (30fps).
+        Always stores the latest processed triplet in self._latest.
+        The worker thread reads this cache non-blocking via grab().
         """
-        if not self._running:
-            return None
+        while self._running:
+            raws     = []
+            block_id = -1
+            ok       = True
 
-        raws     = []
-        block_id = -1
+            for src in self._sources:
+                raw, bid = src.grab(timeout_ms=100)
+                if raw is None:
+                    ok = False
+                    break
+                raws.append((raw, src.pixel_format, bid))
+                if block_id == -1:
+                    block_id = bid
 
-        for src in self._sources:
-            raw, bid = src.grab(timeout_ms=500)
-            if raw is None:
-                return None    # pipeline timeout — skip this frame
-            raws.append((raw, src.pixel_format, bid))
-            if block_id == -1:
-                block_id = bid
+            if not ok:
+                continue
 
+            triplet = self._process_raws(raws, block_id)
+            with self._latest_lock:
+                self._latest = triplet
+
+    def _process_raws(
+        self,
+        raws: list,
+        block_id: int,
+    ) -> FrameTriplet:
+        """Convert raw buffers to display-ready FrameTriplet."""
         raw0, pf0, _ = raws[0]
         raw1, _,   _ = raws[1]
         raw2, _,   _ = raws[2]
 
-        # CH1: Bayer demosaic → BGR, then resize
+        # CH1: Bayer demosaic at full res → resize (Bayer pattern requires full-res demosaic)
         if pf0 == "BayerRG8":
             ch1 = cv2.cvtColor(raw0, cv2.COLOR_BayerBG2BGR)
         else:
             ch1 = raw0
         ch1 = cv2.resize(ch1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
 
-        # CH2/CH3: Mono8 — normalize for display, then resize
-        ch2 = cv2.normalize(raw1, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        ch3 = cv2.normalize(raw2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        ch2 = cv2.resize(ch2, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
-        ch3 = cv2.resize(ch3, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
+        # CH2/CH3: resize FIRST (10× fewer pixels), then normalize — much faster
+        ch2 = cv2.resize(raw1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
+        ch2 = cv2.normalize(ch2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        ch3 = cv2.resize(raw2, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
+        ch3 = cv2.normalize(ch3, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 
         self._frame_idx += 1
         return FrameTriplet(
@@ -350,6 +374,18 @@ class JAICamera:
             frame_idx = self._frame_idx,
             block_id  = block_id,
         )
+
+    def grab(self) -> Optional[FrameTriplet]:
+        """
+        Non-blocking: return the latest frame from the background grab thread.
+        Never blocks on the camera — always returns immediately.
+        """
+        if not self._running:
+            return None
+        with self._latest_lock:
+            return self._latest
+
+
 
     def disconnect(self) -> None:
         import eBUS as eb
