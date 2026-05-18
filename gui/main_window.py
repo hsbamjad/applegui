@@ -313,6 +313,14 @@ class MainWindow(QMainWindow):
         sg.set_status("Sorter",   "idle",    "Simulation")
         sg.set_status("Logger",   "idle",    "Off")
 
+    def closeEvent(self, event) -> None:
+        """Guarantee camera disconnect on window close — releases eBUS device lock."""
+        log.info("MainWindow closing — stopping pipeline …")
+        self._stop_pipeline()
+        event.accept()
+
+
+
     # ── Camera toggle ─────────────────────────────────────────────────────────
 
     @pyqtSlot(bool)

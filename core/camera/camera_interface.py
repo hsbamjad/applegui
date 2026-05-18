@@ -177,6 +177,8 @@ class JAICamera:
 
     WARMUP_S     = 2.0
     DRAIN_FRAMES = 30
+    DISPLAY_W    = 640    # resize to this BEFORE emitting — keeps Qt rendering fast
+    DISPLAY_H    = 480
 
     def __init__(self, config: dict) -> None:
         self._cfg         = config
@@ -326,15 +328,18 @@ class JAICamera:
         raw1, _,   _ = raws[1]
         raw2, _,   _ = raws[2]
 
-        # CH1: Bayer demosaic → BGR
+        # CH1: Bayer demosaic → BGR, then resize
         if pf0 == "BayerRG8":
             ch1 = cv2.cvtColor(raw0, cv2.COLOR_BayerBG2BGR)
         else:
             ch1 = raw0
+        ch1 = cv2.resize(ch1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
 
-        # CH2/CH3: Mono8 — normalize for display
+        # CH2/CH3: Mono8 — normalize for display, then resize
         ch2 = cv2.normalize(raw1, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
         ch3 = cv2.normalize(raw2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        ch2 = cv2.resize(ch2, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
+        ch3 = cv2.resize(ch3, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
 
         self._frame_idx += 1
         return FrameTriplet(
