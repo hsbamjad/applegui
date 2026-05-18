@@ -189,14 +189,14 @@ class JAICamera:
         self._running      = False
         self._frame_idx    = 0
         self._latest: Optional[FrameTriplet] = None
-        self._latest_lock  = threading.Lock()
+        # Condition used as both lock and signal — process thread notifies on each new frame
+        self._frame_cond   = threading.Condition()
         self._grab_thread: Optional[threading.Thread]    = None
         self._process_thread: Optional[threading.Thread] = None
-        # Bounded queue between grab thread and process thread (max 2 → drop stale frames)
         self._raw_queue: queue.Queue = queue.Queue(maxsize=2)
         # EMA-stabilized gain for NIR channels — prevents per-frame flicker
-        self._nir_ema_max  = [64.0, 64.0]   # one per NIR source
-        self._EMA_ALPHA    = 0.05            # low = slow/stable, high = fast/reactive
+        self._nir_ema_max  = [64.0, 64.0]
+        self._EMA_ALPHA    = 0.05
 
 
     def connect(self) -> bool:
@@ -380,12 +380,13 @@ class JAICamera:
                     continue
 
                 triplet = self._process_raws(raws, block_id)
-                with self._latest_lock:
+                # Notify waiting grab() callers that a new frame is ready
+                with self._frame_cond:
                     self._latest = triplet
+                    self._frame_cond.notify_all()
 
         except Exception as e:
             log.error("JAI process thread crashed: %s", e, exc_info=True)
-
 
 
     def _process_raws(
@@ -441,16 +442,21 @@ class JAICamera:
         )
 
 
-    def grab(self) -> Optional[FrameTriplet]:
+    def grab(self, last_idx: int = -1, timeout: float = 0.5) -> Optional[FrameTriplet]:
         """
-        Non-blocking: return the latest frame from the background grab thread.
-        Never blocks on the camera — always returns immediately.
+        Blocking grab — waits until a frame NEWER than last_idx is available.
+        Returns immediately if a newer frame is already cached.
+        This eliminates the polling phase-mismatch that caused 21fps.
         """
         if not self._running:
             return None
-        with self._latest_lock:
+        with self._frame_cond:
+            # Already have a new frame? Return it immediately.
+            if self._latest is not None and self._latest.frame_idx != last_idx:
+                return self._latest
+            # Block until process thread notifies (new frame ready)
+            self._frame_cond.wait(timeout=timeout)
             return self._latest
-
 
 
     def disconnect(self) -> None:
