@@ -14,8 +14,10 @@ Mode is controlled by config["mode"]:
 
 from __future__ import annotations
 
+import os
 import time
 import logging
+import ctypes
 
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -23,6 +25,24 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from core.camera.camera_interface import CameraInterface
 
 log = logging.getLogger(__name__)
+
+# Windows high-resolution timer (1ms precision instead of default 15.625ms).
+# Without this, time.sleep() rounds to 15.625ms ticks, causing display FPS
+# to snap to exactly 64 or 32 FPS regardless of what was requested.
+_winmm = None
+if os.name == "nt":
+    try:
+        _winmm = ctypes.windll.winmm
+    except Exception:
+        pass
+
+def _set_timer_resolution(period_ms: int) -> None:
+    """Set Windows multimedia timer resolution (1 = 1ms, 0 = restore default)."""
+    if _winmm:
+        if period_ms > 0:
+            _winmm.timeBeginPeriod(period_ms)
+        else:
+            _winmm.timeEndPeriod(1)
 
 
 class CameraWorker(QThread):
@@ -44,10 +64,15 @@ class CameraWorker(QThread):
         mode = self._config.get("mode", "mock")
         self.sig_status.emit(f"Connecting … (mode={mode})", False)
 
+        # Set Windows timer to 1ms resolution so time.sleep() is precise.
+        # Default is 15.625ms (1/64s) which causes FPS to snap to 64 or 32.
+        _set_timer_resolution(1)
+
         self._camera = CameraInterface(self._config)
         if not self._camera.connect():
             self.sig_status.emit("Connection failed", True)
             self._camera = None
+            _set_timer_resolution(0)
             return
 
         actual_mode = self._camera.mode
@@ -60,17 +85,16 @@ class CameraWorker(QThread):
         fps_start      = time.perf_counter()
         fps            = 0.0
         last_frame_idx = -1
-        cam_fps_t      = time.perf_counter()   # for reporting grab thread FPS
-        # NOTE: min_interval is NOT cached — read self._display_fps each iteration
-        # so that set_fps() takes effect immediately without restarting the thread.
+        cam_fps_t      = time.perf_counter()
+        # min_interval is computed each loop iteration from self._display_fps
+        # so set_fps() takes effect immediately without restarting the thread.
 
         while self._running:
             t0           = time.perf_counter()
-            min_interval = 1.0 / max(self._display_fps, 1)   # dynamic — updated by set_fps()
+            min_interval = 1.0 / max(self._display_fps, 1)
 
             triplet = self._camera.grab()
 
-            # Skip if no frame yet or same frame as last emit (cached, no new data)
             if triplet is None or triplet.frame_idx == last_frame_idx:
                 sleep = min_interval - (time.perf_counter() - t0)
                 if sleep > 0:
@@ -84,7 +108,6 @@ class CameraWorker(QThread):
                 fps         = frame_count / elapsed
                 frame_count = 0
                 fps_start   = time.perf_counter()
-                # Also report actual camera grab FPS every second
                 cam_fps = self._camera.grab_fps()
                 if cam_fps > 0:
                     self.sig_cam_fps.emit(cam_fps)
@@ -97,6 +120,7 @@ class CameraWorker(QThread):
 
         self._camera.disconnect()
         self._camera = None
+        _set_timer_resolution(0)   # restore Windows default timer resolution
         self.sig_status.emit("Disconnected", False)
 
     def stop(self) -> None:
