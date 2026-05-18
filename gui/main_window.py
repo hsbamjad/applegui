@@ -507,14 +507,10 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(float)
     def _on_cam_fps(self, cam_fps: float) -> None:
-        """
-        Updates status bar with real camera FPS vs display FPS every second.
-        These are two separate numbers:
-          - Camera FPS = sensor hardware rate (what you set with Apply FPS)
-          - Display FPS = Qt screen render rate (~30 for 3 channels, always)
-        """
+        """Shows real camera FPS vs display target in status bar every second."""
+        disp = int(self._cam_w._display_fps) if self._cam_w else 0
         self.statusBar().showMessage(
-            f"Cam: {cam_fps:.0f} FPS (sensor hardware, what you set)   │   "
-            f"Display: ~30 FPS (Qt render cap for 3 simultaneous channels)   │   "
+            f"Cam: {cam_fps:.0f} FPS (sensor)   │   "
+            f"Display target: {disp} FPS (actual may be less at high FPS due to processing)   │   "
             f"Max exposure at {cam_fps:.0f} FPS: {int(1_000_000 / max(cam_fps, 1)):,} µs"
         )

@@ -120,35 +120,29 @@ class CameraWorker(QThread):
 
     def set_fps(self, fps: float) -> None:
         """
-        Set camera HARDWARE acquisition FPS only.
+        Set camera hardware FPS AND update display emit rate to match.
 
-        This does NOT change the display render rate (_display_fps).
-        These are two completely separate things:
+        Camera FPS  = sensor acquisition speed (firmware)
+        Display FPS = how fast sig_frame is emitted to the GUI
 
-          Camera FPS  (this method)  = how fast the sensor captures frames
-                                       Controls: exposure range (max = 1,000,000/fps µs)
-                                       Controls: motion freeze (higher FPS = sharper motion)
-                                       Visible:  in status bar "Cam: X FPS"
+        On this machine Qt can render ~60-65 FPS for 3 channels.
+        At 107 camera FPS the display caps at ~64 due to grab-thread processing
+        time (Bayer demosaic + resize + EMA at 2048x1536 takes ~9ms/frame).
 
-          Display FPS (_display_fps) = how fast Qt renders 3 channel images to screen
-                                       Hard limit: ~30 FPS for 3 simultaneous channels
-                                       Qt cannot paint 3 × 640×480 images faster than ~30/sec
-                                       Visible:  in channel headers
-
-        The camera grab thread always runs at camera FPS speed. The worker emits
-        frames to the GUI at _display_fps rate (capped by Qt). For apple sorting,
-        only camera FPS matters for inference quality.
+        The status bar shows real camera FPS; channel headers show actual display FPS.
         """
+        self._display_fps = fps   # display tries to match camera; caps at machine limit
         if self._camera is not None:
             self._camera.set_fps(fps)
-            log.info("CameraWorker: camera hardware set to %.0f FPS (display stays at %.0f FPS)",
-                     fps, self._display_fps)
+            log.info("CameraWorker: hardware=%.0f FPS, display target=%.0f FPS",
+                     fps, fps)
             # Read back actual exposure — firmware may have clamped it at new FPS
             actual_exp = self._camera.get_exposure()
             if actual_exp > 0:
                 self.sig_exposure_readback.emit(actual_exp)
         else:
             log.warning("set_fps ignored — camera not connected")
+
 
 
     def get_exposure(self) -> int:
