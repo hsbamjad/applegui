@@ -131,21 +131,25 @@ class _JAISource:
         self.pipeline.Start()
         return True
 
-    def start_acquisition(self) -> None:
-        import eBUS as eb
-        nm    = self._device.GetParameters()
-        stack = eb.PvGenStateStack(nm)
-        stack.SetEnumValue("SourceSelector", self._source_name)
-        self._device.StreamEnable()
-        nm.Get("AcquisitionStart").Execute()
+    def start_acquisition(self) -> bool:
+        nm = self._device.GetParameters()
+        r  = nm.SetEnumValue("SourceSelector", self._source_name)
+        if not r.IsOK():
+            log.error("  %s: SetEnumValue SourceSelector failed: %s",
+                      self._source_name, r.GetCodeString())
+            return False
+        r = self._device.StreamEnable()
+        log.info("  %s: StreamEnable: %s", self._source_name, r.GetCodeString())
+        r = nm.Get("AcquisitionStart").Execute()
+        log.info("  %s: AcquisitionStart: %s", self._source_name, r.GetCodeString())
+        return r.IsOK()
 
     def stop_acquisition(self) -> None:
-        import eBUS as eb
-        nm    = self._device.GetParameters()
-        stack = eb.PvGenStateStack(nm)
-        stack.SetEnumValue("SourceSelector", self._source_name)
+        nm = self._device.GetParameters()
+        nm.SetEnumValue("SourceSelector", self._source_name)
         nm.Get("AcquisitionStop").Execute()
         self._device.StreamDisable()
+
 
     def grab(self, timeout_ms: int = 500) -> tuple[Optional[np.ndarray], int]:
         """
