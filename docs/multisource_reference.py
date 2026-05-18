@@ -10,8 +10,13 @@
  This sample shows how to receive images from a multi-source device using PvPipeline.
 '''
 
+import logging
 import eBUS as eb
 import lib.PvSampleUtils as psu
+
+# Configure logging with a clean format for verification output
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("multisource_reference")
 
 kb = psu.PvKb()
 
@@ -40,7 +45,7 @@ class Source:
 
         source_channel = 0
         if self._source:
-            print("Reading source channel on device")
+            logger.info("Reading source channel on device")
             result, source_channel = self._device.GetParameters().GetIntegerValue("SourceIDValue")
             if result.IsFailure():
                 # Try using deprecated SourceStreamChannel
@@ -48,23 +53,23 @@ class Source:
             if result.IsFailure():
                 return False
 
-        print("Opening stream from device")
+        logger.info("Opening stream from device")
         # Explicitly check for GEV or U3V types, required to configure channels
         if isinstance(self._device, eb.PvDeviceGEV):
             self._stream = eb.PvStreamGEV()
             if self._stream.Open(self._connection_id, 0, source_channel).IsFailure():
-                print("Error opening stream to GigE Vision device")
+                logger.error("Error opening stream to GigE Vision device")
                 return False
 
             local_ip = self._stream.GetLocalIPAddress()
             local_port = self._stream.GetLocalPort()
 
-            print("Setting source destination on device (channel", source_channel, ") to", local_ip, "port", local_port)
+            logger.info(f"Setting source destination on device (channel {source_channel}) to {local_ip} port {local_port}")
             self._device.SetStreamDestination(local_ip, local_port, source_channel)
         elif isinstance(self._device, eb.PvDeviceU3V):
             self._stream = eb.PvStreamU3V
             if self._stream.Open(self._connection_id, source_channel).IsFailure():
-                print("Error opening stream to USB3 Vision Device")
+                logger.error("Error opening stream to USB3 Vision Device")
                 return False
 
         payload_size = self._device.GetPayloadSize()
@@ -72,35 +77,35 @@ class Source:
         self._pipeline = eb.PvPipeline(self._stream)
         self._pipeline.SetBufferSize(payload_size)
         self._pipeline.SetBufferCount(self._BUFFER_COUNT)
-        print("Starting pipeline thread")
+        logger.info("Starting pipeline thread")
         self._pipeline.Start()
         return True
 
     def Close(self):
-        print("Closing source", self._source)
+        logger.info(f"Closing source {self._source}")
 
-        print("Stopping pipeline thread")
+        logger.info("Stopping pipeline thread")
         self._pipeline.Stop()
 
-        print("Closing stream")
+        logger.info("Closing stream")
         self._stream.Close()
 
     def StartAcquisition(self):
-        print("Start acquisition", self._source)
+        logger.info(f"Start acquisition {self._source}")
         stack = eb.PvGenStateStack(self._device.GetParameters())
         self.SelectSource(stack)
 
         self._device.StreamEnable()
 
-        print("Sending AcquisitionStart command to device")
+        logger.info("Sending AcquisitionStart command to device")
         self._device.GetParameters().Get("AcquisitionStart").Execute()
 
     def StopAcquisition(self):
-        print("Stop acquisition", self._source)
+        logger.info(f"Stop acquisition {self._source}")
         stack = eb.PvGenStateStack(self._device.GetParameters())
         self.SelectSource(stack)
 
-        print("Sending AcquisitionStop command to device")
+        logger.info("Sending AcquisitionStop command to device")
         self._device.GetParameters().Get("AcquisitionStop").Execute()
 
         self._device.StreamDisable()
@@ -148,17 +153,17 @@ def AcquireImages():
     # Prompt user to select a device
     connection_id = psu.PvSelectDevice()
     if not connection_id:
-        print("No device selected.")
+        logger.info("No device selected.")
         return False
     
     result, device = eb.PvDevice.CreateAndConnect(connection_id)
     if result.IsFailure():
-        print("Unable to connect to device.")
+        logger.error("Unable to connect to device.")
         return False
     if not isinstance(device, eb.PvDeviceGEV):
-        print("The selected device is not currently supported by this sample.")
+        logger.info("The selected device is not currently supported by this sample.")
         return False
-    print("Successfully connected to device")
+    logger.info("Successfully connected to device")
 
     sources = []
     source_selector = device.GetParameters().GetEnum("SourceSelector")
@@ -179,7 +184,7 @@ def AcquireImages():
             sources.append(source)
     
     if len(sources) == 0:
-            print("No source available.")
+            logger.info("No source available.")
             return False
 
     for source in sources:
@@ -188,7 +193,7 @@ def AcquireImages():
     # Retrieve images
     timeout = 1
     new_timeout = 1000
-    print("<press a key to stop streaming>")
+    logger.info("<press a key to stop streaming>")
     kb = psu.PvKb()
     kb.start()
     statistics = ""
@@ -201,9 +206,8 @@ def AcquireImages():
             if recommended_timeout < new_timeout:
                 new_timeout = recommended_timeout
 
-        # Clean previous line, print and reset statistics
-        print('\033[K', end='')
-        print(statistics, end='\r')
+        # Clean previous line and log statistics
+        logger.info(statistics)
         statistics = ""
 
         if kb.kbhit():
@@ -219,11 +223,11 @@ def AcquireImages():
     for source in sources:
         source.Close()
 
-print("MultiSource sample")
-print("Acquire images from a GigE Vision device")
+logger.info("MultiSource sample")
+logger.info("Acquire images from a GigE Vision device")
 AcquireImages()
 
-print("<press a key to exit>")
+logger.info("<press a key to exit>")
 kb.start()
 kb.getch()
 kb.stop()

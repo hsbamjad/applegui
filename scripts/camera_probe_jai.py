@@ -24,10 +24,15 @@ Usage:
 
 import time
 import sys
+import logging
 from pathlib import Path
 
 import numpy as np
 import cv2
+
+# Configure logging with a clean format for verification output
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("camera_probe_jai")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 BUFFER_COUNT = 16
@@ -36,12 +41,12 @@ OUT_DIR      = Path("scripts/probe_output")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Import eBUS ───────────────────────────────────────────────────────────────
-print("\n── eBUS Import ───────────────────────────────────────────────────────")
+logger.info("\n── eBUS Import ───────────────────────────────────────────────────────")
 try:
     import eBUS as eb
-    print("  [OK] import eBUS")
+    logger.info("  [OK] import eBUS")
 except ImportError as e:
-    print(f"  [ERROR] {e}")
+    logger.error(f"  [ERROR] {e}")
     sys.exit(1)
 
 # ── Helper: read any GenICam parameter ───────────────────────────────────────
@@ -93,27 +98,27 @@ class Source:
         if result.IsFailure():
             result, self.source_channel = nm.GetIntegerValue("SourceStreamChannel")
         if result.IsFailure():
-            print(f"  [WARNING] {self.source_name}: could not read SourceIDValue — defaulting to {self.ch_index}")
+            logger.warning(f"  [WARNING] {self.source_name}: could not read SourceIDValue — defaulting to {self.ch_index}")
             self.source_channel = self.ch_index
 
         pf  = get_p(nm, "PixelFormat")
         w   = get_p(nm, "Width")
         h   = get_p(nm, "Height")
-        print(f"  {self.source_name}  ch_id={self.source_channel}  "
-              f"fmt={pf}  {w}×{h}")
+        logger.info(f"  {self.source_name}  ch_id={self.source_channel}  "
+                    f"fmt={pf}  {w}×{h}")
 
         # Open a dedicated GEV stream for this source channel
         self.stream = eb.PvStreamGEV()
         r = self.stream.Open(self.connection_id, 0, self.source_channel)
         if r.IsFailure():
-            print(f"  [ERROR] {self.source_name}: stream.Open failed: {r.GetCodeString()}")
+            logger.error(f"  [ERROR] {self.source_name}: stream.Open failed: {r.GetCodeString()}")
             return False
 
         lip  = self.stream.GetLocalIPAddress()
         lp   = self.stream.GetLocalPort()
         # Route this source on the device to our stream's local address
         self.device.SetStreamDestination(lip, lp, self.source_channel)
-        print(f"       → stream → {lip}:{lp}")
+        logger.info(f"       → stream → {lip}:{lp}")
 
 
         # Set up pipeline (manages buffer pool internally)
@@ -147,10 +152,10 @@ class Source:
 
         result, buffer, op_result = self.pipeline.RetrieveNextBuffer(TIMEOUT_MS)
         if result.IsFailure():
-            print(f"  [ERROR] {self.source_name}: RetrieveNextBuffer: {result.GetCodeString()}")
+            logger.error(f"  [ERROR] {self.source_name}: RetrieveNextBuffer: {result.GetCodeString()}")
             return None, pf
         if not op_result.IsOK():
-            print(f"  [WARNING] {self.source_name}: op_result: {op_result.GetCodeString()}")
+            logger.warning(f"  [WARNING] {self.source_name}: op_result: {op_result.GetCodeString()}")
             self.pipeline.ReleaseBuffer(buffer)
             return None, pf
 
@@ -158,9 +163,9 @@ class Source:
         img_data = image.GetDataPointer().copy()   # copy before releasing buffer
         block_id = buffer.GetBlockID()
         self.pipeline.ReleaseBuffer(buffer)
-        print(f"  [OK] {self.source_name}: {image.GetWidth()}×{image.GetHeight()}  "
-              f"blockID={block_id}  min={img_data.min()} max={img_data.max()} "
-              f"mean={img_data.mean():.1f}")
+        logger.info(f"  [OK] {self.source_name}: {image.GetWidth()}×{image.GetHeight()}  "
+                    f"blockID={block_id}  min={img_data.min()} max={img_data.max()} "
+                    f"mean={img_data.mean():.1f}")
         return img_data, pf
 
     def close(self):
@@ -171,7 +176,7 @@ class Source:
 
 
 # ── 1. Discover device ────────────────────────────────────────────────────────
-print("\n── Device Discovery ──────────────────────────────────────────────────")
+logger.info("\n── Device Discovery ──────────────────────────────────────────────────")
 sys_obj = eb.PvSystem()
 sys_obj.Find()
 
@@ -181,41 +186,41 @@ for i in range(sys_obj.GetInterfaceCount()):
     iface = sys_obj.GetInterface(i)
     for j in range(iface.GetDeviceCount()):
         dev = iface.GetDeviceInfo(j)
-        print(f"  Found: {dev.GetDisplayID()}")
+        logger.info(f"  Found: {dev.GetDisplayID()}")
         if connection_id is None:
             connection_id   = dev.GetConnectionID()
             dev_info_cached = dev
 
 if connection_id is None:
-    print("  [ERROR] No camera found.")
+    logger.error("  [ERROR] No camera found.")
     sys.exit(1)
-print(f"  → Connection ID: {connection_id}")
+logger.info(f"  → Connection ID: {connection_id}")
 
 # ── 2. Connect ────────────────────────────────────────────────────────────────
-print("\n── Connect ───────────────────────────────────────────────────────────")
+logger.info("\n── Connect ───────────────────────────────────────────────────────────")
 result, device = eb.PvDevice.CreateAndConnect(connection_id)
 if device is None:
-    print(f"  [ERROR] {result.GetCodeString()}: {result.GetDescription()}")
-    print("  → Close eBUS Player (it holds exclusive camera access)")
+    logger.error(f"  [ERROR] {result.GetCodeString()}: {result.GetDescription()}")
+    logger.info("  → Close eBUS Player (it holds exclusive camera access)")
     sys.exit(1)
-print(f"  [OK] Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
+logger.info(f"  [OK] Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
 
 # Negotiate max packet size across the network path (CRITICAL — prevents packet loss)
 # Must be called BEFORE opening any streams
 if isinstance(device, eb.PvDeviceGEV):
     r = device.NegotiatePacketSize()
-    print(f"  NegotiatePacketSize: {r.GetCodeString()}")
+    logger.info(f"  NegotiatePacketSize: {r.GetCodeString()}")
 
 # ── 3. Print key parameters ───────────────────────────────────────────────────
-print("\n── Parameters ────────────────────────────────────────────────────────")
+logger.info("\n── Parameters ────────────────────────────────────────────────────────")
 nm = device.GetParameters()
 for name in ["DeviceModelName", "DeviceSerialNumber", "DeviceFirmwareVersion",
              "DeviceTemperature", "AcquisitionFrameRate", "GevSCPSPacketSize",
              "TriggerMode", "TriggerSource", "PayloadSize"]:
-    print(f"  {name:<32}: {get_p(nm, name)}")
+    logger.info(f"  {name:<32}: {get_p(nm, name)}")
 
 # ── 4. Enumerate sources ──────────────────────────────────────────────────────
-print("\n── Enumerate Sources ─────────────────────────────────────────────────")
+logger.info("\n── Enumerate Sources ─────────────────────────────────────────────────")
 source_selector = nm.GetEnum("SourceSelector")
 source_names = []
 if source_selector:
@@ -225,10 +230,10 @@ if source_selector:
         if entry:
             result, name = entry.GetName()
             source_names.append(name)
-print(f"  Sources: {source_names}")
+logger.info(f"  Sources: {source_names}")
 
 # ── 5. Open all streams simultaneously ───────────────────────────────────────
-print("\n── Open Streams (simultaneous) ───────────────────────────────────────")
+logger.info("\n── Open Streams (simultaneous) ───────────────────────────────────────")
 sources = []
 for ch_idx, src_name in enumerate(source_names):
     src = Source(device, connection_id, src_name, ch_idx)
@@ -236,29 +241,29 @@ for ch_idx, src_name in enumerate(source_names):
         sources.append(src)
 
 if not sources:
-    print("  [ERROR] No sources opened.")
+    logger.error("  [ERROR] No sources opened.")
     device.Disconnect()
     eb.PvDevice.Free(device)
     sys.exit(1)
-print(f"  [OK] {len(sources)} streams open simultaneously")
+logger.info(f"  [OK] {len(sources)} streams open simultaneously")
 
 # ── 6. Start acquisition on ALL sources ──────────────────────────────────────
-print("\n── Start Acquisition (all sources) ───────────────────────────────────")
+logger.info("\n── Start Acquisition (all sources) ───────────────────────────────────")
 for src in sources:
     src.start_acquisition()
-print(f"  [OK] AcquisitionStart sent to all {len(sources)} sources")
+logger.info(f"  [OK] AcquisitionStart sent to all {len(sources)} sources")
 
 # Allow sensors to reach steady-state exposure
 WARMUP_S     = 2.0    # seconds
 DRAIN_FRAMES = 30     # frames to drain per source
 
-print(f"  Warming up ({WARMUP_S}s) …", end="", flush=True)
+logger.info(f"  Warming up ({WARMUP_S}s) …")
 time.sleep(WARMUP_S)
-print(" done")
+logger.info("  Warmup done")
 
 # Drain frames in round-robin so all pipelines advance at the same rate
 # → prevents blockID drift that happens with sequential per-source drain
-print(f"  Draining {DRAIN_FRAMES} frames (interleaved) …")
+logger.info(f"  Draining {DRAIN_FRAMES} frames (interleaved) …")
 counts = {src.source_name: 0 for src in sources}
 for _ in range(DRAIN_FRAMES):
     for src in sources:
@@ -267,10 +272,10 @@ for _ in range(DRAIN_FRAMES):
             src.pipeline.ReleaseBuffer(buf)
             counts[src.source_name] += 1
 for src in sources:
-    print(f"    {src.source_name}: discarded {counts[src.source_name]} frames")
+    logger.info(f"    {src.source_name}: discarded {counts[src.source_name]} frames")
 
 # ── 7. Retrieve one synchronized frame per source ────────────────────────────
-print("\n── Retrieve Synchronized Triplet ─────────────────────────────────────")
+logger.info("\n── Retrieve Synchronized Triplet ─────────────────────────────────────")
 frames = {}   # source_name → (numpy_array, pixel_format)
 block_ids = {}
 
@@ -279,11 +284,11 @@ for src in sources:
     frames[src.source_name]    = (img_data, pf)
 
 # Synchronization check — blockIDs printed per-source above; verify they match
-print("  ↑ Verify blockIDs above are identical across all 3 sources")
+logger.info("  ↑ Verify blockIDs above are identical across all 3 sources")
 
 
 # Stream packet-loss diagnostics (dark images → check for errors here)
-print("\n── Stream Statistics (packet loss check) ─────────────────────────────")
+logger.info("\n── Stream Statistics (packet loss check) ─────────────────────────────")
 for src in sources:
     sm = src.stream.GetParameters()
     lost   = get_p(sm, "PacketResendRequestCount")
@@ -291,22 +296,22 @@ for src in sources:
     missed = get_p(sm, "MissingPacketCount")
     fps    = get_p(sm, "AcquisitionRate")
     bw     = get_p(sm, "Bandwidth")
-    print(f"  {src.source_name}: FPS={fps}  BW={bw}  "
-          f"Resend={lost}  Errors={errors}  Missing={missed}")
+    logger.info(f"  {src.source_name}: FPS={fps}  BW={bw}  "
+                f"Resend={lost}  Errors={errors}  Missing={missed}")
 
 
 # ── 8. Stop all acquisitions ──────────────────────────────────────────────────
-print("\n── Stop Acquisition ──────────────────────────────────────────────────")
+logger.info("\n── Stop Acquisition ──────────────────────────────────────────────────")
 for src in sources:
     src.stop_acquisition()
 
 # ── 9. Save PNGs ──────────────────────────────────────────────────────────────
-print("\n── Save PNGs ─────────────────────────────────────────────────────────")
+logger.info("\n── Save PNGs ─────────────────────────────────────────────────────────")
 source_results = []
 for ch_idx, src in enumerate(sources):
     img_data, pf = frames[src.source_name]
     if img_data is None:
-        print(f"  [WARNING] CH{ch_idx+1} ({src.source_name}): no data — skipped")
+        logger.warning(f"  [WARNING] CH{ch_idx+1} ({src.source_name}): no data — skipped")
         continue
 
     fname = OUT_DIR / f"ch{ch_idx+1}.png"
@@ -323,8 +328,8 @@ for ch_idx, src in enumerate(sources):
     norm_fname = OUT_DIR / f"ch{ch_idx+1}_norm.png"
     img_norm = cv2.normalize(img_save, None, 0, 255, cv2.NORM_MINMAX)
     cv2.imwrite(str(norm_fname), img_norm)
-    print(f"  [OK] {fname.name}  (raw)    min={img_data.min()} max={img_data.max()} mean={img_data.mean():.1f}")
-    print(f"       {norm_fname.name}  (display-normalized)")
+    logger.info(f"  [OK] {fname.name}  (raw)    min={img_data.min()} max={img_data.max()} mean={img_data.mean():.1f}")
+    logger.info(f"       {norm_fname.name}  (display-normalized)")
 
     source_results.append({
         "source":       src.source_name,
@@ -336,15 +341,15 @@ for ch_idx, src in enumerate(sources):
     })
 
 # ── 10. Close all streams + disconnect ────────────────────────────────────────
-print("\n── Cleanup ───────────────────────────────────────────────────────────")
+logger.info("\n── Cleanup ───────────────────────────────────────────────────────────")
 for src in sources:
     src.close()
 device.Disconnect()
 eb.PvDevice.Free(device)
-print("  [OK] Disconnected cleanly")
+logger.info("  [OK] Disconnected cleanly")
 
 # ── 11. Config summary ────────────────────────────────────────────────────────
-print(f"""
+logger.info(f"""
 {'═'*62}
   PASTE INTO config.yaml → camera.jai
 {'═'*62}
@@ -354,12 +359,12 @@ print(f"""
   fps:    {get_p(nm, 'AcquisitionFrameRate')}
   sources:""")
 for sr in source_results:
-    print(f"    {sr['source']}:")
-    print(f"      pixel_format: \"{sr['pixel_format']}\"")
-    print(f"      resolution:   [{sr['width']}, {sr['height']}]")
-    print(f"      exposure_us:  {sr['exposure_us']}")
-    print(f"      gain:         {sr['gain']}")
-print(f"""{'═'*62}
+    logger.info(f"    {sr['source']}:")
+    logger.info(f"      pixel_format: \"{sr['pixel_format']}\"")
+    logger.info(f"      resolution:   [{sr['width']}, {sr['height']}]")
+    logger.info(f"      exposure_us:  {sr['exposure_us']}")
+    logger.info(f"      gain:         {sr['gain']}")
+logger.info(f"""{'═'*62}
   PNGs → {OUT_DIR.resolve()}
 {'═'*62}
 """)

@@ -9,13 +9,18 @@ Usage:
 """
 
 import sys
+import logging
 from PyQt6.QtWidgets import QApplication
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger("main")
 
 try:
     from gui.main_window import MainWindow
 except ImportError:
-    print("[ERROR] gui/main_window.py not found.")
-    print("        This is built in Step A4. Run A4 first, then launch main.py.")
+    logger.error("gui/main_window.py not found.")
+    logger.error("This is built in Step A4. Run A4 first, then launch main.py.")
     sys.exit(1)
 
 
