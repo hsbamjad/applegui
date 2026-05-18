@@ -32,25 +32,6 @@ DISPLAY_H     = 480        # height per channel panel
 OUT_DIR       = Path("scripts/probe_output")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# ── NIR display normalization ────────────────────────────────────────────────
-# Root cause of darkness:  NORM_MINMAX uses pixel min and max.  Even a single
-# hot pixel (value=255) while the scene is at DN 5–30 compresses everything
-# to near-black on display.  Fix: use the 1st/99th percentile as black/white
-# points — this is robust to outlier pixels.
-#
-# Root cause of flicker:   percentile values still fluctuate slightly frame to
-# frame due to sensor noise.  Fix: apply a fast EMA (α=0.30) on the range so
-# the normalisation window settles in ~3 frames but tracks real changes.
-#
-# Tunable:
-NIR_EMA   = 0.30   # EMA speed: 0=frozen, 1=per-frame  (0.30 → settles in ~3 frames)
-NIR_LO_P  = 1      # percentile used as black point
-NIR_HI_P  = 99     # percentile used as white point
-NIR_MIN_SPAN = 6   # minimum DN range; below this falls back to full min/max
-# Per-source running range state (initialised on first frame)
-_nir_lo = [None, None, None]
-_nir_hi = [None, None, None]
-
 # ── Import eBUS ───────────────────────────────────────────────────────────────
 print("\n── eBUS Import ───────────────────────────────────────────────────────")
 try:
@@ -193,26 +174,6 @@ if isinstance(device, eb.PvDeviceGEV):
     r = device.NegotiatePacketSize()
     print(f"  NegotiatePacketSize: {r.GetCodeString()}")
 
-# ── Read current AcquisitionFrameRate (info only — do NOT set Enable flag) ───
-# NOTE: Setting AcquisitionFrameRateEnable=True disables the JAI hardware
-# multi-source sync mechanism → SYNC!! and unequal blockIDs.
-# Frame rate must be configured in eBUS Player or JAI SDK before running.
-print("\n── Camera Frame Rate (read-only) ─────────────────────────────────────")
-try:
-    _nm = device.GetParameters()
-    _fr = _nm.Get("AcquisitionFrameRate")
-    if _fr is not None:
-        _r, _cur = _fr.GetValue()
-        print(f"  AcquisitionFrameRate = {_cur:.2f} fps")
-        if _cur < 25:
-            print(f"  ⚠️  Frame rate is {_cur:.1f} fps — expected 30.")
-            print("      → Open eBUS Player → connect → set AcquisitionFrameRate=30 → close.")
-            print("      → The register value persists for the power session.")
-    else:
-        print("  AcquisitionFrameRate parameter not found")
-except Exception as _e:
-    print(f"  Could not read frame rate: {_e}")
-
 # ── 2. Enumerate & open streams ───────────────────────────────────────────────
 print("\n── Open Streams ──────────────────────────────────────────────────────")
 nm = device.GetParameters()
@@ -244,20 +205,12 @@ for src in sources:
 print(f"  ✅  All sources streaming — warming up 2s …")
 time.sleep(2.0)
 
-# Drain each source's pipeline to empty individually.
-# Round-robin draining (the old approach) does not guarantee each buffer is
-# fully cleared — stale extra frames in one source cause blockID mismatch
-# (SYNC !!) from the very first displayed frame.
-print("  Draining pipeline buffers …")
-for src in sources:
-    n = 0
-    while True:
-        r, buf, op = src.pipeline.RetrieveNextBuffer(50)  # 50 ms timeout
-        if r.IsFailure():
-            break
-        src.pipeline.ReleaseBuffer(buf)
-        n += 1
-    print(f"    {src.source_name}: drained {n} frames")
+# Drain initial frames (interleaved)
+for _ in range(30):
+    for src in sources:
+        r, buf, op = src.pipeline.RetrieveNextBuffer(200)
+        if r.IsOK():
+            src.pipeline.ReleaseBuffer(buf)
 
 print("  ✅  Ready — opening live view window")
 print("       Q = quit  |  S = save snapshot  |  N = toggle NIR normalize\n")
@@ -296,33 +249,12 @@ try:
             if src.pixel_format == "BayerRG8":
                 img_bgr = cv2.cvtColor(raw, cv2.COLOR_BayerBG2BGR)
             else:
-                # ── NIR: percentile-clip + fast EMA on range ──────────────
-                # NORM_MINMAX (min/max) is destroyed by even a single hot
-                # pixel: if max=255 but scene is at DN 5-30, everything maps
-                # to near-black.  Using 1st/99th percentile excludes outliers.
-                # Flicker comes from the range itself jumping frame-to-frame;
-                # we smooth it with a fast EMA (α=0.30, settles in ~3 frames).
+                # NIR: normalize for display if enabled
                 if normalize_nir:
-                    p_lo = float(np.percentile(raw, NIR_LO_P))
-                    p_hi = float(np.percentile(raw, NIR_HI_P))
-                    if p_hi - p_lo < NIR_MIN_SPAN:   # very uniform scene
-                        p_lo = float(raw.min())       # fall back to full range
-                        p_hi = float(raw.max())
-                    if p_hi <= p_lo:
-                        p_hi = p_lo + 1.0
-                    if _nir_lo[i] is None:            # first frame: initialise
-                        _nir_lo[i] = p_lo
-                        _nir_hi[i] = p_hi
-                    else:                             # subsequent: EMA smooth
-                        _nir_lo[i] += NIR_EMA * (p_lo - _nir_lo[i])
-                        _nir_hi[i] += NIR_EMA * (p_hi - _nir_hi[i])
-                    span = max(_nir_hi[i] - _nir_lo[i], 1.0)
-                    normed = np.clip(
-                        (raw.astype(np.float32) - _nir_lo[i]) / span * 255,
-                        0, 255).astype(np.uint8)
-                    img_bgr = cv2.cvtColor(normed, cv2.COLOR_GRAY2BGR)
+                    stretched = cv2.normalize(raw, None, 0, 255, cv2.NORM_MINMAX)
                 else:
-                    img_bgr = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
+                    stretched = raw
+                img_bgr = cv2.cvtColor(stretched, cv2.COLOR_GRAY2BGR)
 
             # Resize to display panel
             panel = cv2.resize(img_bgr, (DISPLAY_W, DISPLAY_H))
