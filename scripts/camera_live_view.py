@@ -32,21 +32,16 @@ DISPLAY_H     = 480        # height per channel panel
 OUT_DIR       = Path("scripts/probe_output")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# ── Frame-rate target (written to camera register at startup) ─────────────────
-# Without this, the camera runs at its NVM default (~3 fps on cold start).
-# Setting it here makes the script self-contained — no need to open eBUS Player.
-TARGET_FPS    = 30.0
-
-# ── NIR stable-range normalization ───────────────────────────────────────────
-# Per-frame min-max stretch (NORM_MINMAX) makes the brightness reference jump
-# every frame → visible flicker.  We use a slow-EMA of the 2nd/98th percentile
-# instead, giving a stable display range that drifts only as scene illumination
-# actually changes.
-NIR_EMA_ALPHA = 0.05        # smoothing factor (0 = frozen, 1 = per-frame)
-NIR_LO_PCT   = 2            # percentile for black point
-NIR_HI_PCT   = 98           # percentile for white point
-# Per-source running range: [lo, hi] initialised to None until first frame.
-_nir_range    = [None, None, None]
+# ── NIR display temporal smoothing ───────────────────────────────────────────
+# Problem: cv2.NORM_MINMAX recalculates black/white point every frame.
+# Tiny noise fluctuations shift the whole brightness scale → visible flicker.
+# Fix: normalize each frame normally (so it's always visible from frame 1),
+# then blend with the previous display frame using a high-weight EMA.
+# This smooths out per-frame jumps without ever producing a dark or
+# degenerate image.
+NIR_BLEND     = 0.75        # weight of the PREVIOUS display frame (0=no blend, 1=frozen)
+# Running display images per NIR source (None until first frame)
+_nir_display  = [None, None, None]
 
 # ── Import eBUS ───────────────────────────────────────────────────────────────
 print("\n── eBUS Import ───────────────────────────────────────────────────────")
@@ -190,29 +185,23 @@ if isinstance(device, eb.PvDeviceGEV):
     r = device.NegotiatePacketSize()
     print(f"  NegotiatePacketSize: {r.GetCodeString()}")
 
-# ── FIX 1: Set AcquisitionFrameRate on the camera ────────────────────────────
-# Without this the camera runs at its NVM default (~3 fps on a cold start).
-# eBUS Player happens to write 30 fps when you use it, which is why the script
-# appears to "work" only after eBUS Player has been opened first.
-print(f"\n── Set Acquisition Frame Rate → {TARGET_FPS} fps ──────────────────────")
+# ── Read current AcquisitionFrameRate (info only — do NOT set Enable flag) ───
+# NOTE: Setting AcquisitionFrameRateEnable=True disables the JAI hardware
+# multi-source sync mechanism → SYNC!! and unequal blockIDs.
+# Frame rate must be configured in eBUS Player or JAI SDK before running.
+print("\n── Camera Frame Rate (read-only) ─────────────────────────────────────")
 try:
     _nm = device.GetParameters()
-    # Some JAI firmware requires the rate-enable flag first.
-    _en = _nm.Get("AcquisitionFrameRateEnable")
-    if _en is not None:
-        _en.SetValue(True)
-        print("  AcquisitionFrameRateEnable = True")
     _fr = _nm.Get("AcquisitionFrameRate")
     if _fr is not None:
         _r, _cur = _fr.GetValue()
-        print(f"  Current AcquisitionFrameRate = {_cur:.2f} fps")
-        _fr.SetValue(TARGET_FPS)
-        _r, _new = _fr.GetValue()
-        print(f"  Set   → AcquisitionFrameRate = {_new:.2f} fps  ✅")
+        print(f"  AcquisitionFrameRate = {_cur:.2f} fps")
+        if _cur < 10:
+            print("  ⚠️  Frame rate is low. Set it to 30 fps in eBUS Player before running.")
     else:
-        print("  ⚠️  AcquisitionFrameRate parameter not found — check camera GenICam map")
+        print("  AcquisitionFrameRate parameter not found")
 except Exception as _e:
-    print(f"  ⚠️  Could not set frame rate: {_e}")
+    print(f"  Could not read frame rate: {_e}")
 
 # ── 2. Enumerate & open streams ───────────────────────────────────────────────
 print("\n── Open Streams ──────────────────────────────────────────────────────")
@@ -289,30 +278,23 @@ try:
             if src.pixel_format == "BayerRG8":
                 img_bgr = cv2.cvtColor(raw, cv2.COLOR_BayerBG2BGR)
             else:
-                # ── FIX 2: Stable NIR normalization (no per-frame flicker) ───
-                # NORM_MINMAX recalculates black/white point every frame, so
-                # tiny noise fluctuations cause the whole image to shift in
-                # brightness — the "flickering" you observed.
-                # Solution: track a slowly-moving EMA of the 2nd/98th
-                # percentile so the display range is stable unless the scene
-                # illumination genuinely changes.
+                # ── Stable NIR display: normalize then temporally blend ────
+                # NORM_MINMAX alone flickers because min/max jump every frame.
+                # Solution: always normalize fully (so image is always visible),
+                # then blend the result with the previous display frame.
+                # Blending smooths out per-frame brightness jumps without
+                # ever producing a dark or degenerate panel.
                 if normalize_nir:
-                    lo_now = float(np.percentile(raw, NIR_LO_PCT))
-                    hi_now = float(np.percentile(raw, NIR_HI_PCT))
-                    if hi_now <= lo_now:          # degenerate (all-black frame)
-                        hi_now = lo_now + 1.0
-                    if _nir_range[i] is None:     # first frame — initialise
-                        _nir_range[i] = [lo_now, hi_now]
-                    else:                         # smooth toward new estimate
-                        _nir_range[i][0] += NIR_EMA_ALPHA * (lo_now - _nir_range[i][0])
-                        _nir_range[i][1] += NIR_EMA_ALPHA * (hi_now - _nir_range[i][1])
-                    lo, hi = _nir_range[i]
-                    stretched = np.clip((raw.astype(np.float32) - lo)
-                                        / max(hi - lo, 1.0) * 255, 0, 255
-                                        ).astype(np.uint8)
+                    normed = cv2.normalize(raw, None, 0, 255, cv2.NORM_MINMAX)
+                    normed_bgr = cv2.cvtColor(normed, cv2.COLOR_GRAY2BGR)
+                    if _nir_display[i] is None:   # first frame — no previous
+                        _nir_display[i] = normed_bgr.astype(np.float32)
+                    else:                          # temporal blend
+                        _nir_display[i] = (NIR_BLEND * _nir_display[i]
+                                           + (1.0 - NIR_BLEND) * normed_bgr.astype(np.float32))
+                    img_bgr = _nir_display[i].astype(np.uint8)
                 else:
-                    stretched = raw
-                img_bgr = cv2.cvtColor(stretched, cv2.COLOR_GRAY2BGR)
+                    img_bgr = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
 
             # Resize to display panel
             panel = cv2.resize(img_bgr, (DISPLAY_W, DISPLAY_H))
