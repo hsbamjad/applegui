@@ -98,8 +98,8 @@ class HeaderBar(QWidget):
             badge_bg, badge_bdr, badge_tc = "#0D2218", "#1A4832", SUCCESS
             badge_txt = "JAI  LIVE"
 
-        badge = QLabel(f"  {badge_txt}  ")
-        badge.setStyleSheet(f"""
+        self._badge = QLabel(f"  {badge_txt}  ")
+        self._badge.setStyleSheet(f"""
             QLabel {{
                 background-color: {badge_bg}; color: {badge_tc};
                 border: 1px solid {badge_bdr}; border-radius: 5px;
@@ -107,7 +107,24 @@ class HeaderBar(QWidget):
                 letter-spacing: 1.5px; padding: 3px 10px;
             }}
         """)
-        layout.addWidget(badge)
+        layout.addWidget(self._badge)
+
+    def set_mode(self, mode: str) -> None:
+        """Update badge at runtime to reflect actual camera mode."""
+        if mode == "jai":
+            bg, bdr, tc, txt = "#0D2218", "#1A4832", SUCCESS, "JAI  LIVE"
+        else:
+            bg, bdr, tc, txt = "#1C2240", "#2E3D68", "#6A7899", "MOCK MODE"
+        self._badge.setText(f"  {txt}  ")
+        self._badge.setStyleSheet(f"""
+            QLabel {{
+                background-color: {bg}; color: {tc};
+                border: 1px solid {bdr}; border-radius: 5px;
+                font-size: 10px; font-weight: 600;
+                letter-spacing: 1.5px; padding: 3px 10px;
+            }}
+        """)
+
 
     def paintEvent(self, event) -> None:  # type: ignore[override]
         painter = QPainter(self)
@@ -365,6 +382,13 @@ class MainWindow(QMainWindow):
         state = "offline" if is_error else "online"
         self._right.status_group.set_status("Camera", state, msg)
         self.statusBar().showMessage(msg)
+
+        # Update header badge to reflect actual runtime mode
+        if "JAI" in msg.upper() and not is_error:
+            self._header.set_mode("jai")
+        elif "MOCK" in msg.upper() and not is_error:
+            self._header.set_mode("mock")
+
 
     @pyqtSlot(int, int, str, float, str)
     def _on_grade(
