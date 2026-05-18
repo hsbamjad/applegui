@@ -19,15 +19,10 @@ Usage:
 
 import time
 import sys
-import logging
 from pathlib import Path
 
 import numpy as np
 import cv2
-
-# Configure logging with a clean format for verification output
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-logger = logging.getLogger("camera_live_view")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 BUFFER_COUNT  = 16
@@ -38,12 +33,12 @@ OUT_DIR       = Path("scripts/probe_output")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Import eBUS ───────────────────────────────────────────────────────────────
-logger.info("\n── eBUS Import ───────────────────────────────────────────────────────")
+print("\n── eBUS Import ───────────────────────────────────────────────────────")
 try:
     import eBUS as eb
-    logger.info("  [OK] import eBUS")
+    print("  ✅  import eBUS OK")
 except ImportError as e:
-    logger.error(f"  [ERROR] {e}")
+    print(f"  ❌  {e}")
     sys.exit(1)
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -96,19 +91,19 @@ class Source:
         self.pixel_format = get_p(nm, "PixelFormat")
         w = get_p(nm, "Width")
         h = get_p(nm, "Height")
-        logger.info(f"  {self.source_name}  ch_id={self.source_channel}  "
-                    f"fmt={self.pixel_format}  {w}×{h}")
+        print(f"  {self.source_name}  ch_id={self.source_channel}  "
+              f"fmt={self.pixel_format}  {w}×{h}")
 
         self.stream = eb.PvStreamGEV()
         r = self.stream.Open(self.connection_id, 0, self.source_channel)
         if r.IsFailure():
-            logger.error(f"  [ERROR] {self.source_name}: stream open failed: {r.GetCodeString()}")
+            print(f"  ❌  {self.source_name}: stream open failed: {r.GetCodeString()}")
             return False
 
         lip = self.stream.GetLocalIPAddress()
         lp  = self.stream.GetLocalPort()
         self.device.SetStreamDestination(lip, lp, self.source_channel)
-        logger.info(f"       → {lip}:{lp}")
+        print(f"       → {lip}:{lp}")
 
         payload_size = self.device.GetPayloadSize()
         self.pipeline = eb.PvPipeline(self.stream)
@@ -151,7 +146,7 @@ class Source:
 
 
 # ── 1. Discover & connect ─────────────────────────────────────────────────────
-logger.info("\n── Device Discovery ──────────────────────────────────────────────────")
+print("\n── Device Discovery ──────────────────────────────────────────────────")
 sys_obj = eb.PvSystem()
 sys_obj.Find()
 
@@ -160,27 +155,27 @@ for i in range(sys_obj.GetInterfaceCount()):
     iface = sys_obj.GetInterface(i)
     for j in range(iface.GetDeviceCount()):
         dev = iface.GetDeviceInfo(j)
-        logger.info(f"  Found: {dev.GetDisplayID()}")
+        print(f"  Found: {dev.GetDisplayID()}")
         if connection_id is None:
             connection_id = dev.GetConnectionID()
 
 if connection_id is None:
-    logger.error("  [ERROR] No camera found.")
+    print("  ❌  No camera found.")
     sys.exit(1)
 
-logger.info("\n── Connect ───────────────────────────────────────────────────────────")
+print("\n── Connect ───────────────────────────────────────────────────────────")
 result, device = eb.PvDevice.CreateAndConnect(connection_id)
 if device is None:
-    logger.error(f"  [ERROR] {result.GetCodeString()} — Close eBUS Player first")
+    print(f"  ❌  {result.GetCodeString()} — Close eBUS Player first")
     sys.exit(1)
-logger.info(f"  [OK] Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
+print(f"  ✅  Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
 
 if isinstance(device, eb.PvDeviceGEV):
     r = device.NegotiatePacketSize()
-    logger.info(f"  NegotiatePacketSize: {r.GetCodeString()}")
+    print(f"  NegotiatePacketSize: {r.GetCodeString()}")
 
 # ── 2. Enumerate & open streams ───────────────────────────────────────────────
-logger.info("\n── Open Streams ──────────────────────────────────────────────────────")
+print("\n── Open Streams ──────────────────────────────────────────────────────")
 nm = device.GetParameters()
 source_selector = nm.GetEnum("SourceSelector")
 source_names = []
@@ -199,15 +194,15 @@ for ch_idx, src_name in enumerate(source_names):
         sources.append(src)
 
 if not sources:
-    logger.error("  [ERROR] No sources opened.")
+    print("  ❌  No sources opened.")
     sys.exit(1)
-logger.info(f"  [OK] {len(sources)} streams open simultaneously")
+print(f"  ✅  {len(sources)} streams open simultaneously")
 
 # ── 3. Start acquisition ──────────────────────────────────────────────────────
-logger.info("\n── Start Acquisition ─────────────────────────────────────────────────")
+print("\n── Start Acquisition ─────────────────────────────────────────────────")
 for src in sources:
     src.start_acquisition()
-logger.info(f"  [OK] All sources streaming — warming up 2s ...")
+print(f"  ✅  All sources streaming — warming up 2s …")
 time.sleep(2.0)
 
 # Drain initial frames (interleaved)
@@ -217,32 +212,16 @@ for _ in range(30):
         if r.IsOK():
             src.pipeline.ReleaseBuffer(buf)
 
-logger.info("  [OK] Ready — opening live view window")
-logger.info("       Q = quit  |  S = save snapshot  |  N = toggle NIR normalize\n")
+print("  ✅  Ready — opening live view window")
+print("       Q = quit  |  S = save snapshot  |  N = toggle NIR normalize\n")
 
 # ── 4. Live display loop ──────────────────────────────────────────────────────
 LABELS    = ["CH1  Color (BayerRG8)", "CH2  NIR1 (Mono8)", "CH3  NIR2 (Mono8)"]
 FONT      = cv2.FONT_HERSHEY_SIMPLEX
-normalize_nir = True     # toggle with N key
+normalize_nir = True     # toggle with N
 snapshot_n    = 0
 fps_times     = []
 last_frames   = [None, None, None]   # keep last good frame per source
-
-# EMA state for stable NIR brightness (prevents per-frame flicker)
-# Tracks the slowly-changing max value per NIR source
-_nir_ema_max = [64.0, 64.0]   # one per NIR source (CH2, CH3)
-_EMA_ALPHA   = 0.05            # 0.05 = slow/stable; higher = faster but more flicker
-
-def ema_normalize(raw: np.ndarray, ch_idx: int) -> np.ndarray:
-    """Normalize using EMA-tracked max — eliminates per-frame brightness flicker."""
-    cur_max = float(raw.max())
-    if cur_max > 0:
-        _nir_ema_max[ch_idx] = (
-            (1 - _EMA_ALPHA) * _nir_ema_max[ch_idx]
-            + _EMA_ALPHA * cur_max
-        )
-    scale = 255.0 / max(_nir_ema_max[ch_idx], 1.0)
-    return np.clip(raw.astype(np.float32) * scale, 0, 255).astype(np.uint8)
 
 try:
     while True:
@@ -270,11 +249,9 @@ try:
             if src.pixel_format == "BayerRG8":
                 img_bgr = cv2.cvtColor(raw, cv2.COLOR_BayerBG2BGR)
             else:
-                # NIR: EMA-stabilized normalization (stable brightness, no flicker)
-                # N key toggles between EMA-normalized and raw for comparison
-                nir_idx = i - 1   # CH2 → idx 0, CH3 → idx 1
+                # NIR: normalize for display if enabled
                 if normalize_nir:
-                    stretched = ema_normalize(raw, nir_idx)
+                    stretched = cv2.normalize(raw, None, 0, 255, cv2.NORM_MINMAX)
                 else:
                     stretched = raw
                 img_bgr = cv2.cvtColor(stretched, cv2.COLOR_GRAY2BGR)
@@ -313,7 +290,7 @@ try:
                       (20, 20, 20), -1)
         sync_txt  = "SYNC OK" if synced else "SYNC !!"
         sync_col  = (0, 220, 0) if synced else (0, 60, 220)
-        norm_txt  = "NIR: EMA-normalized" if normalize_nir else "NIR: raw"
+        norm_txt  = "NIR: normalized" if normalize_nir else "NIR: raw"
         status    = f"FPS: {fps:.1f}  |  {sync_txt}  |  {norm_txt}  |  [Q] quit  [S] snap  [N] toggle NIR"
         cv2.putText(display, sync_txt, (10, DISPLAY_H - 8), FONT, 0.55, sync_col, 1)
         cv2.putText(display, f"FPS: {fps:.1f}", (90, DISPLAY_H - 8), FONT, 0.55, (180, 180, 180), 1)
@@ -331,13 +308,13 @@ try:
             snap_path = OUT_DIR / f"snapshot_{snapshot_n:03d}.png"
             cv2.imwrite(str(snap_path), display)
             snapshot_n += 1
-            logger.info(f"  [SNAP] Snapshot saved: {snap_path}")
+            print(f"  📸  Snapshot saved: {snap_path}")
         elif key == ord('n'):
             normalize_nir = not normalize_nir
-            logger.info(f"  NIR normalization: {'ON' if normalize_nir else 'OFF'}")
+            print(f"  NIR normalization: {'ON' if normalize_nir else 'OFF'}")
 
 finally:
-    logger.info("\n── Shutting down ─────────────────────────────────────────────────────")
+    print("\n── Shutting down ─────────────────────────────────────────────────────")
     cv2.destroyAllWindows()
     for src in sources:
         src.stop_acquisition()
@@ -345,4 +322,4 @@ finally:
         src.close()
     device.Disconnect()
     eb.PvDevice.Free(device)
-    logger.info("  [OK] Disconnected cleanly")
+    print("  ✅  Disconnected cleanly")
