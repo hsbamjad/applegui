@@ -120,26 +120,36 @@ class CameraWorker(QThread):
 
     def set_fps(self, fps: float) -> None:
         """
-        Set camera acquisition FPS AND update the GUI display rate to match.
+        Set camera HARDWARE acquisition FPS only.
 
-        Two things happen:
-          1. JAICamera.set_fps() writes AcquisitionFrameRate to the device firmware
-          2. self._display_fps is updated so the worker loop emits at the new rate
+        This does NOT change the display render rate (_display_fps).
+        These are two completely separate things:
 
-        After a FPS increase, firmware may silently clamp ExposureTime.
-        Reads back actual ExposureTime and emits sig_exposure_readback so the
-        GUI exposure spinbox can sync to the real (possibly clamped) value.
+          Camera FPS  (this method)  = how fast the sensor captures frames
+                                       Controls: exposure range (max = 1,000,000/fps µs)
+                                       Controls: motion freeze (higher FPS = sharper motion)
+                                       Visible:  in status bar "Cam: X FPS"
+
+          Display FPS (_display_fps) = how fast Qt renders 3 channel images to screen
+                                       Hard limit: ~30 FPS for 3 simultaneous channels
+                                       Qt cannot paint 3 × 640×480 images faster than ~30/sec
+                                       Visible:  in channel headers
+
+        The camera grab thread always runs at camera FPS speed. The worker emits
+        frames to the GUI at _display_fps rate (capped by Qt). For apple sorting,
+        only camera FPS matters for inference quality.
         """
-        self._display_fps = fps   # update display rate immediately
         if self._camera is not None:
             self._camera.set_fps(fps)
-            log.info("CameraWorker: display rate updated to %.0f FPS", fps)
-            # Read back actual exposure — firmware may have clamped it
+            log.info("CameraWorker: camera hardware set to %.0f FPS (display stays at %.0f FPS)",
+                     fps, self._display_fps)
+            # Read back actual exposure — firmware may have clamped it at new FPS
             actual_exp = self._camera.get_exposure()
             if actual_exp > 0:
                 self.sig_exposure_readback.emit(actual_exp)
         else:
             log.warning("set_fps ignored — camera not connected")
+
 
     def get_exposure(self) -> int:
         """Read current ExposureTime from firmware. Returns -1 if not connected."""

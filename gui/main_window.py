@@ -478,17 +478,19 @@ class MainWindow(QMainWindow):
     @pyqtSlot(float)
     def _on_fps_changed(self, fps: float) -> None:
         """
-        Forward FPS change to camera. Firmware will silently clamp ExposureTime
-        if current value exceeds 1,000,000/fps. CameraWorker reads back the actual
-        ExposureTime after the FPS write and emits sig_exposure_readback, which
-        triggers _on_exposure_readback to sync the spinbox.
+        Set camera hardware acquisition FPS. Does NOT change display render rate.
+        Firmware will silently clamp ExposureTime if current value exceeds
+        1,000,000/fps. CameraWorker reads back actual ExposureTime and emits
+        sig_exposure_readback to sync the GUI spinbox.
         """
         running = self._cam_w is not None and self._cam_w.isRunning()
         if running:
-            self._cam_w.set_fps(fps)   # also emits sig_exposure_readback
+            self._cam_w.set_fps(fps)
             max_exp = int(1_000_000 / max(fps, 1))
             self.statusBar().showMessage(
-                f"Frame rate set: {fps:.0f} FPS  —  max exposure: {max_exp:,} µs"
+                f"Camera hardware FPS set: {fps:.0f} FPS  —  "
+                f"max exposure: {max_exp:,} µs  —  "
+                f"Display render stays at ~30 FPS (Qt limit for 3 channels)"
             )
         else:
             self.statusBar().showMessage("Frame rate: camera not connected — connect first")
@@ -506,19 +508,13 @@ class MainWindow(QMainWindow):
     @pyqtSlot(float)
     def _on_cam_fps(self, cam_fps: float) -> None:
         """
-        Shows real camera hardware FPS (from grab thread) in the status bar.
-
-        TWO DIFFERENT FPS NUMBERS:
-          Camera FPS  = how fast the hardware sensor grabs frames (what you set)
-          Display FPS = how fast Qt renders 3 channel images to screen (~30 max)
-
-        Qt physically cannot paint 3 x 640x480 QImages faster than ~30 times/sec
-        on a single core. The camera IS running at the FPS you set. Only inference
-        uses camera FPS; display FPS is a visual smoothness limit.
+        Updates status bar with real camera FPS vs display FPS every second.
+        These are two separate numbers:
+          - Camera FPS = sensor hardware rate (what you set with Apply FPS)
+          - Display FPS = Qt screen render rate (~30 for 3 channels, always)
         """
-        display_fps = int(self._cam_w._display_fps) if self._cam_w else 0
         self.statusBar().showMessage(
-            f"Cam: {cam_fps:.0f} FPS (hardware)   |   "
-            f"Display: ~{display_fps} FPS (Qt render limit ≈ 30 for 3 channels)   |   "
+            f"Cam: {cam_fps:.0f} FPS (sensor hardware, what you set)   │   "
+            f"Display: ~30 FPS (Qt render cap for 3 simultaneous channels)   │   "
             f"Max exposure at {cam_fps:.0f} FPS: {int(1_000_000 / max(cam_fps, 1)):,} µs"
         )
