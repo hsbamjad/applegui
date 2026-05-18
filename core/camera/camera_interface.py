@@ -516,10 +516,10 @@ class CameraInterface:
         self._backend = None
         log.info("Camera disconnected")
 
-    def grab(self) -> Optional[FrameTriplet]:
+    def grab(self, last_idx: int = -1, timeout: float = 0.5) -> Optional[FrameTriplet]:
         """Grab next synchronized frame triplet."""
         if self._mode == "jai" and self._backend:
-            return self._backend.grab()
+            return self._backend.grab(last_idx=last_idx, timeout=timeout)
         return self._mock_frame()
 
     def _mock_frame(self) -> FrameTriplet:
