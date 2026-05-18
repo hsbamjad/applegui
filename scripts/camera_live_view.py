@@ -19,10 +19,15 @@ Usage:
 
 import time
 import sys
+import logging
 from pathlib import Path
 
 import numpy as np
 import cv2
+
+# Configure logging with a clean format for verification output
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("camera_live_view")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 BUFFER_COUNT  = 16
@@ -33,12 +38,12 @@ OUT_DIR       = Path("scripts/probe_output")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Import eBUS ───────────────────────────────────────────────────────────────
-print("\n── eBUS Import ───────────────────────────────────────────────────────")
+logger.info("\n── eBUS Import ───────────────────────────────────────────────────────")
 try:
     import eBUS as eb
-    print("  [OK] import eBUS OK")
+    logger.info("  [OK] import eBUS OK")
 except ImportError as e:
-    print(f"  [ERROR] {e}")
+    logger.error(f"  [ERROR] {e}")
     sys.exit(1)
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -91,19 +96,19 @@ class Source:
         self.pixel_format = get_p(nm, "PixelFormat")
         w = get_p(nm, "Width")
         h = get_p(nm, "Height")
-        print(f"  {self.source_name}  ch_id={self.source_channel}  "
-              f"fmt={self.pixel_format}  {w}×{h}")
+        logger.info(f"  {self.source_name}  ch_id={self.source_channel}  "
+                    f"fmt={self.pixel_format}  {w}×{h}")
 
         self.stream = eb.PvStreamGEV()
         r = self.stream.Open(self.connection_id, 0, self.source_channel)
         if r.IsFailure():
-            print(f"  [ERROR] {self.source_name}: stream open failed: {r.GetCodeString()}")
+            logger.error(f"  [ERROR] {self.source_name}: stream open failed: {r.GetCodeString()}")
             return False
 
         lip = self.stream.GetLocalIPAddress()
         lp  = self.stream.GetLocalPort()
         self.device.SetStreamDestination(lip, lp, self.source_channel)
-        print(f"       → {lip}:{lp}")
+        logger.info(f"       → {lip}:{lp}")
 
         payload_size = self.device.GetPayloadSize()
         self.pipeline = eb.PvPipeline(self.stream)
@@ -146,7 +151,7 @@ class Source:
 
 
 # ── 1. Discover & connect ─────────────────────────────────────────────────────
-print("\n── Device Discovery ──────────────────────────────────────────────────")
+logger.info("\n── Device Discovery ──────────────────────────────────────────────────")
 sys_obj = eb.PvSystem()
 sys_obj.Find()
 
@@ -155,27 +160,27 @@ for i in range(sys_obj.GetInterfaceCount()):
     iface = sys_obj.GetInterface(i)
     for j in range(iface.GetDeviceCount()):
         dev = iface.GetDeviceInfo(j)
-        print(f"  Found: {dev.GetDisplayID()}")
+        logger.info(f"  Found: {dev.GetDisplayID()}")
         if connection_id is None:
             connection_id = dev.GetConnectionID()
 
 if connection_id is None:
-    print("  [ERROR] No camera found.")
+    logger.error("  [ERROR] No camera found.")
     sys.exit(1)
 
-print("\n── Connect ───────────────────────────────────────────────────────────")
+logger.info("\n── Connect ───────────────────────────────────────────────────────────")
 result, device = eb.PvDevice.CreateAndConnect(connection_id)
 if device is None:
-    print(f"  [ERROR] {result.GetCodeString()} — Close eBUS Player first")
+    logger.error(f"  [ERROR] {result.GetCodeString()} — Close eBUS Player first")
     sys.exit(1)
-print(f"  [OK] Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
+logger.info(f"  [OK] Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
 
 if isinstance(device, eb.PvDeviceGEV):
     r = device.NegotiatePacketSize()
-    print(f"  NegotiatePacketSize: {r.GetCodeString()}")
+    logger.info(f"  NegotiatePacketSize: {r.GetCodeString()}")
 
 # ── 2. Enumerate & open streams ───────────────────────────────────────────────
-print("\n── Open Streams ──────────────────────────────────────────────────────")
+logger.info("\n── Open Streams ──────────────────────────────────────────────────────")
 nm = device.GetParameters()
 source_selector = nm.GetEnum("SourceSelector")
 source_names = []
@@ -194,15 +199,15 @@ for ch_idx, src_name in enumerate(source_names):
         sources.append(src)
 
 if not sources:
-    print("  [ERROR] No sources opened.")
+    logger.error("  [ERROR] No sources opened.")
     sys.exit(1)
-print(f"  [OK] {len(sources)} streams open simultaneously")
+logger.info(f"  [OK] {len(sources)} streams open simultaneously")
 
 # ── 3. Start acquisition ──────────────────────────────────────────────────────
-print("\n── Start Acquisition ─────────────────────────────────────────────────")
+logger.info("\n── Start Acquisition ─────────────────────────────────────────────────")
 for src in sources:
     src.start_acquisition()
-print(f"  [OK] All sources streaming — warming up 2s ...")
+logger.info(f"  [OK] All sources streaming — warming up 2s ...")
 time.sleep(2.0)
 
 # Drain initial frames (interleaved)
@@ -212,8 +217,8 @@ for _ in range(30):
         if r.IsOK():
             src.pipeline.ReleaseBuffer(buf)
 
-print("  [OK] Ready — opening live view window")
-print("       Q = quit  |  S = save snapshot  |  N = toggle NIR normalize\n")
+logger.info("  [OK] Ready — opening live view window")
+logger.info("       Q = quit  |  S = save snapshot  |  N = toggle NIR normalize\n")
 
 # ── 4. Live display loop ──────────────────────────────────────────────────────
 LABELS    = ["CH1  Color (BayerRG8)", "CH2  NIR1 (Mono8)", "CH3  NIR2 (Mono8)"]
@@ -308,13 +313,13 @@ try:
             snap_path = OUT_DIR / f"snapshot_{snapshot_n:03d}.png"
             cv2.imwrite(str(snap_path), display)
             snapshot_n += 1
-            print(f"  [SNAP] Snapshot saved: {snap_path}")
+            logger.info(f"  [SNAP] Snapshot saved: {snap_path}")
         elif key == ord('n'):
             normalize_nir = not normalize_nir
-            print(f"  NIR normalization: {'ON' if normalize_nir else 'OFF'}")
+            logger.info(f"  NIR normalization: {'ON' if normalize_nir else 'OFF'}")
 
 finally:
-    print("\n── Shutting down ─────────────────────────────────────────────────────")
+    logger.info("\n── Shutting down ─────────────────────────────────────────────────────")
     cv2.destroyAllWindows()
     for src in sources:
         src.stop_acquisition()
@@ -322,4 +327,4 @@ finally:
         src.close()
     device.Disconnect()
     eb.PvDevice.Free(device)
-    print("  [OK] Disconnected cleanly")
+    logger.info("  [OK] Disconnected cleanly")
