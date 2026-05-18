@@ -28,8 +28,9 @@ log = logging.getLogger(__name__)
 class CameraWorker(QThread):
     """Background QThread: grabs synchronized frame triplets, emits to GUI."""
 
-    sig_frame  = pyqtSignal(object, object, object, float)  # ch1, ch2, ch3, fps
-    sig_status = pyqtSignal(str, bool)                       # message, is_error
+    sig_frame            = pyqtSignal(object, object, object, float)  # ch1, ch2, ch3, fps
+    sig_status           = pyqtSignal(str, bool)                       # message, is_error
+    sig_exposure_readback = pyqtSignal(int)   # actual exposure µs read back from firmware
 
     def __init__(self, config: dict, display_fps: int = 30) -> None:
         super().__init__()
@@ -118,14 +119,24 @@ class CameraWorker(QThread):
         Two things happen:
           1. JAICamera.set_fps() writes AcquisitionFrameRate to the device firmware
           2. self._display_fps is updated so the worker loop emits at the new rate
-             (min_interval is computed dynamically each iteration from _display_fps)
 
-        Important: increasing FPS reduces max allowed exposure (1,000,000 / fps).
-        No effect if camera is not yet connected.
+        After a FPS increase, firmware may silently clamp ExposureTime.
+        Reads back actual ExposureTime and emits sig_exposure_readback so the
+        GUI exposure spinbox can sync to the real (possibly clamped) value.
         """
-        self._display_fps = fps   # update display rate immediately (loop reads this dynamically)
+        self._display_fps = fps   # update display rate immediately
         if self._camera is not None:
             self._camera.set_fps(fps)
             log.info("CameraWorker: display rate updated to %.0f FPS", fps)
+            # Read back actual exposure — firmware may have clamped it
+            actual_exp = self._camera.get_exposure()
+            if actual_exp > 0:
+                self.sig_exposure_readback.emit(actual_exp)
         else:
             log.warning("set_fps ignored — camera not connected")
+
+    def get_exposure(self) -> int:
+        """Read current ExposureTime from firmware. Returns -1 if not connected."""
+        if self._camera is not None:
+            return self._camera.get_exposure()
+        return -1

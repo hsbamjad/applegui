@@ -346,6 +346,7 @@ class MainWindow(QMainWindow):
         )
         self._cam_w.sig_frame.connect(self._on_frame)
         self._cam_w.sig_status.connect(self._on_cam_status)
+        self._cam_w.sig_exposure_readback.connect(self._on_exposure_readback)
         self._cam_w.start()
 
         # ── Inference worker ───────────────────────────────────────
@@ -462,8 +463,8 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(int)
     def _on_exposure_changed(self, exposure_us: int) -> None:
+        """Forward exposure change to camera while streaming."""
         running = self._cam_w is not None and self._cam_w.isRunning()
-        print(f"[EXPOSURE] slot called: {exposure_us} µs | cam_w={self._cam_w} | running={running}")
         if running:
             self._cam_w.set_exposure(exposure_us)
             self.statusBar().showMessage(
@@ -475,13 +476,28 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(float)
     def _on_fps_changed(self, fps: float) -> None:
+        """
+        Forward FPS change to camera. Firmware will silently clamp ExposureTime
+        if current value exceeds 1,000,000/fps. CameraWorker reads back the actual
+        ExposureTime after the FPS write and emits sig_exposure_readback, which
+        triggers _on_exposure_readback to sync the spinbox.
+        """
         running = self._cam_w is not None and self._cam_w.isRunning()
-        print(f"[FPS] slot called: {fps} FPS | cam_w={self._cam_w} | running={running}")
         if running:
-            self._cam_w.set_fps(fps)
+            self._cam_w.set_fps(fps)   # also emits sig_exposure_readback
             max_exp = int(1_000_000 / max(fps, 1))
             self.statusBar().showMessage(
-                f"Frame rate set: {fps:.0f} FPS  —  max exposure now: {max_exp:,} µs"
+                f"Frame rate set: {fps:.0f} FPS  —  max exposure: {max_exp:,} µs"
             )
         else:
             self.statusBar().showMessage("Frame rate: camera not connected — connect first")
+
+    @pyqtSlot(int)
+    def _on_exposure_readback(self, actual_us: int) -> None:
+        """
+        Receives the actual ExposureTime read back from firmware after a FPS change.
+        Updates the exposure spinbox to reflect the real (possibly clamped) value.
+        This prevents the GUI from showing a value the camera isn't actually using.
+        """
+        self._left._spn_exposure.setValue(actual_us)
+        log.info("Exposure spinbox synced to firmware value: %d µs", actual_us)

@@ -543,6 +543,26 @@ class JAICamera:
             log.error("set_fps exception: %s", e)
             return False
 
+    def get_exposure(self) -> int:
+        """
+        Read the current ExposureTime from the device firmware.
+        Returns the ACTUAL value the camera is using (may differ from
+        what was requested if the FPS limit clamped it).
+        Returns -1 on failure.
+        """
+        if self._device is None:
+            return -1
+        try:
+            nm    = self._device.GetParameters()
+            param = nm.GetFloat("ExposureTime")
+            if param is None:
+                return -1
+            _, val = param.GetValue()
+            return int(val)
+        except Exception as e:
+            log.error("get_exposure exception: %s", e)
+            return -1
+
     def disconnect(self) -> None:
         import eBUS as eb
         self._running = False
@@ -666,6 +686,12 @@ class CameraInterface:
             return self._backend.set_fps(fps)
         log.debug("set_fps: mock mode — ignored")
         return True
+
+    def get_exposure(self) -> int:
+        """Read actual ExposureTime from firmware. Returns -1 on failure or in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.get_exposure()
+        return -1
 
     @property
     def mode(self) -> str:
