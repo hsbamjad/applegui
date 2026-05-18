@@ -131,32 +131,21 @@ class _JAISource:
         self.pipeline.Start()
         return True
 
-    def start_acquisition(self) -> bool:
-        nm  = self._device.GetParameters()
-        sel = nm.Get("SourceSelector")
-        if sel is None:
-            log.error("  %s: SourceSelector param not found", self._source_name)
-            return False
-        r = sel.SetValue(self._source_name)
-        if not r.IsOK():
-            log.error("  %s: SetValue SourceSelector failed: %s",
-                      self._source_name, r.GetCodeString())
-            return False
-        r = self._device.StreamEnable()
-        log.info("  %s: StreamEnable: %s", self._source_name, r.GetCodeString())
-        r = nm.Get("AcquisitionStart").Execute()
-        log.info("  %s: AcquisitionStart: %s", self._source_name, r.GetCodeString())
-        return r.IsOK()
+    def start_acquisition(self) -> None:
+        import eBUS as eb
+        nm    = self._device.GetParameters()
+        stack = eb.PvGenStateStack(nm)
+        stack.SetEnumValue("SourceSelector", self._source_name)
+        self._device.StreamEnable()
+        nm.Get("AcquisitionStart").Execute()
 
     def stop_acquisition(self) -> None:
-        nm  = self._device.GetParameters()
-        sel = nm.Get("SourceSelector")
-        if sel:
-            sel.SetValue(self._source_name)
+        import eBUS as eb
+        nm    = self._device.GetParameters()
+        stack = eb.PvGenStateStack(nm)
+        stack.SetEnumValue("SourceSelector", self._source_name)
         nm.Get("AcquisitionStop").Execute()
         self._device.StreamDisable()
-
-
 
     def grab(self, timeout_ms: int = 500) -> tuple[Optional[np.ndarray], int]:
         """
@@ -337,24 +326,15 @@ class JAICamera:
         raw1, _,   _ = raws[1]
         raw2, _,   _ = raws[2]
 
-        # Resize to display resolution FIRST — much cheaper to process small images.
-        # Full-res (2048×1536) → display (640×480): ~10× fewer pixels to process.
-        # For inference, raw full-res data will come from a separate pipeline (Track C).
-        DISP_W, DISP_H = 640, 480
-
-        # CH1: resize raw Bayer first, then demosaic (Bayer pattern scales correctly)
-        raw0_small = cv2.resize(raw0, (DISP_W, DISP_H), interpolation=cv2.INTER_LINEAR)
+        # CH1: Bayer demosaic → BGR
         if pf0 == "BayerRG8":
-            ch1 = cv2.cvtColor(raw0_small, cv2.COLOR_BayerBG2BGR)
+            ch1 = cv2.cvtColor(raw0, cv2.COLOR_BayerBG2BGR)
         else:
-            ch1 = cv2.cvtColor(raw0_small, cv2.COLOR_GRAY2BGR)
+            ch1 = raw0
 
-        # CH2/CH3: resize then normalize for display
-        raw1_small = cv2.resize(raw1, (DISP_W, DISP_H), interpolation=cv2.INTER_LINEAR)
-        raw2_small = cv2.resize(raw2, (DISP_W, DISP_H), interpolation=cv2.INTER_LINEAR)
-        ch2 = cv2.normalize(raw1_small, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        ch3 = cv2.normalize(raw2_small, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-
+        # CH2/CH3: Mono8 — normalize for display
+        ch2 = cv2.normalize(raw1, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        ch3 = cv2.normalize(raw2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 
         self._frame_idx += 1
         return FrameTriplet(
