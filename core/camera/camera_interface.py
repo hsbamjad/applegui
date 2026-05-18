@@ -191,6 +191,7 @@ class JAICamera:
         self._latest_lock  = threading.Lock()
         self._grab_thread: Optional[threading.Thread] = None
         # EMA-stabilized gain for NIR channels — prevents per-frame flicker
+        self._nir_ema_min  = [0.0, 0.0]     # one per NIR source
         self._nir_ema_max  = [64.0, 64.0]   # one per NIR source
         self._EMA_ALPHA    = 0.05            # low = slow/stable, high = fast/reactive
 
@@ -365,9 +366,9 @@ class JAICamera:
             ch1 = raw0
         ch1 = cv2.resize(ch1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_LINEAR)
 
-        # 2. Extract raw peak maximums at full resolution (<0.3ms) to preserve hot pixels and highlight levels
-        cur_max1 = float(raw1.max())
-        cur_max2 = float(raw2.max())
+        # 2. Extract raw peak maximums and minimums at full resolution (<0.3ms) to preserve hot pixels and highlight levels
+        cur_min1, cur_max1 = float(raw1.min()), float(raw1.max())
+        cur_min2, cur_max2 = float(raw2.min()), float(raw2.max())
 
         # 3. Downsample raw Mono8 NIR frames FIRST to 640x480 using fast bilinear interpolation
         raw1_small = cv2.resize(raw1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_LINEAR)
@@ -380,18 +381,36 @@ class JAICamera:
             log.info("NIR stats — CH2: min=%d max=%d  |  CH3: min=%d max=%d",
                      mn1, mx1, mn2, mx2)
 
-        # 4. Perform EMA normalization on highly optimized 640x480 resolution using cv2.convertScaleAbs
-        def _ema_normalize(raw_small: np.ndarray, cur_max: float, ch_idx: int) -> np.ndarray:
-            if cur_max > 0:
+        # 4. Perform EMA-stabilized Min-Max normalization on 640x480 using cv2.convertScaleAbs.
+        # This completely subtracts the dynamic black offset (pedestal) and stretches the contrast,
+        # perfectly matching cv2.normalize(..., cv2.NORM_MINMAX) from the simple video to eliminate gray glare!
+        def _ema_normalize(
+            raw_small: np.ndarray,
+            cur_min: float,
+            cur_max: float,
+            ch_idx: int,
+        ) -> np.ndarray:
+            if self._frame_idx == 0:
+                self._nir_ema_min[ch_idx] = cur_min
+                self._nir_ema_max[ch_idx] = cur_max
+            else:
+                self._nir_ema_min[ch_idx] = (
+                    (1 - self._EMA_ALPHA) * self._nir_ema_min[ch_idx]
+                    + self._EMA_ALPHA * cur_min
+                )
                 self._nir_ema_max[ch_idx] = (
                     (1 - self._EMA_ALPHA) * self._nir_ema_max[ch_idx]
                     + self._EMA_ALPHA * cur_max
                 )
-            scale = 255.0 / max(self._nir_ema_max[ch_idx], 1.0)
-            return cv2.convertScaleAbs(raw_small, alpha=scale)
 
-        ch2 = _ema_normalize(raw1_small, cur_max1, 0)
-        ch3 = _ema_normalize(raw2_small, cur_max2, 1)
+            diff = self._nir_ema_max[ch_idx] - self._nir_ema_min[ch_idx]
+            diff = max(diff, 1.0)
+            scale = 255.0 / diff
+            offset = -self._nir_ema_min[ch_idx] * scale
+            return cv2.convertScaleAbs(raw_small, alpha=scale, beta=offset)
+
+        ch2 = _ema_normalize(raw1_small, cur_min1, cur_max1, 0)
+        ch3 = _ema_normalize(raw2_small, cur_min2, cur_max2, 1)
 
         self._frame_idx += 1
         return FrameTriplet(
