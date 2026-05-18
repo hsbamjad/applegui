@@ -321,26 +321,29 @@ class JAICamera:
         Always stores the latest processed triplet in self._latest.
         The worker thread reads this cache non-blocking via grab().
         """
-        while self._running:
-            raws     = []
-            block_id = -1
-            ok       = True
+        try:
+            while self._running:
+                raws     = []
+                block_id = -1
+                ok       = True
 
-            for src in self._sources:
-                raw, bid = src.grab(timeout_ms=100)
-                if raw is None:
-                    ok = False
-                    break
-                raws.append((raw, src.pixel_format, bid))
-                if block_id == -1:
-                    block_id = bid
+                for src in self._sources:
+                    raw, bid = src.grab(timeout_ms=100)
+                    if raw is None:
+                        ok = False
+                        break
+                    raws.append((raw, src.pixel_format, bid))
+                    if block_id == -1:
+                        block_id = bid
 
-            if not ok:
-                continue
+                if not ok or len(raws) < len(self._sources):
+                    continue
 
-            triplet = self._process_raws(raws, block_id)
-            with self._latest_lock:
-                self._latest = triplet
+                triplet = self._process_raws(raws, block_id)
+                with self._latest_lock:
+                    self._latest = triplet
+        except Exception as e:
+            log.error("JAI grab thread crashed: %s", e, exc_info=True)
 
     def _process_raws(
         self,
@@ -359,11 +362,15 @@ class JAICamera:
             ch1 = raw0
         ch1 = cv2.resize(ch1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
 
-        # CH2/CH3: resize FIRST (10× fewer pixels), then normalize — much faster
+        # CH2/CH3: resize FIRST, then safe normalize (guard against flat frames)
         ch2 = cv2.resize(raw1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
-        ch2 = cv2.normalize(ch2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
         ch3 = cv2.resize(raw2, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
-        ch3 = cv2.normalize(ch3, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        mn2, mx2 = int(ch2.min()), int(ch2.max())
+        mn3, mx3 = int(ch3.min()), int(ch3.max())
+        ch2 = cv2.normalize(ch2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) \
+              if mx2 > mn2 else np.full_like(ch2, 128)  # mid-grey if flat
+        ch3 = cv2.normalize(ch3, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) \
+              if mx3 > mn3 else np.full_like(ch3, 128)  # mid-grey if flat
 
         self._frame_idx += 1
         return FrameTriplet(

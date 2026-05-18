@@ -55,31 +55,31 @@ class CameraWorker(QThread):
         frame_count  = 0
         fps_start    = time.perf_counter()
         fps          = 0.0
-        min_interval = 1.0 / self._display_fps   # throttle to display FPS
-        last_block   = -1
+        min_interval = 1.0 / self._display_fps
+        last_frame_idx = -1
 
         while self._running:
             t0 = time.perf_counter()
 
             triplet = camera.grab()
-            if triplet is None:
-                time.sleep(0.01)   # brief back-off on pipeline timeout
+
+            # Skip if no frame yet or same frame as last emit (cached, no new data)
+            if triplet is None or triplet.frame_idx == last_frame_idx:
+                sleep = min_interval - (time.perf_counter() - t0)
+                if sleep > 0:
+                    time.sleep(sleep)
                 continue
 
-            frame_count += 1
+            last_frame_idx = triplet.frame_idx
+            frame_count   += 1
             elapsed = time.perf_counter() - fps_start
             if elapsed >= 1.0:
                 fps         = frame_count / elapsed
                 frame_count = 0
                 fps_start   = time.perf_counter()
 
-            # Log blockID mismatch (sync loss) — should never happen with hardware sync
-            if actual_mode == "jai" and triplet.block_id != last_block:
-                last_block = triplet.block_id
-
             self.sig_frame.emit(triplet.ch1, triplet.ch2, triplet.ch3, fps)
 
-            # Throttle to display FPS (camera runs at 30fps, display may be lower)
             sleep = min_interval - (time.perf_counter() - t0)
             if sleep > 0:
                 time.sleep(sleep)
