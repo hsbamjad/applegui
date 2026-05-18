@@ -300,6 +300,9 @@ class MainWindow(QMainWindow):
         self._left.sig_sorter_toggled.connect(self._on_sorter_toggle)
         self._left.sig_logging_toggled.connect(self._on_logging_toggle)
         self._left.sig_speed_changed.connect(self._on_speed_changed)
+        # Camera hardware controls — forwarded to CameraWorker while streaming
+        self._left.sig_exposure_changed.connect(self._on_exposure_changed)
+        self._left.sig_fps_changed.connect(self._on_fps_changed)
 
     def _post_init(self) -> None:
         models_dir = Path(self._cfg.get("inference", {}).get("model_dir", "models/"))
@@ -457,3 +460,36 @@ class MainWindow(QMainWindow):
                 f"({speed * 3 * 60} apple/min total)"
             )
 
+    @pyqtSlot(int)
+    def _on_exposure_changed(self, exposure_us: int) -> None:
+        """
+        Forward exposure change to the camera worker while streaming.
+        The CameraWorker.set_exposure() delegates to JAICamera.set_exposure()
+        which writes the GenICam ExposureTime parameter directly to the device.
+        If the camera is not connected, the call is silently ignored.
+        """
+        if hasattr(self, '_cam_w') and self._cam_w and self._cam_w.isRunning():
+            self._cam_w.set_exposure(exposure_us)
+            self.statusBar().showMessage(
+                f"Exposure set: {exposure_us:,} µs  —  "
+                f"max at current FPS: {1_000_000 // max(self._left._spn_fps.value(), 1):,} µs"
+            )
+        else:
+            self.statusBar().showMessage("Exposure: camera not connected — connect first")
+
+    @pyqtSlot(float)
+    def _on_fps_changed(self, fps: float) -> None:
+        """
+        Forward frame rate change to the camera worker while streaming.
+        Note: increasing FPS will silently clamp the camera's ExposureTime
+        if the current value exceeds 1,000,000 / new_fps.
+        The panel spinbox is already pre-clamped by _on_fps_spinbox_changed.
+        """
+        if hasattr(self, '_cam_w') and self._cam_w and self._cam_w.isRunning():
+            self._cam_w.set_fps(fps)
+            max_exp = int(1_000_000 / max(fps, 1))
+            self.statusBar().showMessage(
+                f"Frame rate set: {fps:.0f} FPS  —  max exposure now: {max_exp:,} µs"
+            )
+        else:
+            self.statusBar().showMessage("Frame rate: camera not connected — connect first")

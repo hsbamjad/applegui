@@ -36,32 +36,34 @@ class CameraWorker(QThread):
         self._config      = config
         self._display_fps = display_fps
         self._running     = False
+        self._camera: CameraInterface | None = None  # set during run()
 
     def run(self) -> None:
         mode = self._config.get("mode", "mock")
         self.sig_status.emit(f"Connecting … (mode={mode})", False)
 
-        camera = CameraInterface(self._config)
-        if not camera.connect():
+        self._camera = CameraInterface(self._config)
+        if not self._camera.connect():
             self.sig_status.emit("Connection failed", True)
+            self._camera = None
             return
 
-        actual_mode = camera.mode
+        actual_mode = self._camera.mode
         self.sig_status.emit(
             f"Connected  ·  {actual_mode.upper()}", False
         )
         self._running = True
 
-        frame_count  = 0
-        fps_start    = time.perf_counter()
-        fps          = 0.0
-        min_interval = 1.0 / self._display_fps
+        frame_count    = 0
+        fps_start      = time.perf_counter()
+        fps            = 0.0
+        min_interval   = 1.0 / self._display_fps
         last_frame_idx = -1
 
         while self._running:
             t0 = time.perf_counter()
 
-            triplet = camera.grab()
+            triplet = self._camera.grab()
 
             # Skip if no frame yet or same frame as last emit (cached, no new data)
             if triplet is None or triplet.frame_idx == last_frame_idx:
@@ -84,9 +86,41 @@ class CameraWorker(QThread):
             if sleep > 0:
                 time.sleep(sleep)
 
-        camera.disconnect()
+        self._camera.disconnect()
+        self._camera = None
         self.sig_status.emit("Disconnected", False)
 
     def stop(self) -> None:
         self._running = False
         self.wait(5000)   # allow up to 5s for clean shutdown (warmup + drain)
+
+    # ── Live camera controls (called from GUI main thread via Qt signal) ───────
+
+    def set_exposure(self, exposure_us: int) -> None:
+        """
+        Forward exposure change to the camera while streaming.
+        Safe to call from the GUI main thread — delegates to CameraInterface
+        which issues a single GenICam parameter write (non-blocking, <1ms).
+
+        No effect if camera is not yet connected.
+        """
+        if self._camera is not None:
+            self._camera.set_exposure(exposure_us)
+        else:
+            log.warning("set_exposure ignored — camera not connected")
+
+    def set_fps(self, fps: float) -> None:
+        """
+        Forward frame rate change to the camera while streaming.
+
+        Important: increasing FPS reduces the maximum allowed exposure.
+        If the current ExposureTime exceeds 1,000,000/new_fps, the camera
+        firmware will silently clamp it. The GUI exposure spinbox should also
+        update its maximum accordingly (handled in camera_panel.py).
+
+        No effect if camera is not yet connected.
+        """
+        if self._camera is not None:
+            self._camera.set_fps(fps)
+        else:
+            log.warning("set_fps ignored — camera not connected")

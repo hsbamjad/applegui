@@ -195,6 +195,8 @@ class LeftControlPanel(QWidget):
     sig_sorter_toggled  = pyqtSignal(bool)
     sig_logging_toggled = pyqtSignal(bool)
     sig_speed_changed   = pyqtSignal(int)
+    sig_exposure_changed = pyqtSignal(int)   # µs  — emitted on Apply
+    sig_fps_changed      = pyqtSignal(float) # FPS — emitted on Apply
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -268,11 +270,69 @@ class LeftControlPanel(QWidget):
         self._btn_connect.clicked.connect(self._on_connect)
         card.add(self._btn_connect)
 
+        _sep(card)
+
+        # Exposure spinbox + Apply button
         self._spn_exposure = _spinbox(100, 100_000, 5_000, 500)
-        self._spn_fps      = _spinbox(1, 107, 60, 1)
-        card.add(_field("Exposure (μs)", self._spn_exposure))
+        self._spn_exposure.setSuffix(" µs")
+        self._spn_exposure.setToolTip(
+            "Sensor exposure time in microseconds.\n"
+            "Short (1000–5000 µs)   → dark but sharp on fast conveyor\n"
+            "Medium (5000–15000 µs) → balanced for 1 apple/s\n"
+            "Long  (>15000 µs)      → brighter but risk of motion blur\n\n"
+            "Maximum is capped by FPS:  max = 1,000,000 / FPS\n"
+            "Click 'Apply Exposure' to send to camera."
+        )
+        card.add(_field("Exposure", self._spn_exposure))
+
+        self._btn_apply_exposure = _btn_secondary("Apply Exposure")
+        self._btn_apply_exposure.setToolTip("Send new exposure value to camera")
+        self._btn_apply_exposure.clicked.connect(self._on_apply_exposure)
+        card.add(self._btn_apply_exposure)
+
+        _sep(card)
+
+        # Frame rate spinbox + Apply button
+        self._spn_fps = _spinbox(1, 107, 30, 1)
+        self._spn_fps.setSuffix(" FPS")
+        self._spn_fps.setToolTip(
+            "Camera acquisition frame rate (1–107 FPS).\n"
+            "Higher FPS → smoother video, shorter max exposure.\n"
+            "Lower FPS  → more light per frame, better NIR signal.\n\n"
+            "Changing FPS auto-updates the exposure maximum.\n"
+            "Click 'Apply FPS' to send to camera."
+        )
+        # Cross-link: when FPS spinbox changes, update exposure max immediately
+        self._spn_fps.valueChanged.connect(self._on_fps_spinbox_changed)
         card.add(_field("Frame Rate", self._spn_fps))
+
+        self._btn_apply_fps = _btn_secondary("Apply FPS")
+        self._btn_apply_fps.setToolTip("Send new frame rate to camera")
+        self._btn_apply_fps.clicked.connect(self._on_apply_fps)
+        card.add(self._btn_apply_fps)
+
         return card
+
+    # ── Camera card slots ─────────────────────────────────────────────────────
+
+    def _on_fps_spinbox_changed(self, fps: int) -> None:
+        """
+        Auto-clamp exposure maximum when the FPS spinbox value changes.
+        Reflects hardware constraint: max_exposure_us = 1,000,000 / FPS.
+        User sees correct range before clicking Apply.
+        """
+        max_exp = min(100_000, int(1_000_000 / max(fps, 1)))
+        self._spn_exposure.setMaximum(max_exp)
+        if self._spn_exposure.value() > max_exp:
+            self._spn_exposure.setValue(max_exp)
+
+    def _on_apply_exposure(self) -> None:
+        """Emit exposure signal → main_window._on_exposure_changed."""
+        self.sig_exposure_changed.emit(self._spn_exposure.value())
+
+    def _on_apply_fps(self) -> None:
+        """Emit FPS signal → main_window._on_fps_changed."""
+        self.sig_fps_changed.emit(float(self._spn_fps.value()))
 
     def _conveyor_card(self) -> QWidget:
         card = _Card()

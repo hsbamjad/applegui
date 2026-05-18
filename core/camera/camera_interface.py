@@ -433,6 +433,106 @@ class JAICamera:
         with self._latest_lock:
             return self._latest
 
+    # ── Live camera controls ──────────────────────────────────────────────────
+
+    def set_exposure(self, exposure_us: int) -> bool:
+        """
+        Set sensor exposure time in microseconds while streaming.
+
+        The exposure time controls how long each sensor pixel integrates light:
+          - Short exposure  (1000–5000 µs)  → darker image, freezes fast motion
+          - Medium exposure (5000–15000 µs) → balanced for 1 apple/s conveyor
+          - Long exposure   (>15000 µs)     → brighter image, risk of motion blur
+
+        Hardware constraint — FPS caps the maximum exposure:
+          30 FPS  → max 33,333 µs   (1,000,000 / 30)
+          60 FPS  → max 16,666 µs
+          107 FPS → max  9,345 µs
+        The camera firmware enforces this automatically; we log if value is clamped.
+
+        Args:
+            exposure_us: Desired exposure in microseconds. Range: 100–100,000.
+
+        Returns:
+            True on success, False on failure.
+        """
+        if self._device is None:
+            log.warning("set_exposure: no device connected")
+            return False
+        try:
+            nm = self._device.GetParameters()
+            # Disable auto-exposure first — manual value is ignored if auto is on
+            ae = nm.Get("ExposureAuto")
+            if ae:
+                ae.SetValue("Off")
+            param = nm.GetFloat("ExposureTime")
+            if param is None:
+                log.error("set_exposure: ExposureTime parameter not found on device")
+                return False
+            r = param.SetValue(float(exposure_us))
+            if r.IsOK():
+                # Read back actual value — camera may have clamped it
+                _, actual = param.GetValue()
+                if abs(actual - exposure_us) > 50:
+                    log.warning("set_exposure: requested %d µs, camera clamped to %.0f µs "
+                                "(FPS limit — reduce frame rate to allow longer exposure)",
+                                exposure_us, actual)
+                else:
+                    log.info("Camera: ExposureTime = %d µs", exposure_us)
+                return True
+            log.error("set_exposure: camera rejected value %d µs: %s",
+                      exposure_us, r.GetCodeString())
+            return False
+        except Exception as e:
+            log.error("set_exposure exception: %s", e)
+            return False
+
+    def set_fps(self, fps: float) -> bool:
+        """
+        Set acquisition frame rate while streaming.
+
+        Changing FPS has two important side-effects:
+          1. Max allowed exposure shrinks: max_exp_us = 1,000,000 / fps
+             (firmware enforces this — any existing exposure above the new limit
+              will be silently clamped by the camera)
+          2. NIR EMA gain will temporarily flicker for ~20 frames as the
+             background illumination/sensor output adjusts — this is normal.
+
+        The FS-3200T supports 1–107 FPS at full 2048×1536 resolution.
+        Lower FPS → more light per frame → brighter NIR. Useful in dark conditions.
+        Higher FPS → faster throughput → shorter max exposure.
+
+        Args:
+            fps: Desired frame rate in frames per second. Range: 1–107.
+
+        Returns:
+            True on success, False on failure.
+        """
+        if self._device is None:
+            log.warning("set_fps: no device connected")
+            return False
+        try:
+            nm = self._device.GetParameters()
+            # Must enable frame rate control before setting value
+            enable = nm.GetBoolean("AcquisitionFrameRateEnable")
+            if enable:
+                enable.SetValue(True)
+            param = nm.GetFloat("AcquisitionFrameRate")
+            if param is None:
+                log.error("set_fps: AcquisitionFrameRate parameter not found on device")
+                return False
+            r = param.SetValue(float(fps))
+            if r.IsOK():
+                _, actual = param.GetValue()
+                log.info("Camera: AcquisitionFrameRate = %.1f FPS (max exposure now %.0f µs)",
+                         actual, 1_000_000 / max(actual, 1))
+                return True
+            log.error("set_fps: camera rejected %.1f FPS: %s", fps, r.GetCodeString())
+            return False
+        except Exception as e:
+            log.error("set_fps exception: %s", e)
+            return False
+
     def disconnect(self) -> None:
         import eBUS as eb
         self._running = False
