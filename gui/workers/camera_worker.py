@@ -57,11 +57,13 @@ class CameraWorker(QThread):
         frame_count    = 0
         fps_start      = time.perf_counter()
         fps            = 0.0
-        min_interval   = 1.0 / self._display_fps
         last_frame_idx = -1
+        # NOTE: min_interval is NOT cached — read self._display_fps each iteration
+        # so that set_fps() takes effect immediately without restarting the thread.
 
         while self._running:
-            t0 = time.perf_counter()
+            t0           = time.perf_counter()
+            min_interval = 1.0 / max(self._display_fps, 1)   # dynamic — updated by set_fps()
 
             triplet = self._camera.grab()
 
@@ -111,16 +113,19 @@ class CameraWorker(QThread):
 
     def set_fps(self, fps: float) -> None:
         """
-        Forward frame rate change to the camera while streaming.
+        Set camera acquisition FPS AND update the GUI display rate to match.
 
-        Important: increasing FPS reduces the maximum allowed exposure.
-        If the current ExposureTime exceeds 1,000,000/new_fps, the camera
-        firmware will silently clamp it. The GUI exposure spinbox should also
-        update its maximum accordingly (handled in camera_panel.py).
+        Two things happen:
+          1. JAICamera.set_fps() writes AcquisitionFrameRate to the device firmware
+          2. self._display_fps is updated so the worker loop emits at the new rate
+             (min_interval is computed dynamically each iteration from _display_fps)
 
+        Important: increasing FPS reduces max allowed exposure (1,000,000 / fps).
         No effect if camera is not yet connected.
         """
+        self._display_fps = fps   # update display rate immediately (loop reads this dynamically)
         if self._camera is not None:
             self._camera.set_fps(fps)
+            log.info("CameraWorker: display rate updated to %.0f FPS", fps)
         else:
             log.warning("set_fps ignored — camera not connected")
