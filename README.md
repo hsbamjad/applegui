@@ -1,4 +1,4 @@
-# 🍎 Apple Sorting GUI
+# Apple Sorting GUI
 
 > Real-time multispectral vision system for in-field apple grading and pneumatic sorting — Michigan State University | ASABE AIM26 | 2026
 
@@ -43,12 +43,12 @@ Runs in **Mock Mode** by default (no hardware needed). Set `config/config.yaml �
 
 ## Features
 
-- 📷 Real-time 3-channel multispectral acquisition — JAI FSFE-3200T via Harvesters/GenTL
-- 🤖 YOLOv8m-seg inference — segmentation, tracking, multi-view weighted grade voting
-- 🔀 Timed pneumatic sorter control — Arduino via PySerial, `camera_to_gate` delay
-- 📊 Live dashboard — grade distribution, throughput, conveyor speed, system status
-- 💾 Asynchronous CSV + TIFF logging per apple instance
-- 🧪 Mock mode — full pipeline simulation without any hardware
+- Real-time 3-channel multispectral acquisition — JAI FSFE-3200T via Harvesters/GenTL
+- YOLOv8m-seg inference — segmentation, tracking, multi-view weighted grade voting
+- Timed pneumatic sorter control — Arduino via PySerial, `camera_to_gate` delay
+- Live dashboard — grade distribution, throughput, conveyor speed, system status
+- Asynchronous CSV + TIFF logging per apple instance
+- Mock mode — full pipeline simulation without any hardware
 
 ## Hardware Requirements
 

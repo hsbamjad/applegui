@@ -39,9 +39,9 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 print("\n── eBUS Import ───────────────────────────────────────────────────────")
 try:
     import eBUS as eb
-    print("  ✅  import eBUS OK")
+    print("  [OK] import eBUS")
 except ImportError as e:
-    print(f"  ❌  {e}")
+    print(f"  [ERROR] {e}")
     sys.exit(1)
 
 # ── Helper: read any GenICam parameter ───────────────────────────────────────
@@ -93,7 +93,7 @@ class Source:
         if result.IsFailure():
             result, self.source_channel = nm.GetIntegerValue("SourceStreamChannel")
         if result.IsFailure():
-            print(f"  ⚠️  {self.source_name}: could not read SourceIDValue — defaulting to {self.ch_index}")
+            print(f"  [WARNING] {self.source_name}: could not read SourceIDValue — defaulting to {self.ch_index}")
             self.source_channel = self.ch_index
 
         pf  = get_p(nm, "PixelFormat")
@@ -106,7 +106,7 @@ class Source:
         self.stream = eb.PvStreamGEV()
         r = self.stream.Open(self.connection_id, 0, self.source_channel)
         if r.IsFailure():
-            print(f"  ❌  {self.source_name}: stream.Open failed: {r.GetCodeString()}")
+            print(f"  [ERROR] {self.source_name}: stream.Open failed: {r.GetCodeString()}")
             return False
 
         lip  = self.stream.GetLocalIPAddress()
@@ -147,10 +147,10 @@ class Source:
 
         result, buffer, op_result = self.pipeline.RetrieveNextBuffer(TIMEOUT_MS)
         if result.IsFailure():
-            print(f"  ❌  {self.source_name}: RetrieveNextBuffer: {result.GetCodeString()}")
+            print(f"  [ERROR] {self.source_name}: RetrieveNextBuffer: {result.GetCodeString()}")
             return None, pf
         if not op_result.IsOK():
-            print(f"  ⚠️  {self.source_name}: op_result: {op_result.GetCodeString()}")
+            print(f"  [WARNING] {self.source_name}: op_result: {op_result.GetCodeString()}")
             self.pipeline.ReleaseBuffer(buffer)
             return None, pf
 
@@ -158,7 +158,7 @@ class Source:
         img_data = image.GetDataPointer().copy()   # copy before releasing buffer
         block_id = buffer.GetBlockID()
         self.pipeline.ReleaseBuffer(buffer)
-        print(f"  ✅  {self.source_name}: {image.GetWidth()}×{image.GetHeight()}  "
+        print(f"  [OK] {self.source_name}: {image.GetWidth()}×{image.GetHeight()}  "
               f"blockID={block_id}  min={img_data.min()} max={img_data.max()} "
               f"mean={img_data.mean():.1f}")
         return img_data, pf
@@ -187,7 +187,7 @@ for i in range(sys_obj.GetInterfaceCount()):
             dev_info_cached = dev
 
 if connection_id is None:
-    print("  ❌  No camera found.")
+    print("  [ERROR] No camera found.")
     sys.exit(1)
 print(f"  → Connection ID: {connection_id}")
 
@@ -195,10 +195,10 @@ print(f"  → Connection ID: {connection_id}")
 print("\n── Connect ───────────────────────────────────────────────────────────")
 result, device = eb.PvDevice.CreateAndConnect(connection_id)
 if device is None:
-    print(f"  ❌  {result.GetCodeString()}: {result.GetDescription()}")
+    print(f"  [ERROR] {result.GetCodeString()}: {result.GetDescription()}")
     print("  → Close eBUS Player (it holds exclusive camera access)")
     sys.exit(1)
-print(f"  ✅  Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
+print(f"  [OK] Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
 
 # Negotiate max packet size across the network path (CRITICAL — prevents packet loss)
 # Must be called BEFORE opening any streams
@@ -236,17 +236,17 @@ for ch_idx, src_name in enumerate(source_names):
         sources.append(src)
 
 if not sources:
-    print("  ❌  No sources opened.")
+    print("  [ERROR] No sources opened.")
     device.Disconnect()
     eb.PvDevice.Free(device)
     sys.exit(1)
-print(f"  ✅  {len(sources)} streams open simultaneously")
+print(f"  [OK] {len(sources)} streams open simultaneously")
 
 # ── 6. Start acquisition on ALL sources ──────────────────────────────────────
 print("\n── Start Acquisition (all sources) ───────────────────────────────────")
 for src in sources:
     src.start_acquisition()
-print(f"  ✅  AcquisitionStart sent to all {len(sources)} sources")
+print(f"  [OK] AcquisitionStart sent to all {len(sources)} sources")
 
 # Allow sensors to reach steady-state exposure
 WARMUP_S     = 2.0    # seconds
@@ -306,7 +306,7 @@ source_results = []
 for ch_idx, src in enumerate(sources):
     img_data, pf = frames[src.source_name]
     if img_data is None:
-        print(f"  ⚠️  CH{ch_idx+1} ({src.source_name}): no data — skipped")
+        print(f"  [WARNING] CH{ch_idx+1} ({src.source_name}): no data — skipped")
         continue
 
     fname = OUT_DIR / f"ch{ch_idx+1}.png"
@@ -323,7 +323,7 @@ for ch_idx, src in enumerate(sources):
     norm_fname = OUT_DIR / f"ch{ch_idx+1}_norm.png"
     img_norm = cv2.normalize(img_save, None, 0, 255, cv2.NORM_MINMAX)
     cv2.imwrite(str(norm_fname), img_norm)
-    print(f"  ✅  {fname.name}  (raw)    min={img_data.min()} max={img_data.max()} mean={img_data.mean():.1f}")
+    print(f"  [OK] {fname.name}  (raw)    min={img_data.min()} max={img_data.max()} mean={img_data.mean():.1f}")
     print(f"       {norm_fname.name}  (display-normalized)")
 
     source_results.append({
@@ -341,7 +341,7 @@ for src in sources:
     src.close()
 device.Disconnect()
 eb.PvDevice.Free(device)
-print("  ✅  Disconnected cleanly")
+print("  [OK] Disconnected cleanly")
 
 # ── 11. Config summary ────────────────────────────────────────────────────────
 print(f"""

@@ -1,4 +1,4 @@
-# 🍎 Multispectral Apple Sorting GUI — Project Brainstorm & Kickoff Guide
+# Multispectral Apple Sorting GUI — Project Brainstorm & Kickoff Guide
 **Michigan State University | ASABE AIM26 | May 2026**
 
 ---
@@ -213,7 +213,7 @@ Thread 4: LoggerWorker (QThread)
 
 ## 5. Module Deep Dives
 
-### Module 1: Camera Interface 📷
+### Module 1: Camera Interface
 **Responsibilities:**
 - Connect/disconnect from JAI camera via Harvesters.
 - Configure: exposure, gain, pixel format, FPS, trigger mode.
@@ -227,7 +227,7 @@ Thread 4: LoggerWorker (QThread)
 - `AcquisitionFrameRate` → match to conveyor throughput.
 - `TriggerMode` → `Off` for free-run, `On` for encoder-triggered.
 
-### Module 2: Model Manager 🤖
+### Module 2: Model Manager
 **Responsibilities:**
 - Scan `models/` folder for available `.pt` / `.onnx` files.
 - Load model into GPU memory on demand.
@@ -235,7 +235,7 @@ Thread 4: LoggerWorker (QThread)
 - Hot-swap models without stopping acquisition.
 - Report model metadata (name, input size, classes, accuracy).
 
-### Module 3: Sorter Controller 🔀
+### Module 3: Sorter Controller
 **Hardware (confirmed from poster):**
 - **3 sorting units**, one per conveyor lane, at end of conveyor
 - Each unit has **Submodule A** (Fresh → Outlet A) + **Submodule B** (Processing → Outlet B)
@@ -251,20 +251,20 @@ Thread 4: LoggerWorker (QThread)
 - Simulation mode: log commands, don't send to hardware
 - Track stats: total / Fresh / Processing / Cull / missed
 
-### Module 4: Data Logger 💾
+### Module 4: Data Logger
 **Responsibilities:**
 - Log grading results to CSV (timestamp, grade, confidence, speed).
 - Save raw 3-channel images as TIFF (on demand or on defect detect).
 - Save session summary (total apples, grade distribution, runtime).
 - All writes are asynchronous (never block the main loop).
 
-### Module 5: Visualization Dashboard 📊
+### Module 5: Visualization Dashboard
 **What it shows:**
 - **Live image feed:** 3 channels side by side (CH1, CH2, CH3) + optional composite.
 - **Grade distribution:** Real-time bar/donut chart (Grade A%, Grade B%, Defect%).
 - **Throughput graph:** Apples per minute over time (rolling window).
 - **Conveyor speed gauge:** Current m/s reading.
-- **Status indicators:** Camera ✅/❌, AI ✅/❌, Sorter ✅/❌, Logger ✅/❌.
+- **Status indicators:** Camera (online/offline), AI (online/offline), Sorter (online/offline), Logger (online/offline).
 - **Recent results list:** Last N apples with thumbnail + grade label.
 
 ---
@@ -347,17 +347,17 @@ Thread 4: LoggerWorker (QThread)
 
 | # | Question | Status | Answer |
 |---|---|---|---|
-| 1 | Actual filter wavelengths? | ✅ Confirmed | RG ~660nm / NIR1 ~800nm / NIR2 ~900nm (5-band camera, 3 used) |
-| 2 | Lab PC has 10 GigE NIC? | ✅ Confirmed | Shuttle PC: Intel Core i9-11900K + RTX 5060 Ti |
-| 3 | Sorter hardware interface? | ✅ Confirmed | **Arduino via USB/Serial** — PySerial command `"<lane><submodule>\n"` |
-| 4 | Pre-trained models ready? | 🟡 In progress | YOLOv8m-seg trained — need `.pt` file path on Shuttle PC |
-| 5 | Grade categories? | ✅ Confirmed | **Fresh** / **Processing** / **Cull** — 3 classes |
-| 6 | Conveyor encoder available? | ⚪ Unknown | Poster shows free-run 60 FPS; encoder-trigger optional |
-| 7 | Camera-to-gate distance? | 🟡 Needs measuring | Config default: 0.5m — **must be measured physically** |
-| 8 | Deployment OS? | ✅ Confirmed | Windows 10/11 (Shuttle PC) |
-| 9 | Arduino COM port? | 🟡 Needs checking | Default config: COM3 — check Device Manager on Shuttle PC |
-| 10 | Valve pulse duration? | 🟡 Needs tuning | Config default: 80ms — adjust until paddle fully extends |
-| 11 | Compressed air available? | ✅ Assumed | Poster shows air cylinders — lab has compressor |
+| 1 | Actual filter wavelengths? | Confirmed | RG ~660nm / NIR1 ~800nm / NIR2 ~900nm (5-band camera, 3 used) |
+| 2 | Lab PC has 10 GigE NIC? | Confirmed | Shuttle PC: Intel Core i9-11900K + RTX 5060 Ti |
+| 3 | Sorter hardware interface? | Confirmed | **Arduino via USB/Serial** — PySerial command `"<lane><submodule>\n"` |
+| 4 | Pre-trained models ready? | In progress | YOLOv8m-seg trained — need `.pt` file path on Shuttle PC |
+| 5 | Grade categories? | Confirmed | **Fresh** / **Processing** / **Cull** — 3 classes |
+| 6 | Conveyor encoder available? | Unknown | Poster shows free-run 60 FPS; encoder-trigger optional |
+| 7 | Camera-to-gate distance? | Needs measuring | Config default: 0.5m — **must be measured physically** |
+| 8 | Deployment OS? | Confirmed | Windows 10/11 (Shuttle PC) |
+| 9 | Arduino COM port? | Needs checking | Default config: COM3 — check Device Manager on Shuttle PC |
+| 10 | Valve pulse duration? | Needs tuning | Config default: 80ms — adjust until paddle fully extends |
+| 11 | Compressed air available? | Assumed | Poster shows air cylinders — lab has compressor |
 
 ---
 

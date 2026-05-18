@@ -1,6 +1,6 @@
-# 📅 Week 1 Plan — Multispectral Apple Sorting GUI
+# Week 1 Plan — Multispectral Apple Sorting GUI
 **Week of: May 14, 2026**
-**Status: 🟡 In Progress**
+**Status: In Progress**
 
 ---
 
@@ -59,8 +59,8 @@ conda install -c conda-forge pytest black flake8 isort -y
 pip install harvesters
 
 # Verify
-python -c "import PyQt6, torch, cv2, yaml, numpy; print('✅ All core packages OK')"
-python -c "import torch; print(f'✅ CUDA available: {torch.cuda.is_available()}')"
+python -c "import PyQt6, torch, cv2, yaml, numpy; print('All core packages OK')"
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 ```
 
 **Deliverable:** `(applegui)` appears in terminal prompt. CUDA shows True (RTX 4050).
@@ -152,7 +152,7 @@ Build the visual layout of the application — **no camera, no AI, just the wind
 **Layout:**
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  🍎 Apple Sorting GUI                         [status] │ ← Header bar
+│  Apple Sorting GUI                            [status] │ ← Header bar
 ├──────────────┬────────────────────────────┬─────────────┤
 │              │  [CH1]  │  [CH2]  │  [CH3] │             │
 │  LEFT        │  ─────  │  ─────  │  ─────  │  RIGHT      │
@@ -209,7 +209,7 @@ git push origin develop
 ### Goal
 Confirm the JAI camera works end-to-end from physical connection to Python code, and capture real sample frames to share with the laptop.
 
-> ⚠️ **This entire track is done on the SHUTTLE PC in the lab, NOT the laptop.**
+> **This entire track is done on the SHUTTLE PC in the lab, NOT the laptop.**
 
 ---
 
@@ -338,7 +338,7 @@ git push origin develop
 
 ## End-of-Week Deliverables
 
-### Track A ✅ Checklist
+### Track A Checklist
 - [ ] `applegui` conda env created and working (CUDA verified)
 - [ ] `environment.yml` committed to repo
 - [ ] Full project folder structure initialized
@@ -347,7 +347,7 @@ git push origin develop
 - [ ] 3 image placeholder panels visible in the window
 - [ ] Code on `develop` branch
 
-### Track B ✅ Checklist
+### Track B Checklist
 - [ ] JAI eBUS SDK installed on shuttle
 - [ ] 10 GigE NIC configured correctly
 - [ ] eBUS Player shows all 3 camera channels live
@@ -363,10 +363,10 @@ git push origin develop
 ## Week 1 → Week 2 Gate
 
 **Do NOT start Week 2 until:**
-1. Qt window launches successfully on laptop ✅
-2. Real frame samples are in hand from shuttle ✅
-3. Filter wavelengths are confirmed ✅
-4. Sorter interface is identified ✅
+1. Qt window launches successfully on laptop (Done)
+2. Real frame samples are in hand from shuttle (Done)
+3. Filter wavelengths are confirmed (Done)
+4. Sorter interface is identified (Done)
 
 **Week 2 will begin:**
 - Building `MockCamera` calibrated to real camera output

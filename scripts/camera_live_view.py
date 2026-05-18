@@ -36,9 +36,9 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 print("\n── eBUS Import ───────────────────────────────────────────────────────")
 try:
     import eBUS as eb
-    print("  ✅  import eBUS OK")
+    print("  [OK] import eBUS")
 except ImportError as e:
-    print(f"  ❌  {e}")
+    print(f"  [ERROR] {e}")
     sys.exit(1)
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -97,7 +97,7 @@ class Source:
         self.stream = eb.PvStreamGEV()
         r = self.stream.Open(self.connection_id, 0, self.source_channel)
         if r.IsFailure():
-            print(f"  ❌  {self.source_name}: stream open failed: {r.GetCodeString()}")
+            print(f"  [ERROR] {self.source_name}: stream open failed: {r.GetCodeString()}")
             return False
 
         lip = self.stream.GetLocalIPAddress()
@@ -160,15 +160,15 @@ for i in range(sys_obj.GetInterfaceCount()):
             connection_id = dev.GetConnectionID()
 
 if connection_id is None:
-    print("  ❌  No camera found.")
+    print("  [ERROR] No camera found.")
     sys.exit(1)
 
 print("\n── Connect ───────────────────────────────────────────────────────────")
 result, device = eb.PvDevice.CreateAndConnect(connection_id)
 if device is None:
-    print(f"  ❌  {result.GetCodeString()} — Close eBUS Player first")
+    print(f"  [ERROR] {result.GetCodeString()} — Close eBUS Player first")
     sys.exit(1)
-print(f"  ✅  Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
+print(f"  [OK] Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
 
 if isinstance(device, eb.PvDeviceGEV):
     r = device.NegotiatePacketSize()
@@ -194,15 +194,15 @@ for ch_idx, src_name in enumerate(source_names):
         sources.append(src)
 
 if not sources:
-    print("  ❌  No sources opened.")
+    print("  [ERROR] No sources opened.")
     sys.exit(1)
-print(f"  ✅  {len(sources)} streams open simultaneously")
+print(f"  [OK] {len(sources)} streams open simultaneously")
 
 # ── 3. Start acquisition ──────────────────────────────────────────────────────
 print("\n── Start Acquisition ─────────────────────────────────────────────────")
 for src in sources:
     src.start_acquisition()
-print(f"  ✅  All sources streaming — warming up 2s …")
+print(f"  [OK] All sources streaming — warming up 2s ...")
 time.sleep(2.0)
 
 # Drain initial frames (interleaved)
@@ -212,7 +212,7 @@ for _ in range(30):
         if r.IsOK():
             src.pipeline.ReleaseBuffer(buf)
 
-print("  ✅  Ready — opening live view window")
+print("  [OK] Ready — opening live view window")
 print("       Q = quit  |  S = save snapshot  |  N = toggle NIR normalize\n")
 
 # ── 4. Live display loop ──────────────────────────────────────────────────────
@@ -308,7 +308,7 @@ try:
             snap_path = OUT_DIR / f"snapshot_{snapshot_n:03d}.png"
             cv2.imwrite(str(snap_path), display)
             snapshot_n += 1
-            print(f"  📸  Snapshot saved: {snap_path}")
+            print(f"  [SNAP] Snapshot saved: {snap_path}")
         elif key == ord('n'):
             normalize_nir = not normalize_nir
             print(f"  NIR normalization: {'ON' if normalize_nir else 'OFF'}")
@@ -322,4 +322,4 @@ finally:
         src.close()
     device.Disconnect()
     eb.PvDevice.Free(device)
-    print("  ✅  Disconnected cleanly")
+    print("  [OK] Disconnected cleanly")

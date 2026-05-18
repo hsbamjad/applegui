@@ -1,4 +1,4 @@
-# 📋 Project Workflow Document
+# Project Workflow Document
 ## Multispectral Apple Sorting GUI
 **Michigan State University | ASABE AIM26 | Version 1.0**
 **Last Updated: May 2026**
@@ -676,15 +676,15 @@ After the session:
 
 | Parameter | Value | Status |
 |---|---|---|
-| Camera model | JAI FSFE-3200T-10GE | ✅ Confirmed |
-| Lens | Edmund Optics 16mm f/1.6 VIS-NIR | ✅ Confirmed |
-| CH1 wavelength | TBD | ⏳ Need to verify |
-| CH2 wavelength | TBD | ⏳ Need to verify |
-| CH3 wavelength | TBD | ⏳ Need to verify |
-| 10 GigE NIC model | TBD | ⏳ Need to verify |
-| Sorter interface | TBD | ⏳ Need to confirm with advisor |
-| Conveyor encoder | TBD | ⏳ Need to confirm |
-| Camera-to-gate distance | TBD | ⏳ Measure physically |
+| Camera model | JAI FSFE-3200T-10GE | Confirmed |
+| Lens | Edmund Optics 16mm f/1.6 VIS-NIR | Confirmed |
+| CH1 wavelength | TBD | Need to verify |
+| CH2 wavelength | TBD | Need to verify |
+| CH3 wavelength | TBD | Need to verify |
+| 10 GigE NIC model | TBD | Need to verify |
+| Sorter interface | TBD | Need to confirm with advisor |
+| Conveyor encoder | TBD | Need to confirm |
+| Camera-to-gate distance | TBD | Measure physically |
 
 ---
 
@@ -750,10 +750,10 @@ Every shuttle session is logged in `docs/TESTING_LOG.md`:
 ### Results
 | Test | Result | Notes |
 |---|---|---|
-| eBUS Player 3-channel stream | ✅ Pass | All 3 channels visible |
-| Harvesters connection | ✅ Pass | Device detected index 0 |
-| 30 FPS sustained | ✅ Pass | Actual: 28.7 FPS avg |
-| 107 FPS sustained | ⚠️ Partial | Drops to 95 FPS after 2min |
+| eBUS Player 3-channel stream | Pass | All 3 channels visible |
+| Harvesters connection | Pass | Device detected index 0 |
+| 30 FPS sustained | Pass | Actual: 28.7 FPS avg |
+| 107 FPS sustained | Partial | Drops to 95 FPS after 2min |
 
 ### Issues Found
 1. Buffer overflow at 107 FPS — increase buffer count in config.
@@ -794,14 +794,14 @@ Every week, assess:
 
 | Phase | Description | Status |
 |---|---|---|
-| **Phase 0** | Hardware verification (eBUS Player, camera test) | ⏳ Not started |
-| **Phase 1** | Camera sandbox script (Python, no GUI) | ⏳ Not started |
-| **Phase 2** | GUI skeleton + threading (mock camera) | ⏳ Not started |
-| **Phase 3** | Camera integration in GUI (real camera on shuttle) | ⏳ Not started |
-| **Phase 4** | AI model integration (inference in GUI) | ⏳ Not started |
-| **Phase 5** | Sorter control (hardware timing logic) | ⏳ Not started |
-| **Phase 6** | Dashboard, charts, and data logging | ⏳ Not started |
-| **Phase 7** | Testing, validation, polish, ASABE demo prep | ⏳ Not started |
+| **Phase 0** | Hardware verification (eBUS Player, camera test) | Pending |
+| **Phase 1** | Camera sandbox script (Python, no GUI) | Pending |
+| **Phase 2** | GUI skeleton + threading (mock camera) | Pending |
+| **Phase 3** | Camera integration in GUI (real camera on shuttle) | Pending |
+| **Phase 4** | AI model integration (inference in GUI) | Pending |
+| **Phase 5** | Sorter control (hardware timing logic) | Pending |
+| **Phase 6** | Dashboard, charts, and data logging | Pending |
+| **Phase 7** | Testing, validation, polish, ASABE demo prep | Pending |
 
 ---
 
