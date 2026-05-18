@@ -365,8 +365,11 @@ class JAICamera:
             ch1 = raw0
         ch1 = cv2.resize(ch1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_LINEAR)
 
-        # 2. CH2/CH3: Downsample raw Mono8 NIR frames FIRST to 640x480 using fast bilinear interpolation.
-        # This dramatically avoids running expensive float conversions/normalization on 2048x1536 pixels!
+        # 2. Extract raw peak maximums at full resolution (<0.3ms) to preserve hot pixels and highlight levels
+        cur_max1 = float(raw1.max())
+        cur_max2 = float(raw2.max())
+
+        # 3. Downsample raw Mono8 NIR frames FIRST to 640x480 using fast bilinear interpolation
         raw1_small = cv2.resize(raw1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_LINEAR)
         raw2_small = cv2.resize(raw2, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_LINEAR)
 
@@ -377,19 +380,20 @@ class JAICamera:
             log.info("NIR stats — CH2: min=%d max=%d  |  CH3: min=%d max=%d",
                      mn1, mx1, mn2, mx2)
 
-        # 3. Perform EMA normalization on highly optimized 640x480 resolution using cv2.convertScaleAbs
-        def _ema_normalize(raw: np.ndarray, ch_idx: int) -> np.ndarray:
-            cur_max = float(raw.max())
+        # 4. Perform EMA normalization with a lower-bound guard of 128.0 to prevent low-signal noise blow-up
+        def _ema_normalize(raw_small: np.ndarray, cur_max: float, ch_idx: int) -> np.ndarray:
             if cur_max > 0:
                 self._nir_ema_max[ch_idx] = (
                     (1 - self._EMA_ALPHA) * self._nir_ema_max[ch_idx]
                     + self._EMA_ALPHA * cur_max
                 )
-            scale = 255.0 / max(self._nir_ema_max[ch_idx], 1.0)
-            return cv2.convertScaleAbs(raw, alpha=scale)
+            # Guard against extreme noise amplification on flat/dark signals (conveyor belt)
+            ema_max = max(self._nir_ema_max[ch_idx], 128.0)
+            scale = 255.0 / ema_max
+            return cv2.convertScaleAbs(raw_small, alpha=scale)
 
-        ch2 = _ema_normalize(raw1_small, 0)
-        ch3 = _ema_normalize(raw2_small, 1)
+        ch2 = _ema_normalize(raw1_small, cur_max1, 0)
+        ch3 = _ema_normalize(raw2_small, cur_max2, 1)
 
         self._frame_idx += 1
         return FrameTriplet(
