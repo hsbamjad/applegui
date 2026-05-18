@@ -210,8 +210,8 @@ class JAICamera:
             iface = sys_obj.GetInterface(i)
             for j in range(iface.GetDeviceCount()):
                 dev = iface.GetDeviceInfo(j)
-                mac = dev.GetMACAddress()
-                ip  = dev.GetIPAddress()
+                mac = str(dev.GetMACAddress())
+                ip  = str(dev.GetIPAddress())
                 log.info("  Found: %s  IP=%s  MAC=%s", dev.GetDisplayID(), ip, mac)
 
                 # Prefer MAC match (stable), fall back to IP match, else first device
