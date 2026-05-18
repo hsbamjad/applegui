@@ -377,15 +377,38 @@ class CameraInterface:
         return self._mock_frame()
 
     def _mock_frame(self) -> FrameTriplet:
-        """Generate a synthetic frame triplet for development/testing."""
-        cfg  = self._cfg.get("mock", {})
-        h, w = (cfg.get("resolution", [2048, 1536])[1],
-                cfg.get("resolution", [2048, 1536])[0])
-        fps  = cfg.get("fps", 60)
+        """Animated apple blob moving across frame — informative mock for development."""
+        H, W = 480, 640    # display-sized mock (no need to generate 2048×1536 of noise)
+        fps  = self._cfg.get("mock", {}).get("fps", 30)
 
-        ch1 = np.random.randint(60,  180, (h, w, 3), dtype=np.uint8)  # BGR
-        ch2 = np.random.randint(100, 200, (h, w),    dtype=np.uint8)  # gray
-        ch3 = np.random.randint(80,  160, (h, w),    dtype=np.uint8)  # gray
+        t      = self._frame_idx / fps
+        period = 3.0
+        phase  = (t % period) / period
+        cx     = int(phase * (W + 140)) - 70
+        cy     = H // 2 + int(18 * np.sin(t * 1.1))
+
+        Y, X = np.mgrid[0:H, 0:W]
+        ax, ay   = 52, 44
+        dist_sq  = (X - cx) ** 2 / ax ** 2 + (Y - cy) ** 2 / ay ** 2
+        inside   = (dist_sq < 1.0).astype(np.float32)
+        glow     = np.clip(1.8 - dist_sq, 0.0, 1.0) * 0.35
+
+        rng = np.random.default_rng(seed=self._frame_idx % 200)
+        bg1 = rng.integers(18, 52, (H, W), dtype=np.uint8)
+        bg2 = rng.integers(28, 62, (H, W), dtype=np.uint8)
+        bg3 = rng.integers(10, 38, (H, W), dtype=np.uint8)
+
+        # CH1: color apple (red tones) → BGR
+        r_ch = np.clip(bg1.astype(np.float32) + inside * 180 + glow * 220, 0, 255).astype(np.uint8)
+        g_ch = np.clip(bg1.astype(np.float32) + inside * 60  + glow * 80,  0, 255).astype(np.uint8)
+        b_ch = np.clip(bg1.astype(np.float32) + inside * 40  + glow * 50,  0, 255).astype(np.uint8)
+        ch1  = np.stack([b_ch, g_ch, r_ch], axis=2)   # BGR
+
+        # CH2: NIR1 — diffuse glow (internal structure)
+        ch2 = np.clip(bg2.astype(np.float32) + inside * 110 + glow * 160, 0, 255).astype(np.uint8)
+
+        # CH3: NIR2 — dimmer, subtle contrast (water content)
+        ch3 = np.clip(bg3.astype(np.float32) + inside * 80  + glow * 120, 0, 255).astype(np.uint8)
 
         self._frame_idx += 1
         time.sleep(1.0 / fps)
@@ -398,6 +421,7 @@ class CameraInterface:
             frame_idx = self._frame_idx,
             block_id  = self._frame_idx,
         )
+
 
     @property
     def mode(self) -> str:
