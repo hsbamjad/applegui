@@ -223,11 +223,6 @@ snapshot_n    = 0
 fps_times     = []
 last_frames   = [None, None, None]   # keep last good frame per source
 
-# Stable NIR normalization — exponential moving average of max value
-# Prevents per-frame gain jumps that cause flickering
-_nir_max      = [64.0, 64.0]   # one per NIR source (ch1, ch2)
-_EMA_ALPHA    = 0.05            # low alpha = slow update = stable brightness
-
 try:
     while True:
         t0 = time.perf_counter()
@@ -254,17 +249,9 @@ try:
             if src.pixel_format == "BayerRG8":
                 img_bgr = cv2.cvtColor(raw, cv2.COLOR_BayerBG2BGR)
             else:
-                # NIR: use slowly-updating EMA max to avoid per-frame flicker
-                nir_idx = i - 1   # Source1→0, Source2→1
+                # NIR: normalize for display if enabled
                 if normalize_nir:
-                    cur_max = float(raw.max()) if raw.max() > 0 else 1.0
-                    _nir_max[nir_idx] = (
-                        (1 - _EMA_ALPHA) * _nir_max[nir_idx]
-                        + _EMA_ALPHA * cur_max
-                    )
-                    scale = 255.0 / max(_nir_max[nir_idx], 1.0)
-                    stretched = np.clip(raw.astype(np.float32) * scale,
-                                        0, 255).astype(np.uint8)
+                    stretched = cv2.normalize(raw, None, 0, 255, cv2.NORM_MINMAX)
                 else:
                     stretched = raw
                 img_bgr = cv2.cvtColor(stretched, cv2.COLOR_GRAY2BGR)
