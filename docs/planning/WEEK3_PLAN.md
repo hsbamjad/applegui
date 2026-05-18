@@ -1,27 +1,35 @@
 # Week 3 Plan — Multispectral Apple Sorting GUI
 **Week of: May 26, 2026**
-**Status: 🔴 Not Started**
+**Status: 🟡 In Progress — Camera Pipeline Fully Finalized ✅**
 
 ---
 
-## Context: Where We Are
-
-### What Week 2 Delivered
+## Context: Where ### What Week 2 + Early Week 3 Delivered
 ```
-Camera Pipeline (COMPLETE)
+Camera Pipeline (COMPLETE ✅ — 30 FPS confirmed)
 ─────────────────────────────────────────────────────────────
-  JAI FS-3200T  →  eBUS SDK  →  JAICamera (background thread)
+  JAI FS-3200T  →  eBUS SDK  →  JAICamera (background grab thread)
        │                              │
   3× hardware-sync                   ▼
   streams (BlockID              FrameTriplet (ch1, ch2, ch3)
    validated)                        │
                                      ▼
                               CameraWorker (QThread)
+                              frame_idx dedup — true 30 FPS
                                      │
                                      ▼
                               GUI: 3-channel live display
-                              EMA-normalized NIR, 21+ FPS
+                              EMA min+max normalized NIR, 30 FPS ✅
 ```
+
+**Final camera pipeline optimizations (completed May 18):**
+- Background `JAI-grab` daemon thread decouples acquisition from Qt display
+- EMA tracks **both min AND max** of NIR raw values at full-res (2048×1536) before
+  downsampling — subtracts the dark pedestal offset, eliminates grey glare
+- `cv2.convertScaleAbs(alpha=scale, beta=offset)` replaces float32 numpy ops → faster
+- `INTER_LINEAR` for all resizes (faster than INTER_AREA at these sizes)
+- `frame_idx` dedup in CameraWorker ensures only genuinely new frames are counted
+- Result: **stable 30 FPS** with clean, flicker-free NIR channels
 
 ### What Is Still Mock / Stub
 | Component | Current State | Week 3 Goal |
@@ -29,7 +37,7 @@ Camera Pipeline (COMPLETE)
 | `InferenceWorker` | MockInferenceWorker — random grades | Real YOLOv8 on actual frames |
 | `SorterController` | Simulation mode — log only | Real Arduino serial commands |
 | `DataLogger` | Disabled / stub | Async CSV + image capture |
-| Preprocessing for inference | Not yet built | Full-res pipeline, no EMA |
+| Preprocessing for inference | Not yet built | Full-res, fixed-range, no EMA |
 
 ---
 
@@ -59,9 +67,34 @@ Replace the `MockInferenceWorker` with a real inference pipeline that receives s
 ### A1 — Build the Inference Preprocessing Pipeline
 **Time estimate: 2–3 hrs**
 
-The display preprocessing (EMA gain, 640×480 resize) must NOT go to the model.
-A separate preprocessing path is needed:
+> [!IMPORTANT]
+> The display pipeline (already complete) and the inference pipeline are **separate paths**.
+> They handle NIR normalization differently:
+>
+> | | Display (done ✅) | Inference (to build) |
+> |---|---|---|
+> | NIR normalization | EMA min+max (stable, scene-adaptive) | Fixed-range ÷50 (reproducible) |
+> | Resize | 640×480 (INTER_LINEAR) | 640×640 (INTER_LINEAR, YOLOv8 input) |
+> | CH1 resize timing | After demosaic | After demosaic |
+> | Purpose | Human viewing | Model input |
 
+**What the display pipeline does (current `_process_raws` in `camera_interface.py`):**
+```python
+# Full-res min/max captured first (preserves hot pixels)
+cur_min, cur_max = float(raw.min()), float(raw.max())
+
+# EMA smooths the gain over ~20 frames
+ema_min = 0.95*ema_min + 0.05*cur_min
+ema_max = 0.95*ema_max + 0.05*cur_max
+
+# Fast C-level scale+offset in one pass
+scale  = 255.0 / max(ema_max - ema_min, 1.0)
+offset = -ema_min * scale
+ch = cv2.convertScaleAbs(raw_640x480, alpha=scale, beta=offset)
+```
+This is for display only. The model must NOT receive EMA-normalized frames.
+
+**What the inference path needs (`core/inference/preprocessing.py`):**
 ```python
 # core/inference/preprocessing.py
 
@@ -71,26 +104,30 @@ import cv2
 INFER_W = 640   # YOLOv8 standard input width
 INFER_H = 640   # YOLOv8 standard input height
 
+# NIR physical max in simultaneous mode (confirmed from probe output)
+# Source1: max=57  Source2: max=43 — use 50 as conservative clip point
+NIR_PHYSICAL_MAX = 50.0
+
 def preprocess_for_inference(triplet: FrameTriplet) -> np.ndarray:
     """
-    Convert FrameTriplet to model input tensor.
-    NO EMA. NO display resizing. Consistent normalization.
+    Convert raw FrameTriplet to model input tensor.
+    Uses FIXED normalization — reproducible across frames and sessions.
+    NO EMA, NO scene-adaptive gain.
 
     Returns:
         np.ndarray shape (1, 5, INFER_H, INFER_W) float32
         Channels: [R, G, B, NIR1_norm, NIR2_norm]
     """
-    # CH1: Bayer already demosaiced to BGR in JAICamera
+    # CH1: already demosaiced BGR in JAICamera — resize to model input
     ch1 = cv2.resize(triplet.ch1, (INFER_W, INFER_H), interpolation=cv2.INTER_LINEAR)
-    ch1 = ch1.astype(np.float32) / 255.0   # Normalize to [0, 1]
+    ch1 = ch1.astype(np.float32) / 255.0   # [0, 1]
 
-    # CH2/CH3: Fixed-range normalization (not EMA — must be reproducible)
-    # NIR simultaneous mode raw max = 50 (confirmed in probe output)
-    NIR_MAX = 50.0
-    ch2_full = np.clip(triplet.ch2.astype(np.float32) / NIR_MAX, 0.0, 1.0)
-    ch3_full = np.clip(triplet.ch3.astype(np.float32) / NIR_MAX, 0.0, 1.0)
-    ch2 = cv2.resize(ch2_full, (INFER_W, INFER_H), interpolation=cv2.INTER_LINEAR)
-    ch3 = cv2.resize(ch3_full, (INFER_W, INFER_H), interpolation=cv2.INTER_LINEAR)
+    # CH2/CH3: fixed physical range normalization
+    # Same formula every frame — identical apples always get identical values
+    ch2 = np.clip(triplet.ch2.astype(np.float32) / NIR_PHYSICAL_MAX, 0.0, 1.0)
+    ch3 = np.clip(triplet.ch3.astype(np.float32) / NIR_PHYSICAL_MAX, 0.0, 1.0)
+    ch2 = cv2.resize(ch2, (INFER_W, INFER_H), interpolation=cv2.INTER_LINEAR)
+    ch3 = cv2.resize(ch3, (INFER_W, INFER_H), interpolation=cv2.INTER_LINEAR)
 
     # Stack into 5-channel tensor: [R, G, B, NIR1, NIR2]
     r, g, b = ch1[:, :, 2], ch1[:, :, 1], ch1[:, :, 0]
@@ -98,10 +135,10 @@ def preprocess_for_inference(triplet: FrameTriplet) -> np.ndarray:
     return tensor[np.newaxis, ...]                    # (1, 5, H, W)
 ```
 
-> [!IMPORTANT]
-> NIR_MAX = 50.0 was confirmed empirically in the probe:
+> [!NOTE]
+> `NIR_PHYSICAL_MAX = 50.0` confirmed from probe output:
 > Source1: min=7 max=57 mean=9.7 and Source2: min=7 max=43 mean=8.0
-> This is a fixed physical constant for simultaneous mode. Do NOT use EMA here.
+> If the model was trained with per-frame NORM_MINMAX instead, use that — confirm with Dr. Lu.
 
 **Deliverable:** `core/inference/preprocessing.py` with unit test confirming output shape and value range.
 
