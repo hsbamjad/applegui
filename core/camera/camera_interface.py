@@ -358,22 +358,26 @@ class JAICamera:
         raw1, _,   _ = raws[1]
         raw2, _,   _ = raws[2]
 
-        # CH1: Bayer demosaic at full res → resize
+        # 1. CH1 Bayer demosaic at full res → Resize with fast bilinear interpolation
         if pf0 == "BayerRG8":
             ch1 = cv2.cvtColor(raw0, cv2.COLOR_BayerBG2BGR)
         else:
             ch1 = raw0
-        ch1 = cv2.resize(ch1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
+        ch1 = cv2.resize(ch1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_LINEAR)
 
-        # CH2/CH3: EMA-stabilized normalization — prevents per-frame brightness flicker
-        # EMA tracks the slowly-changing max value; gain is stable across frames
-        mn1, mx1 = int(raw1.min()), int(raw1.max())
-        mn2, mx2 = int(raw2.min()), int(raw2.max())
+        # 2. CH2/CH3: Downsample raw Mono8 NIR frames FIRST to 640x480 using fast bilinear interpolation.
+        # This dramatically avoids running expensive float conversions/normalization on 2048x1536 pixels!
+        raw1_small = cv2.resize(raw1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_LINEAR)
+        raw2_small = cv2.resize(raw2, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_LINEAR)
+
+        mn1, mx1 = int(raw1_small.min()), int(raw1_small.max())
+        mn2, mx2 = int(raw2_small.min()), int(raw2_small.max())
 
         if self._frame_idx % 90 == 0:
             log.info("NIR stats — CH2: min=%d max=%d  |  CH3: min=%d max=%d",
                      mn1, mx1, mn2, mx2)
 
+        # 3. Perform EMA normalization on highly optimized 640x480 resolution using cv2.convertScaleAbs
         def _ema_normalize(raw: np.ndarray, ch_idx: int) -> np.ndarray:
             cur_max = float(raw.max())
             if cur_max > 0:
@@ -382,13 +386,10 @@ class JAICamera:
                     + self._EMA_ALPHA * cur_max
                 )
             scale = 255.0 / max(self._nir_ema_max[ch_idx], 1.0)
-            return np.clip(raw.astype(np.float32) * scale, 0, 255).astype(np.uint8)
+            return cv2.convertScaleAbs(raw, alpha=scale)
 
-        ch2_norm = _ema_normalize(raw1, 0)
-        ch3_norm = _ema_normalize(raw2, 1)
-
-        ch2 = cv2.resize(ch2_norm, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
-        ch3 = cv2.resize(ch3_norm, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_AREA)
+        ch2 = _ema_normalize(raw1_small, 0)
+        ch3 = _ema_normalize(raw2_small, 1)
 
         self._frame_idx += 1
         return FrameTriplet(

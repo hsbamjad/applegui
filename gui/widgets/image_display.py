@@ -187,11 +187,11 @@ class ChannelPanel(QWidget):
 
         h, w = frame.shape[:2]
 
-        # 1. Direct Grayscale Wrapping: Use Grayscale8 for Mono8 to bypass GRAY2RGB CPU conversions
+        # 1. Convert grayscale and color to RGB to ensure absolute display compatibility
         if frame.ndim == 2:
-            qt_img = QImage(frame.data, w, h, w, QImage.Format.Format_Grayscale8)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+            qt_img = QImage(rgb_frame.data, w, h, 3 * w, QImage.Format.Format_RGB888)
         elif frame.ndim == 3 and frame.shape[2] == 3:
-            # Color channel: Convert to RGB in-place before wrapping
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             qt_img = QImage(rgb_frame.data, w, h, 3 * w, QImage.Format.Format_RGB888)
         else:
