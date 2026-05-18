@@ -52,20 +52,26 @@ class CameraWorker(QThread):
         )
         self._running = True
 
-        frame_count = 0
-        fps_start   = time.perf_counter()
-        fps         = 0.0
-        last_idx    = -1
+        frame_count  = 0
+        fps_start    = time.perf_counter()
+        fps          = 0.0
+        min_interval = 1.0 / self._display_fps
+        last_frame_idx = -1
 
         while self._running:
-            # Blocking grab — waits on Condition until a NEW frame is ready
-            # No sleep needed: timing is driven by the camera via process thread
-            triplet = camera.grab(last_idx=last_idx)
-            if triplet is None:
+            t0 = time.perf_counter()
+
+            triplet = camera.grab()
+
+            # Skip if no frame yet or same frame as last emit (cached, no new data)
+            if triplet is None or triplet.frame_idx == last_frame_idx:
+                sleep = min_interval - (time.perf_counter() - t0)
+                if sleep > 0:
+                    time.sleep(sleep)
                 continue
 
-            last_idx    = triplet.frame_idx
-            frame_count += 1
+            last_frame_idx = triplet.frame_idx
+            frame_count   += 1
             elapsed = time.perf_counter() - fps_start
             if elapsed >= 1.0:
                 fps         = frame_count / elapsed
@@ -74,6 +80,9 @@ class CameraWorker(QThread):
 
             self.sig_frame.emit(triplet.ch1, triplet.ch2, triplet.ch3, fps)
 
+            sleep = min_interval - (time.perf_counter() - t0)
+            if sleep > 0:
+                time.sleep(sleep)
 
         camera.disconnect()
         self.sig_status.emit("Disconnected", False)

@@ -23,7 +23,6 @@ from __future__ import annotations
 import time
 import logging
 import threading
-import queue
 from dataclasses import dataclass
 from typing import Optional
 
@@ -189,15 +188,11 @@ class JAICamera:
         self._running      = False
         self._frame_idx    = 0
         self._latest: Optional[FrameTriplet] = None
-        # Condition used as both lock and signal — process thread notifies on each new frame
-        self._frame_cond   = threading.Condition()
-        self._grab_thread: Optional[threading.Thread]    = None
-        self._process_thread: Optional[threading.Thread] = None
-        self._raw_queue: queue.Queue = queue.Queue(maxsize=2)
+        self._latest_lock  = threading.Lock()
+        self._grab_thread: Optional[threading.Thread] = None
         # EMA-stabilized gain for NIR channels — prevents per-frame flicker
-        self._nir_ema_max  = [64.0, 64.0]
-        self._EMA_ALPHA    = 0.05
-
+        self._nir_ema_max  = [64.0, 64.0]   # one per NIR source
+        self._EMA_ALPHA    = 0.05            # low = slow/stable, high = fast/reactive
 
     def connect(self) -> bool:
         try:
@@ -317,21 +312,17 @@ class JAICamera:
         self._grab_thread = threading.Thread(
             target=self._grab_loop, daemon=True, name="JAI-grab"
         )
-        self._process_thread = threading.Thread(
-            target=self._process_loop, daemon=True, name="JAI-proc"
-        )
         self._grab_thread.start()
-        self._process_thread.start()
-        log.info("JAICamera: grab + process threads started — ready")
+        log.info("JAICamera: background grab thread started — ready")
         return True
 
-    # ── Thread: grab raw buffers only (camera-limited, ~33ms/frame) ───────────
+    # ── Background grab loop ──────────────────────────────────────────────────
 
     def _grab_loop(self) -> None:
         """
-        Grabs raw pixel data from all 3 sources and puts it in _raw_queue.
-        Does NO processing — just copies buffers and releases them immediately.
-        Runs at full camera speed (30fps, limited by Source0 RetrieveNextBuffer).
+        Runs in a daemon thread at full camera speed (30fps).
+        Always stores the latest processed triplet in self._latest.
+        The worker thread reads this cache non-blocking via grab().
         """
         try:
             while self._running:
@@ -351,43 +342,11 @@ class JAICamera:
                 if not ok or len(raws) < len(self._sources):
                     continue
 
-                # Put raw data in queue — drop oldest if process thread is behind
-                if self._raw_queue.full():
-                    try:
-                        self._raw_queue.get_nowait()   # discard stale frame
-                    except queue.Empty:
-                        pass
-                try:
-                    self._raw_queue.put_nowait((raws, block_id))
-                except queue.Full:
-                    pass  # process thread caught up, skip
-
+                triplet = self._process_raws(raws, block_id)
+                with self._latest_lock:
+                    self._latest = triplet
         except Exception as e:
             log.error("JAI grab thread crashed: %s", e, exc_info=True)
-
-    # ── Thread: process raw buffers (CPU work, ~17ms/frame) ──────────────────
-
-    def _process_loop(self) -> None:
-        """
-        Reads raw buffers from _raw_queue and processes them.
-        Runs in parallel with _grab_loop — decouples CPU work from camera wait.
-        """
-        try:
-            while self._running:
-                try:
-                    raws, block_id = self._raw_queue.get(timeout=0.5)
-                except queue.Empty:
-                    continue
-
-                triplet = self._process_raws(raws, block_id)
-                # Notify waiting grab() callers that a new frame is ready
-                with self._frame_cond:
-                    self._latest = triplet
-                    self._frame_cond.notify_all()
-
-        except Exception as e:
-            log.error("JAI process thread crashed: %s", e, exc_info=True)
-
 
     def _process_raws(
         self,
@@ -442,21 +401,16 @@ class JAICamera:
         )
 
 
-    def grab(self, last_idx: int = -1, timeout: float = 0.5) -> Optional[FrameTriplet]:
+    def grab(self) -> Optional[FrameTriplet]:
         """
-        Blocking grab — waits until a frame NEWER than last_idx is available.
-        Returns immediately if a newer frame is already cached.
-        This eliminates the polling phase-mismatch that caused 21fps.
+        Non-blocking: return the latest frame from the background grab thread.
+        Never blocks on the camera — always returns immediately.
         """
         if not self._running:
             return None
-        with self._frame_cond:
-            # Already have a new frame? Return it immediately.
-            if self._latest is not None and self._latest.frame_idx != last_idx:
-                return self._latest
-            # Block until process thread notifies (new frame ready)
-            self._frame_cond.wait(timeout=timeout)
+        with self._latest_lock:
             return self._latest
+
 
 
     def disconnect(self) -> None:
@@ -516,10 +470,10 @@ class CameraInterface:
         self._backend = None
         log.info("Camera disconnected")
 
-    def grab(self, last_idx: int = -1, timeout: float = 0.5) -> Optional[FrameTriplet]:
+    def grab(self) -> Optional[FrameTriplet]:
         """Grab next synchronized frame triplet."""
         if self._mode == "jai" and self._backend:
-            return self._backend.grab(last_idx=last_idx, timeout=timeout)
+            return self._backend.grab()
         return self._mock_frame()
 
     def _mock_frame(self) -> FrameTriplet:
