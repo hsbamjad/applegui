@@ -8,7 +8,8 @@
 # CAMERA
 # ══════════════════════════════════════════════════════════════
 camera:
-  mode: "mock"          # Options: "mock" | "jai"
+  mode: "jai"           # Options: "mock" | "jai"  — falls back to mock if camera not found
+
 
   mock:
     fps: 60             # Match JAI real-capture rate
