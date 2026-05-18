@@ -326,15 +326,24 @@ class JAICamera:
         raw1, _,   _ = raws[1]
         raw2, _,   _ = raws[2]
 
-        # CH1: Bayer demosaic → BGR
-        if pf0 == "BayerRG8":
-            ch1 = cv2.cvtColor(raw0, cv2.COLOR_BayerBG2BGR)
-        else:
-            ch1 = raw0
+        # Resize to display resolution FIRST — much cheaper to process small images.
+        # Full-res (2048×1536) → display (640×480): ~10× fewer pixels to process.
+        # For inference, raw full-res data will come from a separate pipeline (Track C).
+        DISP_W, DISP_H = 640, 480
 
-        # CH2/CH3: Mono8 — normalize for display
-        ch2 = cv2.normalize(raw1, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        ch3 = cv2.normalize(raw2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        # CH1: resize raw Bayer first, then demosaic (Bayer pattern scales correctly)
+        raw0_small = cv2.resize(raw0, (DISP_W, DISP_H), interpolation=cv2.INTER_LINEAR)
+        if pf0 == "BayerRG8":
+            ch1 = cv2.cvtColor(raw0_small, cv2.COLOR_BayerBG2BGR)
+        else:
+            ch1 = cv2.cvtColor(raw0_small, cv2.COLOR_GRAY2BGR)
+
+        # CH2/CH3: resize then normalize for display
+        raw1_small = cv2.resize(raw1, (DISP_W, DISP_H), interpolation=cv2.INTER_LINEAR)
+        raw2_small = cv2.resize(raw2, (DISP_W, DISP_H), interpolation=cv2.INTER_LINEAR)
+        ch2 = cv2.normalize(raw1_small, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        ch3 = cv2.normalize(raw2_small, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
 
         self._frame_idx += 1
         return FrameTriplet(
