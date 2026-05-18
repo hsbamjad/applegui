@@ -187,17 +187,22 @@ class ChannelPanel(QWidget):
 
         h, w = frame.shape[:2]
 
-        # 1. Convert grayscale and color to RGB to ensure absolute display compatibility
+        # 1. Convert grayscale and color to RGB to ensure absolute display compatibility.
+        # Calling .copy() is CRITICAL here to force a deep-copy of the pixel buffer. Without it,
+        # PySide6 wraps the temporary numpy array's data pointer, which is garbage collected immediately,
+        # resulting in corrupted color rendering, washed-out tones, and visual noise.
         if frame.ndim == 2:
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-            qt_img = QImage(rgb_frame.data, w, h, 3 * w, QImage.Format.Format_RGB888)
+            qt_img = QImage(rgb_frame.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
         elif frame.ndim == 3 and frame.shape[2] == 3:
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            qt_img = QImage(rgb_frame.data, w, h, 3 * w, QImage.Format.Format_RGB888)
+            qt_img = QImage(rgb_frame.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
         else:
             return
 
         # 2. Viewport-Matching Scaling Bypass: Skip expensive QPixmap.scaled() if viewport matches frame dimensions
+        # Use high-quality SmoothTransformation (bilinear interpolation) instead of blocky FastTransformation
+        # to eliminate aliasing, jaggies, and pixelation on the watch dial and fine arm details!
         disp_size = self._display.size()
         if w == disp_size.width() and h == disp_size.height():
             pixmap = QPixmap.fromImage(qt_img)
@@ -205,7 +210,7 @@ class ChannelPanel(QWidget):
             pixmap = QPixmap.fromImage(qt_img).scaled(
                 disp_size,
                 Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.FastTransformation,
+                Qt.TransformationMode.SmoothTransformation,
             )
 
         self._display.setPixmap(pixmap)
