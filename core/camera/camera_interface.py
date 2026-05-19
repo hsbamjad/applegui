@@ -537,15 +537,19 @@ class JAICamera:
 
     def get_exposure(self) -> int:
         """
-        Read the current ExposureTime from the device firmware.
-        Returns the ACTUAL value the camera is using (may differ from
-        what was requested if the FPS limit clamped it).
+        Read the actual ExposureTime from Source0 (color channel).
+        Uses SourceSelector to ensure a consistent read regardless of what the
+        last set_exposure() loop left the selector pointing to.
         Returns -1 on failure.
         """
         if self._device is None:
             return -1
         try:
-            nm    = self._device.GetParameters()
+            import eBUS as eb
+            nm = self._device.GetParameters()
+            if self._sources:
+                stack = eb.PvGenStateStack(nm)
+                stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
             param = nm.GetFloat("ExposureTime")
             if param is None:
                 return -1
@@ -554,6 +558,7 @@ class JAICamera:
         except Exception as e:
             log.error("get_exposure exception: %s", e)
             return -1
+
 
     def set_gain(self, gain_db: float) -> float:
         """
