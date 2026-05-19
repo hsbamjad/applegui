@@ -286,43 +286,34 @@ class LeftControlPanel(QWidget):
         )
         card.add(_field("Exposure", self._spn_exposure))
 
-
-        # Apply / Max / Reset — equal width so none can collapse to zero
-        self._btn_apply_exposure = _btn_secondary("Apply")
-        self._btn_apply_exposure.setToolTip("Send spinbox value to all 3 camera sources")
+        # Apply Exposure + Reset side-by-side
+        self._btn_apply_exposure = _btn_secondary("Apply Exposure")
+        self._btn_apply_exposure.setToolTip("Send new exposure value to all 3 camera sources")
         self._btn_apply_exposure.clicked.connect(self._on_apply_exposure)
 
-        self._btn_max_exposure = _btn_secondary("Max")
-        self._btn_max_exposure.setToolTip(
-            "Set exposure to max allowed for current FPS\n"
-            "(1,000,000 / FPS). Camera readback shows real clamped value."
+        self._btn_reset_exposure = QPushButton("↺  Reset")
+        self._btn_reset_exposure.setFixedHeight(34)
+        self._btn_reset_exposure.setToolTip(
+            "Reset exposure to 5,000 µs (safe default for conveyor imaging)"
         )
-        self._btn_max_exposure.clicked.connect(self._on_max_exposure)
-
-        self._btn_reset_exposure = QPushButton("Reset")
         self._btn_reset_exposure.setStyleSheet(f"""
             QPushButton {{
                 background-color: {BG_ELEVATED}; color: {TEXT_2};
                 border: 1px solid {BORDER}; font-weight: 600; font-size: 11px;
-                border-radius: 7px; min-height: 34px;
+                border-radius: 7px; padding: 0 10px;
             }}
             QPushButton:hover   {{ background-color: {WARNING}22; color: {WARNING};
                                    border-color: {WARNING}55; }}
             QPushButton:pressed {{ background-color: {WARNING}44; }}
         """)
-        self._btn_reset_exposure.setToolTip(
-            "Reset exposure to 5,000 µs (safe default for conveyor imaging)"
-        )
         self._btn_reset_exposure.clicked.connect(self._on_reset_exposure)
 
         exp_btn_hl = QHBoxLayout()
         exp_btn_hl.setContentsMargins(0, 0, 0, 0)
         exp_btn_hl.setSpacing(6)
         exp_btn_hl.addWidget(self._btn_apply_exposure, stretch=1)
-        exp_btn_hl.addWidget(self._btn_max_exposure,   stretch=1)
-        exp_btn_hl.addWidget(self._btn_reset_exposure, stretch=1)
+        exp_btn_hl.addWidget(self._btn_reset_exposure)
         card.add_layout(exp_btn_hl)
-
 
         _sep(card)
 
@@ -410,13 +401,6 @@ class LeftControlPanel(QWidget):
     def _on_apply_exposure(self) -> None:
         """Emit exposure signal → main_window._on_exposure_changed."""
         self.sig_exposure_changed.emit(self._spn_exposure.value())
-
-    def _on_max_exposure(self) -> None:
-        """Set exposure to theoretical maximum for current FPS and immediately apply."""
-        fps = max(self._spn_fps.value(), 1)
-        max_us = int(1_000_000 / fps)
-        self._spn_exposure.setValue(max_us)
-        self.sig_exposure_changed.emit(max_us)
 
     def _on_reset_exposure(self) -> None:
         """Reset exposure to 5,000 µs (safe conveyor default) and immediately apply."""
