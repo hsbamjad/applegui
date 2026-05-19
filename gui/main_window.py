@@ -292,6 +292,11 @@ class MainWindow(QMainWindow):
             f"font-size: 11px; border-top: 1px solid {BORDER}; padding: 0 10px; }}"
         )
         self.setStatusBar(status)
+
+        self._lbl_sync = QLabel("Sync: --  ·  IDs: -- / -- / --")
+        self._lbl_sync.setStyleSheet("font-family: monospace; font-size: 11px; margin-right: 10px;")
+        status.addPermanentWidget(self._lbl_sync)
+
         status.showMessage(f"Ready  ·  Mode: {self._mode.upper()}")
 
     def _connect_signals(self) -> None:
@@ -350,6 +355,7 @@ class MainWindow(QMainWindow):
         self._cam_w.sig_exposure_readback.connect(self._on_exposure_readback)
         self._cam_w.sig_gains_readback.connect(self._on_gains_readback)
         self._cam_w.sig_cam_fps.connect(self._on_cam_fps)
+        self._cam_w.sig_block_ids.connect(self._on_block_ids)
         self._cam_w.start()
 
         # ── Inference worker ───────────────────────────────────────
@@ -540,3 +546,17 @@ class MainWindow(QMainWindow):
             f"Display target: {disp} FPS (actual may be less at high FPS due to processing)   │   "
             f"Max exposure at {cam_fps:.0f} FPS: {int(1_000_000 / max(cam_fps, 1)):,} µs"
         )
+
+    @pyqtSlot(bool, int, int, int)
+    def _on_block_ids(self, synced: bool, ch1_bid: int, ch2_bid: int, ch3_bid: int) -> None:
+        """Updates the permanent sync status label on the right corner of the status bar."""
+        if ch1_bid == -1:
+            self._lbl_sync.setText("Sync: --  ·  IDs: -- / -- / --")
+            self._lbl_sync.setStyleSheet("color: #94A3B8; font-family: monospace; font-size: 11px; margin-right: 10px;")
+            return
+        
+        sync_str = "OK" if synced else "MISMATCH"
+        color = "#10B981" if synced else "#EF4444"  # emerald green if OK, bright red if MISMATCH
+        self._lbl_sync.setText(f"Sync: {sync_str}  ·  IDs: {ch1_bid} / {ch2_bid} / {ch3_bid}")
+        self._lbl_sync.setStyleSheet(f"color: {color}; font-family: monospace; font-size: 11px; font-weight: bold; margin-right: 10px;")
+

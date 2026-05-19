@@ -53,6 +53,8 @@ class CameraWorker(QThread):
     sig_exposure_readback = pyqtSignal(int)          # actual exposure µs read back from firmware
     sig_gains_readback    = pyqtSignal(float, float, float)  # actual CH1/CH2/CH3 gains in dB
     sig_cam_fps           = pyqtSignal(float)         # actual camera acquisition FPS (grab thread)
+    sig_block_ids         = pyqtSignal(bool, int, int, int) # synced (bool), ch1_bid, ch2_bid, ch3_bid
+
 
     def __init__(self, config: dict, display_fps: int = 30) -> None:
         super().__init__()
@@ -112,6 +114,12 @@ class CameraWorker(QThread):
                 cam_fps = self._camera.grab_fps()
                 if cam_fps > 0:
                     self.sig_cam_fps.emit(cam_fps)
+
+            ch1_bid = getattr(triplet, "ch1_bid", -1)
+            ch2_bid = getattr(triplet, "ch2_bid", -1)
+            ch3_bid = getattr(triplet, "ch3_bid", -1)
+            synced = (ch1_bid == ch2_bid == ch3_bid) and ch1_bid != -1
+            self.sig_block_ids.emit(synced, ch1_bid, ch2_bid, ch3_bid)
 
             self.sig_frame.emit(triplet.ch1, triplet.ch2, triplet.ch3, fps)
 

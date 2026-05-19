@@ -41,6 +41,10 @@ class FrameTriplet:
     timestamp:  float         # time.time() at acquisition
     frame_idx:  int           # monotonically increasing frame counter
     block_id:   int = -1      # GEV block ID (all 3 channels must match for sync)
+    ch1_bid:    int = -1      # Channel 1 Block ID
+    ch2_bid:    int = -1      # Channel 2 Block ID
+    ch3_bid:    int = -1      # Channel 3 Block ID
+
 
 
 # ── JAI eBUS backend ──────────────────────────────────────────────────────────
@@ -377,9 +381,9 @@ class JAICamera:
         CH2: Raw Mono8 pass-through. Full res.
         CH3: Raw Mono8 pass-through. Full res.
         """
-        raw0, pf0, _ = raws[0]
-        raw1, _,   _ = raws[1]
-        raw2, _,   _ = raws[2]
+        raw0, pf0, bid0 = raws[0]
+        raw1, _,   bid1 = raws[1]
+        raw2, _,   bid2 = raws[2]
 
         # CH1 — Bayer demosaic at full resolution, no resize
         if pf0 == "BayerRG8":
@@ -406,6 +410,9 @@ class JAICamera:
             timestamp = time.time(),
             frame_idx = self._frame_idx,
             block_id  = block_id,
+            ch1_bid   = bid0,
+            ch2_bid   = bid1,
+            ch3_bid   = bid2,
         )
 
 
@@ -866,6 +873,9 @@ class CameraInterface:
             timestamp = time.time(),
             frame_idx = self._frame_idx,
             block_id  = self._frame_idx,
+            ch1_bid   = self._frame_idx,
+            ch2_bid   = self._frame_idx,
+            ch3_bid   = self._frame_idx,
         )
 
 
