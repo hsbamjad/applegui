@@ -286,10 +286,34 @@ class LeftControlPanel(QWidget):
         )
         card.add(_field("Exposure", self._spn_exposure))
 
+        # Apply Exposure + Reset side-by-side
         self._btn_apply_exposure = _btn_secondary("Apply Exposure")
-        self._btn_apply_exposure.setToolTip("Send new exposure value to camera")
+        self._btn_apply_exposure.setToolTip("Send new exposure value to all 3 camera sources")
         self._btn_apply_exposure.clicked.connect(self._on_apply_exposure)
-        card.add(self._btn_apply_exposure)
+
+        self._btn_reset_exposure = QPushButton("↺  Reset")
+        self._btn_reset_exposure.setFixedHeight(34)
+        self._btn_reset_exposure.setToolTip(
+            "Reset exposure to 5,000 µs (safe default for conveyor imaging)"
+        )
+        self._btn_reset_exposure.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                border: 1px solid {BORDER}; font-weight: 600; font-size: 11px;
+                border-radius: 7px; padding: 0 10px;
+            }}
+            QPushButton:hover   {{ background-color: {WARNING}22; color: {WARNING};
+                                   border-color: {WARNING}55; }}
+            QPushButton:pressed {{ background-color: {WARNING}44; }}
+        """)
+        self._btn_reset_exposure.clicked.connect(self._on_reset_exposure)
+
+        exp_btn_hl = QHBoxLayout()
+        exp_btn_hl.setContentsMargins(0, 0, 0, 0)
+        exp_btn_hl.setSpacing(6)
+        exp_btn_hl.addWidget(self._btn_apply_exposure, stretch=1)
+        exp_btn_hl.addWidget(self._btn_reset_exposure)
+        card.add_layout(exp_btn_hl)
 
         _sep(card)
 
@@ -311,6 +335,9 @@ class LeftControlPanel(QWidget):
         self._btn_apply_fps.setToolTip("Send new frame rate to camera")
         self._btn_apply_fps.clicked.connect(self._on_apply_fps)
         card.add(self._btn_apply_fps)
+
+        # Fix initial max — valueChanged fires before signal is connected so call manually
+        self._on_fps_spinbox_changed(self._spn_fps.value())
 
         _sep(card)
 
@@ -374,6 +401,11 @@ class LeftControlPanel(QWidget):
     def _on_apply_exposure(self) -> None:
         """Emit exposure signal → main_window._on_exposure_changed."""
         self.sig_exposure_changed.emit(self._spn_exposure.value())
+
+    def _on_reset_exposure(self) -> None:
+        """Reset exposure to 5,000 µs (safe conveyor default) and immediately apply."""
+        self._spn_exposure.setValue(5_000)
+        self.sig_exposure_changed.emit(5_000)
 
     def _on_apply_fps(self) -> None:
         """Emit FPS signal → main_window._on_fps_changed."""

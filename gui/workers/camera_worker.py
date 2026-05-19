@@ -132,16 +132,19 @@ class CameraWorker(QThread):
 
     def set_exposure(self, exposure_us: int) -> None:
         """
-        Forward exposure change to the camera while streaming.
-        Safe to call from the GUI main thread — delegates to CameraInterface
-        which issues a single GenICam parameter write (non-blocking, <1ms).
-
-        No effect if camera is not yet connected.
+        Forward exposure change to all 3 camera sources while streaming.
+        Reads back the actual value accepted by firmware and emits sig_exposure_readback
+        so the GUI spinbox always shows truth (camera may clamp due to FPS limit).
         """
         if self._camera is not None:
             self._camera.set_exposure(exposure_us)
+            # Read back actual value — camera may have clamped due to FPS constraint
+            actual = self._camera.get_exposure()
+            if actual > 0:
+                self.sig_exposure_readback.emit(actual)
         else:
             log.warning("set_exposure ignored — camera not connected")
+
 
     def set_fps(self, fps: float) -> None:
         """
