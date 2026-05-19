@@ -730,19 +730,35 @@ class JAICamera:
                 stack = eb.PvGenStateStack(nm)
                 stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
 
+            # Ensure Auto WB is turned OFF before setting manual ratios
             param = nm.GetEnum("BalanceWhiteAuto")
             if param:
-                param.SetValue("Off")
+                res = param.SetValue("Off")
+                log.info("[CAM AWB] Set BalanceWhiteAuto='Off' result: %s", res.GetCodeString())
 
             ratio_sel = nm.GetEnum("BalanceRatioSelector")
             ratio_val = nm.GetFloat("BalanceRatio")
             if ratio_sel and ratio_val:
+                r1 = ratio_sel.SetValue("Red")
+                r2 = ratio_val.SetValue(float(r_ratio))
+                log.info("[CAM AWB] Set Red Selector result: %s | Set Red Ratio %.3f result: %s", 
+                         r1.GetCodeString(), r_ratio, r2.GetCodeString())
+
+                r3 = ratio_sel.SetValue("Blue")
+                r4 = ratio_val.SetValue(float(b_ratio))
+                log.info("[CAM AWB] Set Blue Selector result: %s | Set Blue Ratio %.3f result: %s", 
+                         r3.GetCodeString(), b_ratio, r4.GetCodeString())
+
+                # Verification Readback
                 ratio_sel.SetValue("Red")
-                ratio_val.SetValue(float(r_ratio))
+                _, verified_r = ratio_val.GetValue()
                 ratio_sel.SetValue("Blue")
-                ratio_val.SetValue(float(b_ratio))
-                log.info("Successfully restored manual WB ratios — Red: %.2f | Blue: %.2f", r_ratio, b_ratio)
-                return True
+                _, verified_b = ratio_val.GetValue()
+                log.info("[CAM AWB] Verify Readback — Red: %.3f (target: %.3f) | Blue: %.3f (target: %.3f)",
+                         verified_r, r_ratio, verified_b, b_ratio)
+
+                return r2.IsOK() and r4.IsOK()
+            log.error("[CAM AWB] BalanceRatioSelector or BalanceRatio parameters not found on JAI camera")
             return False
         except Exception as e:
             log.error("set_white_balance_ratios exception: %s", e)
