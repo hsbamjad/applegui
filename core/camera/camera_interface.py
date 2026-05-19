@@ -828,6 +828,20 @@ class CameraInterface:
         )
 
 
+    def set_exposure(self, exposure_us: int) -> bool:
+        """Delegate to JAICamera.set_exposure(). No-op in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.set_exposure(exposure_us)
+        log.debug("set_exposure: mock mode — ignored")
+        return True
+
+    def set_fps(self, fps: float) -> bool:
+        """Delegate to JAICamera.set_fps(). No-op in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.set_fps(fps)
+        log.debug("set_fps: mock mode — ignored")
+        return True
+
     def set_gain(self, gain_db: float) -> float:
         """Delegate to JAICamera.set_gain(). Returns actual readback. No-op in mock mode."""
         if self._mode == "jai" and self._backend:
@@ -863,3 +877,4 @@ class CameraInterface:
     @property
     def mode(self) -> str:
         return self._mode
+
