@@ -149,10 +149,6 @@ class CameraWorker(QThread):
         Camera FPS  = sensor acquisition speed (firmware)
         Display FPS = how fast sig_frame is emitted to the GUI
 
-        On this machine Qt can render ~60-65 FPS for 3 channels.
-        At 107 camera FPS the display caps at ~64 due to grab-thread processing
-        time (Bayer demosaic + resize + EMA at 2048x1536 takes ~9ms/frame).
-
         The status bar shows real camera FPS; channel headers show actual display FPS.
         """
         self._display_fps = fps   # display tries to match camera; caps at machine limit

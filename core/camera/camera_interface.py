@@ -178,8 +178,6 @@ class JAICamera:
 
     WARMUP_S     = 2.0
     DRAIN_FRAMES = 30
-    DISPLAY_W    = 640    # resize to this BEFORE emitting — keeps Qt rendering fast
-    DISPLAY_H    = 480
 
     def __init__(self, config: dict) -> None:
         self._cfg          = config
@@ -190,11 +188,6 @@ class JAICamera:
         self._latest: Optional[FrameTriplet] = None
         self._latest_lock  = threading.Lock()
         self._grab_thread: Optional[threading.Thread] = None
-        # EMA-stabilized gain for NIR channels
-        self._nir_ema_min  = [0.0, 0.0]
-        self._nir_ema_max  = [64.0, 64.0]
-        self._EMA_ALPHA    = 0.05
-        self._nir_ema_reset_pending = False   # set True to force re-adaptation
         # Camera-side FPS tracking (grab thread measures actual acquisition rate)
         self._grab_fps      = 0.0
         self._grab_count    = 0
@@ -373,69 +366,37 @@ class JAICamera:
         raws: list,
         block_id: int,
     ) -> FrameTriplet:
-        """Convert raw buffers to display-ready FrameTriplet."""
+        """
+        Convert raw sensor buffers into a FrameTriplet.
+
+        NO downsampling — frames are returned at full sensor resolution (2048×1536).
+        NO normalization — NIR pixel values are exactly what the sensor captured.
+        The display widget (image_display.py) handles scaling via Qt SmoothTransformation.
+
+        CH1: Bayer demosaic only (BayerRG8 → BGR). Full res.
+        CH2: Raw Mono8 pass-through. Full res.
+        CH3: Raw Mono8 pass-through. Full res.
+        """
         raw0, pf0, _ = raws[0]
         raw1, _,   _ = raws[1]
         raw2, _,   _ = raws[2]
 
-        # 1. CH1 Bayer demosaic at full res → Resize with fast bilinear interpolation
+        # CH1 — Bayer demosaic at full resolution, no resize
         if pf0 == "BayerRG8":
             ch1 = cv2.cvtColor(raw0, cv2.COLOR_BayerBG2BGR)
         else:
             ch1 = raw0
-        ch1 = cv2.resize(ch1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_LINEAR)
 
-        # 2. Extract raw peak maximums and minimums at full resolution (<0.3ms) to preserve hot pixels and highlight levels
-        cur_min1, cur_max1 = float(raw1.min()), float(raw1.max())
-        cur_min2, cur_max2 = float(raw2.min()), float(raw2.max())
-
-        # 3. Downsample raw Mono8 NIR frames FIRST to 640x480 using fast bilinear interpolation
-        raw1_small = cv2.resize(raw1, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_LINEAR)
-        raw2_small = cv2.resize(raw2, (self.DISPLAY_W, self.DISPLAY_H), interpolation=cv2.INTER_LINEAR)
-
-        mn1, mx1 = int(raw1_small.min()), int(raw1_small.max())
-        mn2, mx2 = int(raw2_small.min()), int(raw2_small.max())
+        # CH2, CH3 — raw sensor values, untouched
+        ch2 = raw1
+        ch3 = raw2
 
         if self._frame_idx % 90 == 0:
-            log.info("NIR stats — CH2: min=%d max=%d  |  CH3: min=%d max=%d",
-                     mn1, mx1, mn2, mx2)
-
-        # 4. Perform EMA-stabilized Min-Max normalization on 640x480 using cv2.convertScaleAbs.
-        # This completely subtracts the dynamic black offset (pedestal) and stretches the contrast,
-        # perfectly matching cv2.normalize(..., cv2.NORM_MINMAX) from the simple video to eliminate gray glare!
-        def _ema_normalize(
-            raw_small: np.ndarray,
-            cur_min: float,
-            cur_max: float,
-            ch_idx: int,
-        ) -> np.ndarray:
-            # Reset EMA state when exposure changed manually.
-            # Without this, EMA absorbs the brightness shift silently and NIR
-            # channels look unchanged on screen even though raw values have moved.
-            if self._frame_idx == 0 or self._nir_ema_reset_pending:
-                self._nir_ema_min[ch_idx] = cur_min
-                self._nir_ema_max[ch_idx] = cur_max
-                if ch_idx == 1:                       # clear flag after both channels reset
-                    self._nir_ema_reset_pending = False
-                    log.info("NIR EMA reset — re-adapting to new exposure level")
-            else:
-                self._nir_ema_min[ch_idx] = (
-                    (1 - self._EMA_ALPHA) * self._nir_ema_min[ch_idx]
-                    + self._EMA_ALPHA * cur_min
-                )
-                self._nir_ema_max[ch_idx] = (
-                    (1 - self._EMA_ALPHA) * self._nir_ema_max[ch_idx]
-                    + self._EMA_ALPHA * cur_max
-                )
-
-            diff = self._nir_ema_max[ch_idx] - self._nir_ema_min[ch_idx]
-            diff = max(diff, 1.0)
-            scale = 255.0 / diff
-            offset = -self._nir_ema_min[ch_idx] * scale
-            return cv2.convertScaleAbs(raw_small, alpha=scale, beta=offset)
-
-        ch2 = _ema_normalize(raw1_small, cur_min1, cur_max1, 0)
-        ch3 = _ema_normalize(raw2_small, cur_min2, cur_max2, 1)
+            log.info(
+                "NIR raw stats — CH2: min=%d max=%d  |  CH3: min=%d max=%d",
+                int(ch2.min()), int(ch2.max()),
+                int(ch3.min()), int(ch3.max()),
+            )
 
         self._frame_idx += 1
         return FrameTriplet(
@@ -507,10 +468,6 @@ class JAICamera:
                                 exposure_us, actual)
                 else:
                     log.info("Camera: ExposureTime = %d µs", exposure_us)
-                # Reset NIR EMA so the new brightness level is visible on display.
-                # Without this, EMA silently absorbs the brightness change and NIR
-                # channels look unchanged even though raw values have shifted.
-                self._nir_ema_reset_pending = True
                 return True
             print(f"[CAM] set_exposure: REJECTED by camera: {r.GetCodeString()}")
             log.error("set_exposure: camera rejected value %d µs: %s",
