@@ -190,10 +190,20 @@ class JAICamera:
         self._latest: Optional[FrameTriplet] = None
         self._latest_lock  = threading.Lock()
         self._grab_thread: Optional[threading.Thread] = None
-        # EMA-stabilized gain for NIR channels — prevents per-frame flicker
-        self._nir_ema_min  = [0.0, 0.0]     # one per NIR source
-        self._nir_ema_max  = [64.0, 64.0]   # one per NIR source
-        self._EMA_ALPHA    = 0.05            # low = slow/stable, high = fast/reactive
+        # EMA-stabilized gain for NIR channels
+        self._nir_ema_min  = [0.0, 0.0]
+        self._nir_ema_max  = [64.0, 64.0]
+        self._EMA_ALPHA    = 0.05
+        self._nir_ema_reset_pending = False   # set True to force re-adaptation
+        # Camera-side FPS tracking (grab thread measures actual acquisition rate)
+        self._grab_fps      = 0.0
+        self._grab_count    = 0
+        self._grab_fps_t    = 0.0
+
+    @property
+    def grab_fps(self) -> float:
+        """Actual camera acquisition FPS measured in the background grab thread."""
+        return self._grab_fps
 
     def connect(self) -> bool:
         try:
@@ -321,10 +331,11 @@ class JAICamera:
 
     def _grab_loop(self) -> None:
         """
-        Runs in a daemon thread at full camera speed (30fps).
+        Runs in a daemon thread at camera acquisition speed.
+        Measures actual grab FPS independently of display FPS.
         Always stores the latest processed triplet in self._latest.
-        The worker thread reads this cache non-blocking via grab().
         """
+        self._grab_fps_t = time.time()
         try:
             while self._running:
                 raws     = []
@@ -342,6 +353,14 @@ class JAICamera:
 
                 if not ok or len(raws) < len(self._sources):
                     continue
+
+                # Track actual camera FPS
+                self._grab_count += 1
+                elapsed = time.time() - self._grab_fps_t
+                if elapsed >= 1.0:
+                    self._grab_fps   = self._grab_count / elapsed
+                    self._grab_count = 0
+                    self._grab_fps_t = time.time()
 
                 triplet = self._process_raws(raws, block_id)
                 with self._latest_lock:
@@ -390,9 +409,15 @@ class JAICamera:
             cur_max: float,
             ch_idx: int,
         ) -> np.ndarray:
-            if self._frame_idx == 0:
+            # Reset EMA state when exposure changed manually.
+            # Without this, EMA absorbs the brightness shift silently and NIR
+            # channels look unchanged on screen even though raw values have moved.
+            if self._frame_idx == 0 or self._nir_ema_reset_pending:
                 self._nir_ema_min[ch_idx] = cur_min
                 self._nir_ema_max[ch_idx] = cur_max
+                if ch_idx == 1:                       # clear flag after both channels reset
+                    self._nir_ema_reset_pending = False
+                    log.info("NIR EMA reset — re-adapting to new exposure level")
             else:
                 self._nir_ema_min[ch_idx] = (
                     (1 - self._EMA_ALPHA) * self._nir_ema_min[ch_idx]
@@ -432,6 +457,140 @@ class JAICamera:
             return None
         with self._latest_lock:
             return self._latest
+
+    # ── Live camera controls ──────────────────────────────────────────────────
+
+    def set_exposure(self, exposure_us: int) -> bool:
+        """
+        Set sensor exposure time in microseconds while streaming.
+
+        The exposure time controls how long each sensor pixel integrates light:
+          - Short exposure  (1000–5000 µs)  → darker image, freezes fast motion
+          - Medium exposure (5000–15000 µs) → balanced for 1 apple/s conveyor
+          - Long exposure   (>15000 µs)     → brighter image, risk of motion blur
+
+        Hardware constraint — FPS caps the maximum exposure:
+          30 FPS  → max 33,333 µs   (1,000,000 / 30)
+          60 FPS  → max 16,666 µs
+          107 FPS → max  9,345 µs
+        The camera firmware enforces this automatically; we log if value is clamped.
+
+        Args:
+            exposure_us: Desired exposure in microseconds. Range: 100–100,000.
+
+        Returns:
+            True on success, False on failure.
+        """
+        if self._device is None:
+            log.warning("set_exposure: no device connected")
+            return False
+        try:
+            print(f"[CAM] set_exposure: writing {exposure_us} µs to device")
+            nm = self._device.GetParameters()
+            # Use GetEnum (not Get) for enum parameters in eBUS Python API
+            ae = nm.GetEnum("ExposureAuto")
+            if ae:
+                ae.SetValue("Off")
+            param = nm.GetFloat("ExposureTime")
+            if param is None:
+                print("[CAM] set_exposure: ExposureTime param is None!")
+                log.error("set_exposure: ExposureTime parameter not found on device")
+                return False
+            r = param.SetValue(float(exposure_us))
+            if r.IsOK():
+                # Read back actual value — camera may have clamped it
+                _, actual = param.GetValue()
+                print(f"[CAM] set_exposure: OK, actual={actual:.0f} µs")
+                if abs(actual - exposure_us) > 50:
+                    log.warning("set_exposure: requested %d µs, camera clamped to %.0f µs "
+                                "(FPS limit — reduce frame rate to allow longer exposure)",
+                                exposure_us, actual)
+                else:
+                    log.info("Camera: ExposureTime = %d µs", exposure_us)
+                # Reset NIR EMA so the new brightness level is visible on display.
+                # Without this, EMA silently absorbs the brightness change and NIR
+                # channels look unchanged even though raw values have shifted.
+                self._nir_ema_reset_pending = True
+                return True
+            print(f"[CAM] set_exposure: REJECTED by camera: {r.GetCodeString()}")
+            log.error("set_exposure: camera rejected value %d µs: %s",
+                      exposure_us, r.GetCodeString())
+            return False
+        except Exception as e:
+            print(f"[CAM] set_exposure: EXCEPTION: {e}")
+            log.error("set_exposure exception: %s", e)
+            return False
+
+    def set_fps(self, fps: float) -> bool:
+        """
+        Set acquisition frame rate while streaming.
+
+        Changing FPS has two important side-effects:
+          1. Max allowed exposure shrinks: max_exp_us = 1,000,000 / fps
+             (firmware enforces this — any existing exposure above the new limit
+              will be silently clamped by the camera)
+          2. NIR EMA gain will temporarily flicker for ~20 frames as the
+             background illumination/sensor output adjusts — this is normal.
+
+        The FS-3200T supports 1–107 FPS at full 2048×1536 resolution.
+        Lower FPS → more light per frame → brighter NIR. Useful in dark conditions.
+        Higher FPS → faster throughput → shorter max exposure.
+
+        Args:
+            fps: Desired frame rate in frames per second. Range: 1–107.
+
+        Returns:
+            True on success, False on failure.
+        """
+        if self._device is None:
+            log.warning("set_fps: no device connected")
+            return False
+        try:
+            print(f"[CAM] set_fps: writing {fps} FPS to device")
+            nm = self._device.GetParameters()
+            # Must enable frame rate control before setting value
+            enable = nm.GetBoolean("AcquisitionFrameRateEnable")
+            if enable:
+                enable.SetValue(True)
+            param = nm.GetFloat("AcquisitionFrameRate")
+            if param is None:
+                print("[CAM] set_fps: AcquisitionFrameRate param is None!")
+                log.error("set_fps: AcquisitionFrameRate parameter not found on device")
+                return False
+            r = param.SetValue(float(fps))
+            if r.IsOK():
+                _, actual = param.GetValue()
+                print(f"[CAM] set_fps: OK, actual={actual:.1f} FPS")
+                log.info("Camera: AcquisitionFrameRate = %.1f FPS (max exposure now %.0f µs)",
+                         actual, 1_000_000 / max(actual, 1))
+                return True
+            print(f"[CAM] set_fps: REJECTED by camera: {r.GetCodeString()}")
+            log.error("set_fps: camera rejected %.1f FPS: %s", fps, r.GetCodeString())
+            return False
+        except Exception as e:
+            print(f"[CAM] set_fps: EXCEPTION: {e}")
+            log.error("set_fps exception: %s", e)
+            return False
+
+    def get_exposure(self) -> int:
+        """
+        Read the current ExposureTime from the device firmware.
+        Returns the ACTUAL value the camera is using (may differ from
+        what was requested if the FPS limit clamped it).
+        Returns -1 on failure.
+        """
+        if self._device is None:
+            return -1
+        try:
+            nm    = self._device.GetParameters()
+            param = nm.GetFloat("ExposureTime")
+            if param is None:
+                return -1
+            _, val = param.GetValue()
+            return int(val)
+        except Exception as e:
+            log.error("get_exposure exception: %s", e)
+            return -1
 
     def disconnect(self) -> None:
         import eBUS as eb
@@ -542,6 +701,32 @@ class CameraInterface:
             block_id  = self._frame_idx,
         )
 
+
+    def set_exposure(self, exposure_us: int) -> bool:
+        """Delegate to JAICamera.set_exposure(). No-op in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.set_exposure(exposure_us)
+        log.debug("set_exposure: mock mode — ignored")
+        return True
+
+    def set_fps(self, fps: float) -> bool:
+        """Delegate to JAICamera.set_fps(). No-op in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.set_fps(fps)
+        log.debug("set_fps: mock mode — ignored")
+        return True
+
+    def get_exposure(self) -> int:
+        """Read actual ExposureTime from firmware. Returns -1 on failure or in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.get_exposure()
+        return -1
+
+    def grab_fps(self) -> float:
+        """Actual camera acquisition FPS from grab thread. 0.0 in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.grab_fps
+        return 0.0
 
     @property
     def mode(self) -> str:

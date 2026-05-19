@@ -300,6 +300,9 @@ class MainWindow(QMainWindow):
         self._left.sig_sorter_toggled.connect(self._on_sorter_toggle)
         self._left.sig_logging_toggled.connect(self._on_logging_toggle)
         self._left.sig_speed_changed.connect(self._on_speed_changed)
+        # Camera hardware controls — forwarded to CameraWorker while streaming
+        self._left.sig_exposure_changed.connect(self._on_exposure_changed)
+        self._left.sig_fps_changed.connect(self._on_fps_changed)
 
     def _post_init(self) -> None:
         models_dir = Path(self._cfg.get("inference", {}).get("model_dir", "models/"))
@@ -343,6 +346,8 @@ class MainWindow(QMainWindow):
         )
         self._cam_w.sig_frame.connect(self._on_frame)
         self._cam_w.sig_status.connect(self._on_cam_status)
+        self._cam_w.sig_exposure_readback.connect(self._on_exposure_readback)
+        self._cam_w.sig_cam_fps.connect(self._on_cam_fps)
         self._cam_w.start()
 
         # ── Inference worker ───────────────────────────────────────
@@ -457,3 +462,55 @@ class MainWindow(QMainWindow):
                 f"({speed * 3 * 60} apple/min total)"
             )
 
+    @pyqtSlot(int)
+    def _on_exposure_changed(self, exposure_us: int) -> None:
+        """Forward exposure change to camera while streaming."""
+        running = self._cam_w is not None and self._cam_w.isRunning()
+        if running:
+            self._cam_w.set_exposure(exposure_us)
+            self.statusBar().showMessage(
+                f"Exposure set: {exposure_us:,} µs  —  "
+                f"max at current FPS: {1_000_000 // max(self._left._spn_fps.value(), 1):,} µs"
+            )
+        else:
+            self.statusBar().showMessage("Exposure: camera not connected — connect first")
+
+    @pyqtSlot(float)
+    def _on_fps_changed(self, fps: float) -> None:
+        """
+        Set camera hardware acquisition FPS. Does NOT change display render rate.
+        Firmware will silently clamp ExposureTime if current value exceeds
+        1,000,000/fps. CameraWorker reads back actual ExposureTime and emits
+        sig_exposure_readback to sync the GUI spinbox.
+        """
+        running = self._cam_w is not None and self._cam_w.isRunning()
+        if running:
+            self._cam_w.set_fps(fps)
+            max_exp = int(1_000_000 / max(fps, 1))
+            self.statusBar().showMessage(
+                f"Camera hardware FPS set: {fps:.0f} FPS  —  "
+                f"max exposure: {max_exp:,} µs  —  "
+                f"Display render stays at ~30 FPS (Qt limit for 3 channels)"
+            )
+        else:
+            self.statusBar().showMessage("Frame rate: camera not connected — connect first")
+
+    @pyqtSlot(int)
+    def _on_exposure_readback(self, actual_us: int) -> None:
+        """
+        Receives the actual ExposureTime read back from firmware after a FPS change.
+        Updates the exposure spinbox to reflect the real (possibly clamped) value.
+        This prevents the GUI from showing a value the camera isn't actually using.
+        """
+        self._left._spn_exposure.setValue(actual_us)
+        log.info("Exposure spinbox synced to firmware value: %d µs", actual_us)
+
+    @pyqtSlot(float)
+    def _on_cam_fps(self, cam_fps: float) -> None:
+        """Shows real camera FPS vs display target in status bar every second."""
+        disp = int(self._cam_w._display_fps) if self._cam_w else 0
+        self.statusBar().showMessage(
+            f"Cam: {cam_fps:.0f} FPS (sensor)   │   "
+            f"Display target: {disp} FPS (actual may be less at high FPS due to processing)   │   "
+            f"Max exposure at {cam_fps:.0f} FPS: {int(1_000_000 / max(cam_fps, 1)):,} µs"
+        )
