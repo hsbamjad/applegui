@@ -50,8 +50,20 @@ def main():
             
             for k in range(nm.GetCount()):
                 p = nm.Get(k)
-                name = p.GetName()[1]
-                p_type = p.GetInterfaceType()
+                if p is None:
+                    continue
+                try:
+                    name_res = p.GetName()
+                    name = name_res[1] if (isinstance(name_res, tuple) and len(name_res) > 1) else str(name_res)
+                except Exception:
+                    continue
+                
+                # Check type safely
+                p_type = "Unknown"
+                try:
+                    p_type = str(p.GetType())
+                except Exception:
+                    pass
                 
                 # Try to get value as string
                 val_str = "N/A"
@@ -64,14 +76,19 @@ def main():
                 f.write(f"  Type: {p_type}\n")
                 f.write(f"  Value: {val_str}\n")
                 
-                # Detailed Enum options if applicable
-                if p_type == 2:  # PvGenTypeEnum
+                # Try enum entry options list if it appears to be an enum node
+                if "enum" in p_type.lower() or p_type == "2":
                     try:
                         enum_node = nm.GetEnum(name)
-                        count = enum_node.GetEntriesCount()[1]
+                        count_res = enum_node.GetEntriesCount()
+                        count = count_res[1] if isinstance(count_res, tuple) else count_res
                         entries = []
                         for idx in range(count):
-                            entries.append(enum_node.GetEntryByIndex(idx)[1].GetName()[1])
+                            entry_res = enum_node.GetEntryByIndex(idx)
+                            entry = entry_res[1] if isinstance(entry_res, tuple) else entry_res
+                            entry_name_res = entry.GetName()
+                            entry_name = entry_name_res[1] if isinstance(entry_name_res, tuple) else entry_name_res
+                            entries.append(entry_name)
                         f.write(f"  Enum Options: {entries}\n")
                     except Exception:
                         pass
