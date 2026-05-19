@@ -572,37 +572,24 @@ class LeftControlPanel(QWidget):
             bl_rl.addWidget(spn, stretch=1)
             card.add(bl_row)
 
-        # Apply + Reset buttons
-        self._btn_apply_bl = QPushButton("✓  Apply")
-        self._btn_apply_bl.setFixedHeight(32)
+        # Apply + Reset — use same _btn_secondary style as Exposure/FPS/Gain buttons
+        self._btn_apply_bl = _btn_secondary("Apply Black Levels")
         self._btn_apply_bl.setToolTip(
             "Write Black Level values to firmware for all 3 sources."
         )
-        self._btn_apply_bl.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {ACCENT}22; color: {ACCENT};
-                border: 1px solid {ACCENT}55; font-weight: 700; border-radius: 7px;
-            }}
-            QPushButton:hover:enabled   {{ background-color: {ACCENT}44; color: #fff;
-                                           border-color: {ACCENT}99; }}
-            QPushButton:pressed:enabled {{ background-color: {ACCENT}66; }}
-            QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3};
-                                    border-color: {BORDER}; }}
-        """)
         self._btn_apply_bl.clicked.connect(self._on_apply_black_levels)
 
         self._btn_reset_bl = QPushButton("↺")
-        self._btn_reset_bl.setFixedSize(32, 32)
+        self._btn_reset_bl.setFixedSize(34, 34)
         self._btn_reset_bl.setToolTip("Reset all Black Levels to 0 DN (sensor default).")
         self._btn_reset_bl.setStyleSheet(f"""
             QPushButton {{
-                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                background-color: {BG_ELEVATED}; color: {TEXT_1};
                 border: 1px solid {BORDER}; border-radius: 7px; font-size: 14px;
             }}
-            QPushButton:hover:enabled {{ background-color: {WARNING}22; color: {WARNING};
-                                         border-color: {WARNING}55; }}
-            QPushButton:pressed:enabled {{ background-color: {WARNING}44; }}
-            QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3}; border-color: {BORDER}; }}
+            QPushButton:hover:enabled {{ background-color: {WARNING}33; color: {WARNING};
+                                         border-color: {WARNING}88; }}
+            QPushButton:pressed:enabled {{ background-color: {WARNING}55; }}
         """)
         self._btn_reset_bl.clicked.connect(self._on_reset_black_levels)
 
