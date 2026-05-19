@@ -170,3 +170,14 @@ class CameraWorker(QThread):
         if self._camera is not None:
             return self._camera.get_exposure()
         return -1
+
+    def set_gain(self, gain_db: float) -> None:
+        """
+        Forward gain change to all 3 camera sources while streaming.
+        Safe to call from GUI main thread — issues a GenICam write per source (<3ms total).
+        No effect if camera is not yet connected.
+        """
+        if self._camera is not None:
+            self._camera.set_gain(gain_db)
+        else:
+            log.warning("set_gain ignored — camera not connected")

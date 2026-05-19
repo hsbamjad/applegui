@@ -303,6 +303,7 @@ class MainWindow(QMainWindow):
         # Camera hardware controls — forwarded to CameraWorker while streaming
         self._left.sig_exposure_changed.connect(self._on_exposure_changed)
         self._left.sig_fps_changed.connect(self._on_fps_changed)
+        self._left.sig_gain_changed.connect(self._on_gain_changed)
 
     def _post_init(self) -> None:
         models_dir = Path(self._cfg.get("inference", {}).get("model_dir", "models/"))
@@ -489,11 +490,23 @@ class MainWindow(QMainWindow):
             max_exp = int(1_000_000 / max(fps, 1))
             self.statusBar().showMessage(
                 f"Camera hardware FPS set: {fps:.0f} FPS  —  "
-                f"max exposure: {max_exp:,} µs  —  "
-                f"Display render stays at ~30 FPS (Qt limit for 3 channels)"
+                f"max exposure: {max_exp:,} µs"
             )
         else:
             self.statusBar().showMessage("Frame rate: camera not connected — connect first")
+
+    @pyqtSlot(float)
+    def _on_gain_changed(self, gain_db: float) -> None:
+        """Forward gain change to all 3 camera sources while streaming."""
+        running = self._cam_w is not None and self._cam_w.isRunning()
+        if running:
+            self._cam_w.set_gain(gain_db)
+            self.statusBar().showMessage(
+                f"Gain set: {gain_db:.1f} dB on all 3 sources  —  "
+                f"({2 ** (gain_db / 6.02):.1f}× signal amplification)"
+            )
+        else:
+            self.statusBar().showMessage("Gain: camera not connected — connect first")
 
     @pyqtSlot(int)
     def _on_exposure_readback(self, actual_us: int) -> None:

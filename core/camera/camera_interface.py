@@ -423,12 +423,11 @@ class JAICamera:
 
     def set_exposure(self, exposure_us: int) -> bool:
         """
-        Set sensor exposure time in microseconds while streaming.
+        Set sensor exposure time in microseconds on ALL 3 sources while streaming.
 
-        The exposure time controls how long each sensor pixel integrates light:
-          - Short exposure  (1000–5000 µs)  → darker image, freezes fast motion
-          - Medium exposure (5000–15000 µs) → balanced for 1 apple/s conveyor
-          - Long exposure   (>15000 µs)     → brighter image, risk of motion blur
+        The JAI FS-3200T has INDEPENDENT ExposureTime per source (Color / NIR1 / NIR2).
+        This method iterates every open source and writes the value via SourceSelector
+        so that NIR channels are actually affected (previously only Source0 was written).
 
         Hardware constraint — FPS caps the maximum exposure:
           30 FPS  → max 33,333 µs   (1,000,000 / 30)
@@ -440,39 +439,48 @@ class JAICamera:
             exposure_us: Desired exposure in microseconds. Range: 100–100,000.
 
         Returns:
-            True on success, False on failure.
+            True if ALL sources accepted the value, False on any failure.
         """
         if self._device is None:
             log.warning("set_exposure: no device connected")
             return False
         try:
-            print(f"[CAM] set_exposure: writing {exposure_us} µs to device")
+            import eBUS as eb
             nm = self._device.GetParameters()
-            # Use GetEnum (not Get) for enum parameters in eBUS Python API
-            ae = nm.GetEnum("ExposureAuto")
-            if ae:
-                ae.SetValue("Off")
-            param = nm.GetFloat("ExposureTime")
-            if param is None:
-                print("[CAM] set_exposure: ExposureTime param is None!")
-                log.error("set_exposure: ExposureTime parameter not found on device")
-                return False
-            r = param.SetValue(float(exposure_us))
-            if r.IsOK():
-                # Read back actual value — camera may have clamped it
-                _, actual = param.GetValue()
-                print(f"[CAM] set_exposure: OK, actual={actual:.0f} µs")
-                if abs(actual - exposure_us) > 50:
-                    log.warning("set_exposure: requested %d µs, camera clamped to %.0f µs "
-                                "(FPS limit — reduce frame rate to allow longer exposure)",
-                                exposure_us, actual)
+            all_ok = True
+            for src in self._sources:
+                # Select source so ExposureAuto and ExposureTime target this sensor
+                stack = eb.PvGenStateStack(nm)
+                stack.SetEnumValue("SourceSelector", src._source_name)
+
+                ae = nm.GetEnum("ExposureAuto")
+                if ae:
+                    ae.SetValue("Off")
+
+                param = nm.GetFloat("ExposureTime")
+                if param is None:
+                    log.error("set_exposure: ExposureTime not found for source %s",
+                              src._source_name)
+                    all_ok = False
+                    continue
+
+                r = param.SetValue(float(exposure_us))
+                if r.IsOK():
+                    _, actual = param.GetValue()
+                    print(f"[CAM] set_exposure {src._source_name}: actual={actual:.0f} µs")
+                    if abs(actual - exposure_us) > 50:
+                        log.warning(
+                            "set_exposure %s: requested %d µs, clamped to %.0f µs",
+                            src._source_name, exposure_us, actual,
+                        )
                 else:
-                    log.info("Camera: ExposureTime = %d µs", exposure_us)
-                return True
-            print(f"[CAM] set_exposure: REJECTED by camera: {r.GetCodeString()}")
-            log.error("set_exposure: camera rejected value %d µs: %s",
-                      exposure_us, r.GetCodeString())
-            return False
+                    log.error("set_exposure %s: rejected %d µs — %s",
+                              src._source_name, exposure_us, r.GetCodeString())
+                    all_ok = False
+
+            log.info("Camera: ExposureTime = %d µs applied to %d source(s)",
+                     exposure_us, len(self._sources))
+            return all_ok
         except Exception as e:
             print(f"[CAM] set_exposure: EXCEPTION: {e}")
             log.error("set_exposure exception: %s", e)
@@ -482,12 +490,10 @@ class JAICamera:
         """
         Set acquisition frame rate while streaming.
 
-        Changing FPS has two important side-effects:
-          1. Max allowed exposure shrinks: max_exp_us = 1,000,000 / fps
-             (firmware enforces this — any existing exposure above the new limit
-              will be silently clamped by the camera)
-          2. NIR EMA gain will temporarily flicker for ~20 frames as the
-             background illumination/sensor output adjusts — this is normal.
+        Changing FPS has one important side-effect:
+          Max allowed exposure shrinks: max_exp_us = 1,000,000 / fps
+          (firmware enforces this — any existing exposure above the new limit
+           will be silently clamped by the camera).
 
         The FS-3200T supports 1–107 FPS at full 2048×1536 resolution.
         Lower FPS → more light per frame → brighter NIR. Useful in dark conditions.
@@ -548,6 +554,96 @@ class JAICamera:
         except Exception as e:
             log.error("get_exposure exception: %s", e)
             return -1
+
+    def set_gain(self, gain_db: float) -> bool:
+        """
+        Set digital gain in dB on ALL 3 sources while streaming.
+
+        Uses SourceSelector to write independently to Color, NIR1, and NIR2.
+        GainSelector is set to 'DigitalAll' (master digital gain) on each source.
+
+        Range:   0.0 dB (no gain) – 24.0 dB (max amplification)
+        Default: 0.0 dB
+
+        Higher gain amplifies the sensor signal — useful when NIR reflectance
+        is weak. Tradeoff: higher gain also amplifies noise (shot noise).
+        Practical limit for clean NIR imaging: ~12 dB.
+
+        Args:
+            gain_db: Gain in decibels. Range: 0.0–24.0.
+
+        Returns:
+            True if ALL sources accepted the value, False on any failure.
+        """
+        if self._device is None:
+            log.warning("set_gain: no device connected")
+            return False
+        try:
+            import eBUS as eb
+            nm = self._device.GetParameters()
+            all_ok = True
+            for src in self._sources:
+                stack = eb.PvGenStateStack(nm)
+                stack.SetEnumValue("SourceSelector", src._source_name)
+
+                # Disable auto gain for this source
+                ag = nm.GetEnum("GainAuto")
+                if ag:
+                    ag.SetValue("Off")
+
+                # Select master digital gain channel
+                gs = nm.GetEnum("GainSelector")
+                if gs:
+                    gs.SetValue("DigitalAll")
+
+                param = nm.GetFloat("Gain")
+                if param is None:
+                    log.error("set_gain: Gain param not found for source %s",
+                              src._source_name)
+                    all_ok = False
+                    continue
+
+                r = param.SetValue(float(gain_db))
+                if r.IsOK():
+                    _, actual = param.GetValue()
+                    print(f"[CAM] set_gain {src._source_name}: actual={actual:.1f} dB")
+                else:
+                    log.error("set_gain %s: rejected %.1f dB — %s",
+                              src._source_name, gain_db, r.GetCodeString())
+                    all_ok = False
+
+            log.info("Camera: Gain = %.1f dB applied to %d source(s)",
+                     gain_db, len(self._sources))
+            return all_ok
+        except Exception as e:
+            print(f"[CAM] set_gain: EXCEPTION: {e}")
+            log.error("set_gain exception: %s", e)
+            return False
+
+    def get_gain(self) -> float:
+        """
+        Read current Gain (dB) from the first source.
+        Returns -1.0 on failure.
+        """
+        if self._device is None:
+            return -1.0
+        try:
+            import eBUS as eb
+            nm = self._device.GetParameters()
+            if self._sources:
+                stack = eb.PvGenStateStack(nm)
+                stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
+            gs = nm.GetEnum("GainSelector")
+            if gs:
+                gs.SetValue("DigitalAll")
+            param = nm.GetFloat("Gain")
+            if param is None:
+                return -1.0
+            _, val = param.GetValue()
+            return float(val)
+        except Exception as e:
+            log.error("get_gain exception: %s", e)
+            return -1.0
 
     def disconnect(self) -> None:
         import eBUS as eb
@@ -673,11 +769,24 @@ class CameraInterface:
         log.debug("set_fps: mock mode — ignored")
         return True
 
+    def set_gain(self, gain_db: float) -> bool:
+        """Delegate to JAICamera.set_gain(). No-op in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.set_gain(gain_db)
+        log.debug("set_gain: mock mode — ignored")
+        return True
+
     def get_exposure(self) -> int:
         """Read actual ExposureTime from firmware. Returns -1 on failure or in mock mode."""
         if self._mode == "jai" and self._backend:
             return self._backend.get_exposure()
         return -1
+
+    def get_gain(self) -> float:
+        """Read actual Gain (dB) from firmware. Returns -1.0 on failure or in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.get_gain()
+        return -1.0
 
     def grab_fps(self) -> float:
         """Actual camera acquisition FPS from grab thread. 0.0 in mock mode."""
@@ -688,3 +797,4 @@ class CameraInterface:
     @property
     def mode(self) -> str:
         return self._mode
+

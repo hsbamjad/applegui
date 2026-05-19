@@ -197,6 +197,7 @@ class LeftControlPanel(QWidget):
     sig_speed_changed   = pyqtSignal(int)
     sig_exposure_changed = pyqtSignal(int)   # µs  — emitted on Apply
     sig_fps_changed      = pyqtSignal(float) # FPS — emitted on Apply
+    sig_gain_changed     = pyqtSignal(float) # dB  — emitted on Apply
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -311,6 +312,27 @@ class LeftControlPanel(QWidget):
         self._btn_apply_fps.clicked.connect(self._on_apply_fps)
         card.add(self._btn_apply_fps)
 
+        _sep(card)
+
+        # Gain spinbox + Apply button
+        self._spn_gain = _dspinbox(0.0, 24.0, 0.0, 0.5, 1)
+        self._spn_gain.setSuffix(" dB")
+        self._spn_gain.setToolTip(
+            "Digital gain applied to ALL 3 sources (Color, NIR1, NIR2).\n"
+            "0 dB  = no amplification (default, cleanest signal)\n"
+            "6 dB  = 2× signal boost\n"
+            "12 dB = 4× signal boost (recommended max for NIR)\n"
+            "24 dB = 16× — usable but noisy\n\n"
+            "Increase if NIR channels appear dark or black.\n"
+            "Click 'Apply Gain' to send to camera."
+        )
+        card.add(_field("Gain", self._spn_gain))
+
+        self._btn_apply_gain = _btn_secondary("Apply Gain")
+        self._btn_apply_gain.setToolTip("Send new gain value to all 3 camera sources")
+        self._btn_apply_gain.clicked.connect(self._on_apply_gain)
+        card.add(self._btn_apply_gain)
+
         return card
 
     # ── Camera card slots ─────────────────────────────────────────────────────
@@ -333,6 +355,10 @@ class LeftControlPanel(QWidget):
     def _on_apply_fps(self) -> None:
         """Emit FPS signal → main_window._on_fps_changed."""
         self.sig_fps_changed.emit(float(self._spn_fps.value()))
+
+    def _on_apply_gain(self) -> None:
+        """Emit gain signal → main_window._on_gain_changed."""
+        self.sig_gain_changed.emit(self._spn_gain.value())
 
     def _conveyor_card(self) -> QWidget:
         card = _Card()
