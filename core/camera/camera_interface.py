@@ -695,6 +695,59 @@ class JAICamera:
             log.error("auto_white_balance exception: %s", e)
             return False
 
+    def get_white_balance_ratios(self) -> tuple[float, float]:
+        """Read current Red and Blue BalanceRatio values from Source0."""
+        if self._device is None:
+            return 1.0, 1.0
+        try:
+            import eBUS as eb
+            nm = self._device.GetParameters()
+            if self._sources:
+                stack = eb.PvGenStateStack(nm)
+                stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
+
+            r_ratio, b_ratio = 1.0, 1.0
+            ratio_sel = nm.GetEnum("BalanceRatioSelector")
+            ratio_val = nm.GetFloat("BalanceRatio")
+            if ratio_sel and ratio_val:
+                ratio_sel.SetValue("Red")
+                _, r_ratio = ratio_val.GetValue()
+                ratio_sel.SetValue("Blue")
+                _, b_ratio = ratio_val.GetValue()
+            return r_ratio, b_ratio
+        except Exception as e:
+            log.error("get_white_balance_ratios exception: %s", e)
+            return 1.0, 1.0
+
+    def set_white_balance_ratios(self, r_ratio: float, b_ratio: float) -> bool:
+        """Manually write specific Red and Blue BalanceRatio values to Source0."""
+        if self._device is None:
+            return False
+        try:
+            import eBUS as eb
+            nm = self._device.GetParameters()
+            if self._sources:
+                stack = eb.PvGenStateStack(nm)
+                stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
+
+            param = nm.GetEnum("BalanceWhiteAuto")
+            if param:
+                param.SetValue("Off")
+
+            ratio_sel = nm.GetEnum("BalanceRatioSelector")
+            ratio_val = nm.GetFloat("BalanceRatio")
+            if ratio_sel and ratio_val:
+                ratio_sel.SetValue("Red")
+                ratio_val.SetValue(float(r_ratio))
+                ratio_sel.SetValue("Blue")
+                ratio_val.SetValue(float(b_ratio))
+                log.info("Successfully restored manual WB ratios — Red: %.2f | Blue: %.2f", r_ratio, b_ratio)
+                return True
+            return False
+        except Exception as e:
+            log.error("set_white_balance_ratios exception: %s", e)
+            return False
+
 
     # ── Gain helpers ──────────────────────────────────────────────────────────
 
@@ -1025,6 +1078,19 @@ class CameraInterface:
         if self._mode == "jai" and self._backend:
             return self._backend.auto_white_balance()
         log.debug("auto_white_balance: mock mode — simulated success")
+        return True
+
+    def get_white_balance_ratios(self) -> tuple[float, float]:
+        """Read current Red and Blue BalanceRatio values. Returns 1.0, 1.0 in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.get_white_balance_ratios()
+        return 1.0, 1.0
+
+    def set_white_balance_ratios(self, r_ratio: float, b_ratio: float) -> bool:
+        """Manually write specific Red and Blue BalanceRatio values. No-op in mock."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.set_white_balance_ratios(r_ratio, b_ratio)
+        log.debug("set_white_balance_ratios: mock mode — ignored")
         return True
 
     def grab_fps(self) -> float:

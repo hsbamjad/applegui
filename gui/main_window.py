@@ -310,6 +310,7 @@ class MainWindow(QMainWindow):
         self._left.sig_fps_changed.connect(self._on_fps_changed)
         self._left.sig_gains_changed.connect(self._on_gains_changed)
         self._left.sig_awb_triggered.connect(self._on_awb_triggered)
+        self._left.sig_revert_wb_triggered.connect(self._on_revert_wb_triggered)
 
     def _post_init(self) -> None:
         models_dir = Path(self._cfg.get("inference", {}).get("model_dir", "models/"))
@@ -570,27 +571,44 @@ class MainWindow(QMainWindow):
         running = self._cam_w is not None and self._cam_w.isRunning()
         if running:
             self._left._btn_awb.setEnabled(False)
-            self._left._btn_awb.setText("⚖  Calibrating AWB ...")
+            self._left._btn_revert_wb.setEnabled(False)
+            self._left._btn_awb.setText("⚖  Calibrating ...")
             self.statusBar().showMessage("White Balance: calibrating visible light levels on CH1 (Source0) ...")
-            # Trigger asynchronous execution in the worker thread
             from PyQt6.QtCore import QTimer
             QTimer.singleShot(10, self._cam_w.trigger_auto_white_balance)
         else:
             self.statusBar().showMessage("White Balance: camera not connected — connect first")
 
+    @pyqtSlot()
+    def _on_revert_wb_triggered(self) -> None:
+        """Triggered when user clicks the Revert WB button."""
+        running = self._cam_w is not None and self._cam_w.isRunning()
+        if running and self._cam_w._has_prev_wb:
+            self._left._btn_awb.setEnabled(False)
+            self._left._btn_revert_wb.setEnabled(False)
+            self.statusBar().showMessage("White Balance: restoring previous balance ratios ...")
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(10, self._cam_w.revert_white_balance)
+        else:
+            self.statusBar().showMessage("White Balance: no previous state saved to revert to")
+
     @pyqtSlot(bool, float, float)
     def _on_awb_completed(self, success: bool, r_ratio: float, b_ratio: float) -> None:
-        """Receives status and balance ratios when White Balance is completed."""
+        """Receives status and balance ratios when White Balance is completed or reverted."""
         self._left._btn_awb.setEnabled(True)
-        self._left._btn_awb.setText("⚖  Auto White Balance (CH1)")
+        # Enable revert button only if worker has a saved previous target
+        has_prev = self._cam_w is not None and self._cam_w._has_prev_wb
+        self._left._btn_revert_wb.setEnabled(has_prev)
+        self._left._btn_awb.setText("⚖  Auto WB")
+        
         if success:
             self.statusBar().showMessage(
-                f"White Balance calibration successful!  —  "
+                f"White Balance active  —  "
                 f"Red Ratio: {r_ratio:.2f}  │  Blue Ratio: {b_ratio:.2f}"
             )
-            log.info("Auto White Balance calibration successful! Red Ratio: %.2f, Blue Ratio: %.2f", r_ratio, b_ratio)
+            log.info("White Balance updated — Red Ratio: %.2f, Blue Ratio: %.2f", r_ratio, b_ratio)
         else:
-            self.statusBar().showMessage("White Balance: calibration failed or timed out")
-            log.warning("Auto White Balance calibration failed or timed out")
+            self.statusBar().showMessage("White Balance: operation failed or timed out")
+            log.warning("White Balance operation failed or timed out")
 
 

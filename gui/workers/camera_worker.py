@@ -63,6 +63,8 @@ class CameraWorker(QThread):
         self._display_fps = display_fps
         self._running     = False
         self._camera: CameraInterface | None = None  # set during run()
+        self._prev_wb_ratios = (1.0, 1.0)
+        self._has_prev_wb    = False
 
     def run(self) -> None:
         mode = self._config.get("mode", "mock")
@@ -221,25 +223,42 @@ class CameraWorker(QThread):
     def trigger_auto_white_balance(self) -> None:
         """
         Trigger One-Push Auto White Balance on the background camera interface.
-        Emits sig_awb_completed upon firmware completion.
+        Saves current ratios to revert targets first, then runs calibration and emits sig_awb_completed.
         """
         if self._camera is not None:
+            # 1. Read and store current ratios as the revert target before calibration
+            try:
+                r, b = self._camera.get_white_balance_ratios()
+                self._prev_wb_ratios = (r, b)
+                self._has_prev_wb    = True
+            except Exception as e:
+                log.error("Failed to read pre-AWB ratios: %s", e)
+
+            # 2. Execute AWB calibration
             success = self._camera.auto_white_balance()
+
+            # 3. Read back new ratios
             r_ratio, b_ratio = 1.0, 1.0
-            if success and self._camera.mode == "jai" and self._camera._backend:
+            if success:
                 try:
-                    nm = self._camera._backend._device.GetParameters()
-                    ratio_sel = nm.GetEnum("BalanceRatioSelector")
-                    ratio_val = nm.GetFloat("BalanceRatio")
-                    if ratio_sel and ratio_val:
-                        ratio_sel.SetValue("Red")
-                        _, r_ratio = ratio_val.GetValue()
-                        ratio_sel.SetValue("Blue")
-                        _, b_ratio = ratio_val.GetValue()
+                    r_ratio, b_ratio = self._camera.get_white_balance_ratios()
                 except Exception:
                     pass
             self.sig_awb_completed.emit(success, r_ratio, b_ratio)
         else:
             log.warning("trigger_auto_white_balance ignored — camera not connected")
+            self.sig_awb_completed.emit(False, -1.0, -1.0)
+
+    def revert_white_balance(self) -> None:
+        """
+        Reverts the camera's white balance ratios back to the saved pre-calibration state.
+        Emits sig_awb_completed upon completion.
+        """
+        if self._camera is not None and self._has_prev_wb:
+            r, b = self._prev_wb_ratios
+            success = self._camera.set_white_balance_ratios(r, b)
+            self.sig_awb_completed.emit(success, r, b)
+        else:
+            log.warning("revert_white_balance: no revert target available or camera not connected")
             self.sig_awb_completed.emit(False, -1.0, -1.0)
 
