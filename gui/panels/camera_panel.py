@@ -328,36 +328,32 @@ class LeftControlPanel(QWidget):
         )
         card.add(_field("Gain", self._spn_gain))
 
-        # Apply + Reset row side by side
-        gain_btn_row = QWidget()
-        gain_btn_row.setStyleSheet("background: transparent; border: none;")
-        gain_btn_hl = QHBoxLayout(gain_btn_row)
-        gain_btn_hl.setContentsMargins(0, 0, 0, 0)
-        gain_btn_hl.setSpacing(6)
-
+        # Apply Gain + Reset — side-by-side using add_layout (avoids QWidget clipping)
         self._btn_apply_gain = _btn_secondary("Apply Gain")
         self._btn_apply_gain.setToolTip("Send new gain value to all 3 camera sources")
         self._btn_apply_gain.clicked.connect(self._on_apply_gain)
 
-        self._btn_reset_gain = QPushButton("Reset")
+        self._btn_reset_gain = QPushButton("↺  Reset")
         self._btn_reset_gain.setFixedHeight(34)
-        self._btn_reset_gain.setFixedWidth(54)
-        self._btn_reset_gain.setToolTip("Reset gain to 0 dB (no amplification)")
+        self._btn_reset_gain.setToolTip("Reset gain to hardware minimum (1 dB)")
         self._btn_reset_gain.setStyleSheet(f"""
             QPushButton {{
                 background-color: {BG_ELEVATED}; color: {TEXT_2};
                 border: 1px solid {BORDER}; font-weight: 600; font-size: 11px;
-                border-radius: 7px;
+                border-radius: 7px; padding: 0 10px;
             }}
             QPushButton:hover   {{ background-color: {WARNING}22; color: {WARNING};
-                                   border-color: {WARNING}; }}
+                                   border-color: {WARNING}55; }}
             QPushButton:pressed {{ background-color: {WARNING}44; }}
         """)
         self._btn_reset_gain.clicked.connect(self._on_reset_gain)
 
+        gain_btn_hl = QHBoxLayout()
+        gain_btn_hl.setContentsMargins(0, 0, 0, 0)
+        gain_btn_hl.setSpacing(6)
         gain_btn_hl.addWidget(self._btn_apply_gain, stretch=1)
         gain_btn_hl.addWidget(self._btn_reset_gain)
-        card.add(gain_btn_row)
+        card.add_layout(gain_btn_hl)
 
 
         return card
