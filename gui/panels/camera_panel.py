@@ -351,14 +351,14 @@ class LeftControlPanel(QWidget):
         ]
         self._spn_gains: list[QDoubleSpinBox] = []
         for ch_label, ch_color in ch_meta:
-            spn = _dspinbox(1.0, 24.0, 1.0, 0.5, 1)
+            spn = _dspinbox(1.0, 16.0, 1.0, 0.5, 1)
             spn.setSuffix(" dB")
             spn.setToolTip(
                 f"Gain for {ch_label} only.\n"
                 "1 dB  = hardware minimum (camera floor)\n"
                 "6 dB  = ~2× signal boost\n"
-                "12 dB = ~4× boost (recommended max for NIR)\n"
-                "24 dB = ~16× — noisy at this level"
+                "12 dB = ~4× boost (recommended max for clean NIR)\n"
+                "16 dB = hardware maximum (camera ceiling)"
             )
             # Colored label row
             row = QWidget()
