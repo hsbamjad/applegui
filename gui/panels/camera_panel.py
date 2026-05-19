@@ -552,7 +552,7 @@ class LeftControlPanel(QWidget):
             )
 
             spn = QDoubleSpinBox()
-            spn.setRange(0.0, 255.0)   # GenICam BlackLevel range; firmware clamps
+            spn.setRange(0.0, 64.0)    # JAI FS-3200T: practical dark pedestal range 0–64 DN
             spn.setDecimals(1)
             spn.setSingleStep(1.0)
             spn.setValue(0.0)
