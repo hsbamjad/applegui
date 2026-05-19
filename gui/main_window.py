@@ -470,15 +470,14 @@ class MainWindow(QMainWindow):
                 f"({speed * 3 * 60} apple/min total)"
             )
 
-    @pyqtSlot(int)
-    def _on_exposure_changed(self, exposure_us: int) -> None:
-        """Forward exposure change to camera while streaming."""
+    @pyqtSlot(int, int, int)
+    def _on_exposure_changed(self, ch1_us: int, ch2_us: int, ch3_us: int) -> None:
+        """Forward independent per-channel exposure changes to camera while streaming."""
         running = self._cam_w is not None and self._cam_w.isRunning()
         if running:
-            self._cam_w.set_exposure(exposure_us)
+            self._cam_w.set_exposures(ch1_us, ch2_us, ch3_us)
             self.statusBar().showMessage(
-                f"Exposure set: {exposure_us:,} µs  —  "
-                f"max at current FPS: {1_000_000 // max(self._left._spn_fps.value(), 1):,} µs"
+                f"Exposure: applying CH1={ch1_us:,} CH2={ch2_us:,} CH3={ch3_us:,} µs…"
             )
         else:
             self.statusBar().showMessage("Exposure: camera not connected — connect first")
@@ -527,15 +526,18 @@ class MainWindow(QMainWindow):
         )
         log.info("Gain readback — CH1=%.1f CH2=%.1f CH3=%.1f dB", ch1, ch2, ch3)
 
-    @pyqtSlot(int)
-    def _on_exposure_readback(self, actual_us: int) -> None:
+    @pyqtSlot(int, int, int)
+    def _on_exposure_readback(self, ch1: int, ch2: int, ch3: int) -> None:
         """
-        Receives the actual ExposureTime read back from firmware after a FPS change.
-        Updates the exposure spinbox to reflect the real (possibly clamped) value.
-        This prevents the GUI from showing a value the camera isn't actually using.
+        Receives the actual ExposureTimes read back from firmware after an Apply or FPS change.
+        Updates all 3 exposure spinboxes to reflect the real (possibly clamped) values.
         """
-        self._left._spn_exposure.setValue(actual_us)
-        log.info("Exposure spinbox synced to firmware value: %d µs", actual_us)
+        self._left.update_exposures(ch1, ch2, ch3)
+        self.statusBar().showMessage(
+            f"Exposure confirmed —  "
+            f"CH1: {ch1:,} µs  |  CH2: {ch2:,} µs  |  CH3: {ch3:,} µs"
+        )
+        log.info("Exposure readback — CH1=%d CH2=%d CH3=%d µs", ch1, ch2, ch3)
 
     @pyqtSlot(float)
     def _on_cam_fps(self, cam_fps: float) -> None:

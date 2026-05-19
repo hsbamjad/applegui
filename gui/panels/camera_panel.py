@@ -195,7 +195,7 @@ class LeftControlPanel(QWidget):
     sig_sorter_toggled  = pyqtSignal(bool)
     sig_logging_toggled = pyqtSignal(bool)
     sig_speed_changed   = pyqtSignal(int)
-    sig_exposure_changed = pyqtSignal(int)            # µs  — emitted on Apply
+    sig_exposure_changed = pyqtSignal(int, int, int)  # CH1/CH2/CH3 µs — emitted on Apply
     sig_fps_changed      = pyqtSignal(float)           # FPS — emitted on Apply
     sig_gains_changed    = pyqtSignal(float, float, float)  # CH1/CH2/CH3 dB — emitted on Apply All
 
@@ -273,28 +273,51 @@ class LeftControlPanel(QWidget):
 
         _sep(card)
 
-        # Exposure spinbox + Apply button
-        self._spn_exposure = _spinbox(100, 100_000, 5_000, 500)
-        self._spn_exposure.setSuffix(" µs")
-        self._spn_exposure.setToolTip(
-            "Sensor exposure time in microseconds.\n"
-            "Short (1000–5000 µs)   → dark but sharp on fast conveyor\n"
-            "Medium (5000–15000 µs) → balanced for 1 apple/s\n"
-            "Long  (>15000 µs)      → brighter but risk of motion blur\n\n"
-            "Maximum is capped by FPS:  max = 1,000,000 / FPS\n"
-            "Click 'Apply Exposure' to send to camera."
-        )
-        card.add(_field("Exposure", self._spn_exposure))
+        # ── Per-channel Exposure (CH1 Color / CH2 NIR1 / CH3 NIR2) ───────────
+        # Each source has independent exposure control.
+        ch_meta = [
+            ("CH1 Color", "#f59e0b"),  # amber
+            ("CH2 NIR1",  "#22d3ee"),  # cyan
+            ("CH3 NIR2",  "#a78bfa"),  # violet
+        ]
+        self._spn_exposures: list[QSpinBox] = []
+        for ch_label, ch_color in ch_meta:
+            spn = _spinbox(100, 100_000, 5_000, 500)
+            spn.setSuffix(" µs")
+            spn.setToolTip(
+                f"Exposure time for {ch_label} only.\n"
+                "Short (1000–5000 µs)   → dark but sharp on fast conveyor\n"
+                "Medium (5000–15000 µs) → balanced for 1 apple/s\n"
+                "Long  (>15000 µs)      → brighter but risk of motion blur\n\n"
+                "Maximum is capped by FPS:  max = 1,000,000 / FPS"
+            )
+            # Colored label row
+            row = QWidget()
+            row.setStyleSheet("background: transparent; border: none;")
+            hl = QHBoxLayout(row)
+            hl.setContentsMargins(0, 2, 0, 2)
+            hl.setSpacing(6)
+            lbl = QLabel(f"● {ch_label}")
+            lbl.setFixedWidth(LABEL_W)
+            lbl.setStyleSheet(
+                f"color: {ch_color}; font-size: 11px; font-weight: 700;"
+                " background: transparent;"
+            )
+            spn.setMinimumWidth(WIDGET_MIN_W)
+            hl.addWidget(lbl)
+            hl.addWidget(spn, stretch=1)
+            card.add(row)
+            self._spn_exposures.append(spn)
 
-        # Apply Exposure + Reset side-by-side
-        self._btn_apply_exposure = _btn_secondary("Apply Exposure")
-        self._btn_apply_exposure.setToolTip("Send new exposure value to all 3 camera sources")
+        # Apply All Exposures + Reset side-by-side
+        self._btn_apply_exposure = _btn_secondary("Apply Exposures")
+        self._btn_apply_exposure.setToolTip("Send CH1/CH2/CH3 exposure values to camera independently")
         self._btn_apply_exposure.clicked.connect(self._on_apply_exposure)
 
         self._btn_reset_exposure = QPushButton("↺  Reset")
         self._btn_reset_exposure.setFixedHeight(34)
         self._btn_reset_exposure.setToolTip(
-            "Reset exposure to 5,000 µs (safe default for conveyor imaging)"
+            "Reset all 3 exposure times to 5,000 µs (safe conveyor default)"
         )
         self._btn_reset_exposure.setStyleSheet(f"""
             QPushButton {{
@@ -418,18 +441,36 @@ class LeftControlPanel(QWidget):
         User sees correct range before clicking Apply.
         """
         max_exp = min(100_000, int(1_000_000 / max(fps, 1)))
-        self._spn_exposure.setMaximum(max_exp)
-        if self._spn_exposure.value() > max_exp:
-            self._spn_exposure.setValue(max_exp)
+        for spn in self._spn_exposures:
+            spn.setMaximum(max_exp)
+            if spn.value() > max_exp:
+                spn.setValue(max_exp)
 
     def _on_apply_exposure(self) -> None:
-        """Emit exposure signal → main_window._on_exposure_changed."""
-        self.sig_exposure_changed.emit(self._spn_exposure.value())
+        """Emit per-channel exposures → main_window._on_exposure_changed."""
+        self.sig_exposure_changed.emit(
+            self._spn_exposures[0].value(),
+            self._spn_exposures[1].value(),
+            self._spn_exposures[2].value(),
+        )
 
     def _on_reset_exposure(self) -> None:
-        """Reset exposure to 5,000 µs (safe conveyor default) and immediately apply."""
-        self._spn_exposure.setValue(5_000)
-        self.sig_exposure_changed.emit(5_000)
+        """Reset all 3 exposure times to 5,000 µs (safe conveyor default) and immediately apply."""
+        for spn in self._spn_exposures:
+            spn.setValue(5_000)
+        self._on_apply_exposure()
+
+    def update_exposures(self, ch1: int, ch2: int, ch3: int) -> None:
+        """Sync exposure spinboxes with actual firmware values (invoked on readback)."""
+        for spn in self._spn_exposures:
+            spn.blockSignals(True)
+        if len(self._spn_exposures) >= 3:
+            if ch1 >= 0: self._spn_exposures[0].setValue(ch1)
+            if ch2 >= 0: self._spn_exposures[1].setValue(ch2)
+            if ch3 >= 0: self._spn_exposures[2].setValue(ch3)
+        for spn in self._spn_exposures:
+            spn.blockSignals(False)
+
 
     def _on_apply_fps(self) -> None:
         """Emit FPS signal → main_window._on_fps_changed."""

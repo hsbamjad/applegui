@@ -50,7 +50,7 @@ class CameraWorker(QThread):
 
     sig_frame             = pyqtSignal(object, object, object, float)  # ch1, ch2, ch3, display_fps
     sig_status            = pyqtSignal(str, bool)                       # message, is_error
-    sig_exposure_readback = pyqtSignal(int)          # actual exposure µs read back from firmware
+    sig_exposure_readback = pyqtSignal(int, int, int) # actual CH1/CH2/CH3 exposures in µs
     sig_gains_readback    = pyqtSignal(float, float, float)  # actual CH1/CH2/CH3 gains in dB
     sig_cam_fps           = pyqtSignal(float)         # actual camera acquisition FPS (grab thread)
     sig_block_ids         = pyqtSignal(bool, int, int, int) # synced (bool), ch1_bid, ch2_bid, ch3_bid
@@ -140,42 +140,49 @@ class CameraWorker(QThread):
 
     def set_exposure(self, exposure_us: int) -> None:
         """
-        Forward exposure change to all 3 camera sources while streaming.
+        Forward global/reset exposure change to all 3 camera sources.
         Reads back the actual value accepted by firmware and emits sig_exposure_readback
-        so the GUI spinbox always shows truth (camera may clamp due to FPS limit).
+        for all 3 channels.
         """
         if self._camera is not None:
-            self._camera.set_exposure(exposure_us)
-            # Read back actual value — camera may have clamped due to FPS constraint
-            actual = self._camera.get_exposure()
+            actual = self._camera.set_exposure(exposure_us)
             if actual > 0:
-                self.sig_exposure_readback.emit(actual)
+                self.sig_exposure_readback.emit(actual, actual, actual)
         else:
             log.warning("set_exposure ignored — camera not connected")
 
+    def set_exposures(self, ch1_us: int, ch2_us: int, ch3_us: int) -> None:
+        """
+        Set independent exposure times per channel while streaming.
+        ch1_us → Source0 (Color), ch2_us → Source1 (NIR1), ch3_us → Source2 (NIR2).
+        Reads back the actual values accepted by firmware and emits sig_exposure_readback.
+        """
+        if self._camera is not None:
+            actuals = self._camera.set_exposures_per_source([ch1_us, ch2_us, ch3_us])
+            while len(actuals) < 3:
+                actuals.append(actuals[-1] if actuals else ch1_us)
+            self.sig_exposure_readback.emit(actuals[0], actuals[1], actuals[2])
+        else:
+            log.warning("set_exposures ignored — camera not connected")
 
     def set_fps(self, fps: float) -> None:
         """
         Set camera hardware FPS AND update display emit rate to match.
-
         Camera FPS  = sensor acquisition speed (firmware)
         Display FPS = how fast sig_frame is emitted to the GUI
-
-        The status bar shows real camera FPS; channel headers show actual display FPS.
         """
         self._display_fps = fps   # display tries to match camera; caps at machine limit
         if self._camera is not None:
             self._camera.set_fps(fps)
-            log.info("CameraWorker: hardware=%.0f FPS, display target=%.0f FPS",
-                     fps, fps)
-            # Read back actual exposure — firmware may have clamped it at new FPS
-            actual_exp = self._camera.get_exposure()
-            if actual_exp > 0:
-                self.sig_exposure_readback.emit(actual_exp)
+            log.info("CameraWorker: hardware=%.0f FPS, display target=%.0f FPS", fps, fps)
+            # Read back independent exposures — firmware may have clamped them at new FPS
+            actuals = self._camera.get_exposures_per_source()
+            if actuals and len(actuals) >= 1:
+                while len(actuals) < 3:
+                    actuals.append(actuals[-1])
+                self.sig_exposure_readback.emit(actuals[0], actuals[1], actuals[2])
         else:
             log.warning("set_fps ignored — camera not connected")
-
-
 
     def get_exposure(self) -> int:
         """Read current ExposureTime from firmware. Returns -1 if not connected."""

@@ -428,111 +428,162 @@ class JAICamera:
 
     # ── Live camera controls ──────────────────────────────────────────────────
 
-    def set_exposure(self, exposure_us: int) -> bool:
-        """
-        Set sensor exposure time in microseconds on ALL 3 sources while streaming.
-
-        The JAI FS-3200T has INDEPENDENT ExposureTime per source (Color / NIR1 / NIR2).
-        This method iterates every open source and writes the value via SourceSelector
-        so that NIR channels are actually affected (previously only Source0 was written).
-
-        Hardware constraint — FPS caps the maximum exposure:
-          30 FPS  → max 33,333 µs   (1,000,000 / 30)
-          60 FPS  → max 16,666 µs
-          107 FPS → max  9,345 µs
-        The camera firmware enforces this automatically; we log if value is clamped.
-
-        Args:
-            exposure_us: Desired exposure in microseconds. Range: 100–100,000.
-
-        Returns:
-            True if ALL sources accepted the value, False on any failure.
-        """
-        if self._device is None:
-            log.warning("set_exposure: no device connected")
-            return False
-        try:
-            current_us = self.get_exposure()
-            # If we couldn't read current exposure, write directly without ramping
-            if current_us <= 0:
-                return self._set_exposure_direct(exposure_us)
-
-            # Ramping settings
-            max_step = 4000  # µs per step
-            delay_s  = 0.03  # 30ms sleep (approx 1 frame time at 30 FPS)
-
-            diff = exposure_us - current_us
-            if abs(diff) <= max_step:
-                return self._set_exposure_direct(exposure_us)
-
-            # Calculate steps
-            steps = []
-            curr = current_us
-            if diff > 0:
-                while curr < exposure_us:
-                    curr = min(curr + max_step, exposure_us)
-                    steps.append(curr)
-            else:
-                while curr > exposure_us:
-                    curr = max(curr - max_step, exposure_us)
-                    steps.append(curr)
-
-            print(f"[CAM] set_exposure ramping: starting from {current_us} µs to {exposure_us} µs in {len(steps)} steps")
-            all_ok = True
-            for step_val in steps:
-                ok = self._set_exposure_direct(step_val)
-                if not ok:
-                    all_ok = False
-                time.sleep(delay_s)
-
-            return all_ok
-        except Exception as e:
-            log.error("set_exposure wrapper exception: %s", e)
-            return False
-
-    def _set_exposure_direct(self, exposure_us: int) -> bool:
-        """Helper to write exposure time directly to camera sources without ramping."""
+    def _write_exposure_direct_to_source(self, src, value_us: int) -> int:
+        """Helper to write exposure time directly to one specific source."""
         try:
             import eBUS as eb
             nm = self._device.GetParameters()
-            all_ok = True
+            stack = eb.PvGenStateStack(nm)
+            stack.SetEnumValue("SourceSelector", src._source_name)
+
+            ae = nm.GetEnum("ExposureAuto")
+            if ae:
+                ae.SetValue("Off")
+
+            param = nm.GetFloat("ExposureTime")
+            if param is None:
+                return -1
+
+            r = param.SetValue(float(value_us))
+            if r.IsOK():
+                _, actual = param.GetValue()
+                return int(actual)
+            return -1
+        except Exception:
+            return -1
+
+    def _apply_exposure_loop(self, target_exposures: list[int]) -> list[int]:
+        """
+        Ramps target exposures simultaneously and incrementally on all open sources.
+        Pads shorter ramping paths to complete in unison, preventing sync loss.
+        """
+        currents = self.get_exposures_per_source()
+        if not currents or len(currents) < len(self._sources):
+            currents = [5000] * len(self._sources)
+
+        max_step = 4000  # µs step size ceiling
+        delay_s  = 0.03  # ~1 frame period at 30 FPS
+
+        steps_list = []
+        for i, src in enumerate(self._sources):
+            tgt = target_exposures[i] if i < len(target_exposures) else target_exposures[0]
+            curr = currents[i]
+
+            ch_steps = []
+            diff = tgt - curr
+            if abs(diff) <= max_step:
+                ch_steps = [tgt]
+            else:
+                c = curr
+                if diff > 0:
+                    while c < tgt:
+                        c = min(c + max_step, tgt)
+                        ch_steps.append(c)
+                else:
+                    while c > tgt:
+                        c = max(c - max_step, tgt)
+                        ch_steps.append(c)
+            steps_list.append(ch_steps)
+
+        max_steps_len = max(len(s) for s in steps_list)
+
+        # Pad shorter sequences at the start so all ramps conclude at the same time
+        for s in steps_list:
+            while len(s) < max_steps_len:
+                s.insert(0, s[0])
+
+        # Execute synchronized steps
+        actuals = [-1] * len(self._sources)
+        for step_idx in range(max_steps_len):
+            for i, src in enumerate(self._sources):
+                val = steps_list[i][step_idx]
+                act = self._write_exposure_direct_to_source(src, val)
+                if step_idx == max_steps_len - 1:
+                    actuals[i] = act
+            if step_idx < max_steps_len - 1:
+                time.sleep(delay_s)
+
+        return actuals
+
+    def set_exposure(self, exposure_us: int) -> int:
+        """
+        Set same exposure on ALL 3 sources. Returns actual readback from Source0.
+        Used for global exposure controls and Reset.
+        """
+        if self._device is None:
+            log.warning("set_exposure: no device connected")
+            return exposure_us
+        try:
+            actuals = self._apply_exposure_loop([exposure_us] * len(self._sources))
+            readback = actuals[0] if actuals else exposure_us
+            log.info("Camera: ExposureTime = %d µs (all), readback = %d µs", exposure_us, readback)
+            return readback
+        except Exception as e:
+            log.error("set_exposure exception: %s", e)
+            return exposure_us
+
+    def set_exposures_per_source(self, exposures: list[int]) -> list[int]:
+        """
+        Set independent exposures per source while streaming.
+        exposures[0] → Source0 (Color / CH1)
+        exposures[1] → Source1 (NIR1  / CH2)
+        exposures[2] → Source2 (NIR2  / CH3)
+        Returns list of actual readback values from firmware.
+        """
+        if self._device is None:
+            log.warning("set_exposures_per_source: no device connected")
+            return exposures
+        try:
+            actuals = self._apply_exposure_loop(exposures)
+            log.info("Camera: Per-source exposure req=%s actual=%s", exposures, actuals)
+            return actuals
+        except Exception as e:
+            log.error("set_exposures_per_source exception: %s", e)
+            return exposures
+
+    def get_exposure(self) -> int:
+        """Read actual ExposureTime from Source0. Returns -1 on failure."""
+        if self._device is None:
+            return -1
+        try:
+            import eBUS as eb
+            nm = self._device.GetParameters()
+            if self._sources:
+                stack = eb.PvGenStateStack(nm)
+                stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
+            param = nm.GetFloat("ExposureTime")
+            if param:
+                _, val = param.GetValue()
+                return int(val)
+            return -1
+        except Exception as e:
+            log.error("get_exposure exception: %s", e)
+            return -1
+
+    def get_exposures_per_source(self) -> list[int]:
+        """
+        Read current ExposureTime (µs) from ALL sources independently.
+        Returns list of microsecond values (one per source), or [] on failure.
+        """
+        if self._device is None:
+            return []
+        try:
+            import eBUS as eb
+            nm = self._device.GetParameters()
+            exposures = []
             for src in self._sources:
                 stack = eb.PvGenStateStack(nm)
                 stack.SetEnumValue("SourceSelector", src._source_name)
-
-                ae = nm.GetEnum("ExposureAuto")
-                if ae:
-                    ae.SetValue("Off")
-
                 param = nm.GetFloat("ExposureTime")
-                if param is None:
-                    log.error("set_exposure: ExposureTime not found for source %s",
-                              src._source_name)
-                    all_ok = False
-                    continue
-
-                r = param.SetValue(float(exposure_us))
-                if r.IsOK():
-                    _, actual = param.GetValue()
-                    print(f"[CAM] _set_exposure_direct {src._source_name}: actual={actual:.0f} µs")
-                    if abs(actual - exposure_us) > 50:
-                        log.warning(
-                            "set_exposure %s: requested %d µs, clamped to %.0f µs",
-                            src._source_name, exposure_us, actual,
-                        )
+                if param:
+                    _, val = param.GetValue()
+                    exposures.append(int(val))
                 else:
-                    log.error("set_exposure %s: rejected %d µs — %s",
-                              src._source_name, exposure_us, r.GetCodeString())
-                    all_ok = False
-
-            log.info("Camera: ExposureTime = %d µs applied direct to %d source(s)",
-                     exposure_us, len(self._sources))
-            return all_ok
+                    exposures.append(-1)
+            return exposures
         except Exception as e:
-            print(f"[CAM] _set_exposure_direct: EXCEPTION: {e}")
-            log.error("_set_exposure_direct exception: %s", e)
-            return False
-
+            log.error("get_exposures_per_source exception: %s", e)
+            return []
 
     def set_fps(self, fps: float) -> bool:
         """
@@ -583,15 +634,6 @@ class JAICamera:
             log.error("set_fps exception: %s", e)
             return False
 
-    def get_exposure(self) -> int:
-        """
-        Read the actual ExposureTime from Source0 (color channel).
-        Uses SourceSelector to ensure a consistent read regardless of what the
-        last set_exposure() loop left the selector pointing to.
-        Returns -1 on failure.
-        """
-        if self._device is None:
-            return -1
         try:
             import eBUS as eb
             nm = self._device.GetParameters()
@@ -879,12 +921,19 @@ class CameraInterface:
         )
 
 
-    def set_exposure(self, exposure_us: int) -> bool:
+    def set_exposure(self, exposure_us: int) -> int:
         """Delegate to JAICamera.set_exposure(). No-op in mock mode."""
         if self._mode == "jai" and self._backend:
             return self._backend.set_exposure(exposure_us)
         log.debug("set_exposure: mock mode — ignored")
-        return True
+        return exposure_us
+
+    def set_exposures_per_source(self, exposures: list[int]) -> list[int]:
+        """Delegate to JAICamera.set_exposures_per_source(). No-op in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.set_exposures_per_source(exposures)
+        log.debug("set_exposures_per_source: mock mode — ignored")
+        return exposures
 
     def set_fps(self, fps: float) -> bool:
         """Delegate to JAICamera.set_fps(). No-op in mock mode."""
@@ -912,6 +961,12 @@ class CameraInterface:
         if self._mode == "jai" and self._backend:
             return self._backend.get_exposure()
         return -1
+
+    def get_exposures_per_source(self) -> list[int]:
+        """Read ExposureTime from all 3 sources independently. Returns [] on failure or in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.get_exposures_per_source()
+        return []
 
     def get_gains_per_source(self) -> list[float]:
         """Read Gain (dB) from all 3 sources. Returns [] on failure or in mock mode."""
