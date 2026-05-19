@@ -194,6 +194,7 @@ class JAICamera:
         self._nir_ema_min  = [0.0, 0.0]
         self._nir_ema_max  = [64.0, 64.0]
         self._EMA_ALPHA    = 0.05
+        self._nir_ema_reset_pending = False   # set True to force re-adaptation
         # Camera-side FPS tracking (grab thread measures actual acquisition rate)
         self._grab_fps      = 0.0
         self._grab_count    = 0
@@ -408,9 +409,15 @@ class JAICamera:
             cur_max: float,
             ch_idx: int,
         ) -> np.ndarray:
-            if self._frame_idx == 0:
+            # Reset EMA state when exposure changed manually.
+            # Without this, EMA absorbs the brightness shift silently and NIR
+            # channels look unchanged on screen even though raw values have moved.
+            if self._frame_idx == 0 or self._nir_ema_reset_pending:
                 self._nir_ema_min[ch_idx] = cur_min
                 self._nir_ema_max[ch_idx] = cur_max
+                if ch_idx == 1:                       # clear flag after both channels reset
+                    self._nir_ema_reset_pending = False
+                    log.info("NIR EMA reset — re-adapting to new exposure level")
             else:
                 self._nir_ema_min[ch_idx] = (
                     (1 - self._EMA_ALPHA) * self._nir_ema_min[ch_idx]
@@ -500,6 +507,10 @@ class JAICamera:
                                 exposure_us, actual)
                 else:
                     log.info("Camera: ExposureTime = %d µs", exposure_us)
+                # Reset NIR EMA so the new brightness level is visible on display.
+                # Without this, EMA silently absorbs the brightness change and NIR
+                # channels look unchanged even though raw values have shifted.
+                self._nir_ema_reset_pending = True
                 return True
             print(f"[CAM] set_exposure: REJECTED by camera: {r.GetCodeString()}")
             log.error("set_exposure: camera rejected value %d µs: %s",
