@@ -445,11 +445,51 @@ class JAICamera:
             log.warning("set_exposure: no device connected")
             return False
         try:
+            current_us = self.get_exposure()
+            # If we couldn't read current exposure, write directly without ramping
+            if current_us <= 0:
+                return self._set_exposure_direct(exposure_us)
+
+            # Ramping settings
+            max_step = 4000  # µs per step
+            delay_s  = 0.03  # 30ms sleep (approx 1 frame time at 30 FPS)
+
+            diff = exposure_us - current_us
+            if abs(diff) <= max_step:
+                return self._set_exposure_direct(exposure_us)
+
+            # Calculate steps
+            steps = []
+            curr = current_us
+            if diff > 0:
+                while curr < exposure_us:
+                    curr = min(curr + max_step, exposure_us)
+                    steps.append(curr)
+            else:
+                while curr > exposure_us:
+                    curr = max(curr - max_step, exposure_us)
+                    steps.append(curr)
+
+            print(f"[CAM] set_exposure ramping: starting from {current_us} µs to {exposure_us} µs in {len(steps)} steps")
+            all_ok = True
+            for step_val in steps:
+                ok = self._set_exposure_direct(step_val)
+                if not ok:
+                    all_ok = False
+                time.sleep(delay_s)
+
+            return all_ok
+        except Exception as e:
+            log.error("set_exposure wrapper exception: %s", e)
+            return False
+
+    def _set_exposure_direct(self, exposure_us: int) -> bool:
+        """Helper to write exposure time directly to camera sources without ramping."""
+        try:
             import eBUS as eb
             nm = self._device.GetParameters()
             all_ok = True
             for src in self._sources:
-                # Select source so ExposureAuto and ExposureTime target this sensor
                 stack = eb.PvGenStateStack(nm)
                 stack.SetEnumValue("SourceSelector", src._source_name)
 
@@ -467,7 +507,7 @@ class JAICamera:
                 r = param.SetValue(float(exposure_us))
                 if r.IsOK():
                     _, actual = param.GetValue()
-                    print(f"[CAM] set_exposure {src._source_name}: actual={actual:.0f} µs")
+                    print(f"[CAM] _set_exposure_direct {src._source_name}: actual={actual:.0f} µs")
                     if abs(actual - exposure_us) > 50:
                         log.warning(
                             "set_exposure %s: requested %d µs, clamped to %.0f µs",
@@ -478,13 +518,14 @@ class JAICamera:
                               src._source_name, exposure_us, r.GetCodeString())
                     all_ok = False
 
-            log.info("Camera: ExposureTime = %d µs applied to %d source(s)",
+            log.info("Camera: ExposureTime = %d µs applied direct to %d source(s)",
                      exposure_us, len(self._sources))
             return all_ok
         except Exception as e:
-            print(f"[CAM] set_exposure: EXCEPTION: {e}")
-            log.error("set_exposure exception: %s", e)
+            print(f"[CAM] _set_exposure_direct: EXCEPTION: {e}")
+            log.error("_set_exposure_direct exception: %s", e)
             return False
+
 
     def set_fps(self, fps: float) -> bool:
         """
