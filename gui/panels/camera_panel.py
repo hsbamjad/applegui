@@ -368,7 +368,7 @@ class LeftControlPanel(QWidget):
             QPushButton:hover:enabled   {{ background-color: {WARNING}22; color: {WARNING};
                                            border-color: {WARNING}55; }}
             QPushButton:pressed:enabled {{ background-color: {WARNING}44; }}
-            QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_MUTE}; border-color: {BORDER}; }}
+            QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3}; border-color: {BORDER}; }}
         """)
         self._btn_revert_wb.clicked.connect(self.sig_revert_wb_triggered.emit)
 
