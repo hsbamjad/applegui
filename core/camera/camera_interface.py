@@ -850,8 +850,27 @@ class JAICamera:
 
             wb_names = self._get_wb_selector_names(nm)
             if not wb_names:
-                log.warning("get_white_balance_ratios: no R/G/B GainSelector entries found on %s",
-                            self._sources[0]._source_name)
+                # Log all available GainSelector entries to help diagnose firmware naming
+                gs_probe = nm.GetEnum("GainSelector")
+                if gs_probe:
+                    try:
+                        _, cnt = gs_probe.GetEntriesCount()
+                        all_names = []
+                        for i in range(cnt):
+                            _, e = gs_probe.GetEntryByIndex(i)
+                            if e:
+                                _, n = e.GetName()
+                                all_names.append(n)
+                        log.warning(
+                            "get_white_balance_ratios: no R/G/B entries found. "
+                            "All GainSelector entries on %s: %s",
+                            self._sources[0]._source_name, all_names
+                        )
+                    except Exception as probe_e:
+                        log.warning("get_white_balance_ratios: GainSelector probe failed: %s", probe_e)
+                else:
+                    log.warning("get_white_balance_ratios: GainSelector parameter not found on %s",
+                                self._sources[0]._source_name)
                 return (1.0, 1.0, 1.0)
 
             gs = nm.GetEnum("GainSelector")
@@ -983,12 +1002,20 @@ class JAICamera:
             done = False
             while time.time() < deadline:
                 time.sleep(poll_interval)
-                _, cur_val = bwa.GetValue()
-                cur_str = str(cur_val).lower()
+                try:
+                    # PvGenEnum uses GetValueString() in the eBUS Python SDK
+                    _, cur_str = bwa.GetValueString()
+                except AttributeError:
+                    try:
+                        _, cur_str = bwa.GetValue()
+                        cur_str = str(cur_str)
+                    except Exception:
+                        cur_str = ""
+                cur_str = cur_str.lower()
                 if "off" in cur_str or cur_str == "0":
                     done = True
                     break
-                log.debug("AWB: BalanceWhiteAuto still = %s …", cur_val)
+                log.debug("AWB: BalanceWhiteAuto still = %s …", cur_str)
 
             if not done:
                 log.warning("AWB: timed out waiting for BalanceWhiteAuto to return Off")
