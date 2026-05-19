@@ -194,6 +194,7 @@ class LeftControlPanel(QWidget):
     sig_load_model      = pyqtSignal(str)
     sig_sorter_toggled  = pyqtSignal(bool)
     sig_logging_toggled = pyqtSignal(bool)
+    sig_awb_triggered   = pyqtSignal()                 # One-push AWB triggered
     sig_speed_changed   = pyqtSignal(int)
     sig_exposure_changed = pyqtSignal(int, int, int)  # CH1/CH2/CH3 µs — emitted on Apply
     sig_fps_changed      = pyqtSignal(float)           # FPS — emitted on Apply
@@ -337,6 +338,22 @@ class LeftControlPanel(QWidget):
         exp_btn_hl.addWidget(self._btn_apply_exposure, stretch=1)
         exp_btn_hl.addWidget(self._btn_reset_exposure)
         card.add_layout(exp_btn_hl)
+
+        # Auto White Balance (color channel specific)
+        self._btn_awb = QPushButton("⚖  Auto White Balance (CH1)")
+        self._btn_awb.setFixedHeight(34)
+        self._btn_awb.setToolTip("Trigger One-Push Auto White Balance calibration on the Color channel (Source0)")
+        self._btn_awb.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_ELEVATED}; color: #f59e0b;
+                border: 1px solid #f59e0b44; font-weight: 700; font-size: 11px;
+                border-radius: 7px; margin-top: 4px;
+            }}
+            QPushButton:hover   {{ background-color: #f59e0b22; border-color: #f59e0b; }}
+            QPushButton:pressed {{ background-color: #f59e0b44; }}
+        """)
+        self._btn_awb.clicked.connect(self.sig_awb_triggered.emit)
+        card.add(self._btn_awb)
 
         _sep(card)
 

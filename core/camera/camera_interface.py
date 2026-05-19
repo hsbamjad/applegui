@@ -634,20 +634,66 @@ class JAICamera:
             log.error("set_fps exception: %s", e)
             return False
 
+    def auto_white_balance(self) -> bool:
+        """
+        Executes a One-Push Auto White Balance on the visible color channel (Source0).
+        Temporarily sets SourceSelector to the color channel, activates 'Once' auto WB,
+        and waits up to 2 seconds for the camera firmware to finish calibrating.
+        """
+        if self._device is None:
+            log.warning("auto_white_balance: no device connected")
+            return False
         try:
             import eBUS as eb
             nm = self._device.GetParameters()
+
+            # 1. Point SourceSelector to Source0 (the color channel)
             if self._sources:
                 stack = eb.PvGenStateStack(nm)
                 stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
-            param = nm.GetFloat("ExposureTime")
+
+            # 2. Get the BalanceWhiteAuto parameter
+            param = nm.GetEnum("BalanceWhiteAuto")
             if param is None:
-                return -1
-            _, val = param.GetValue()
-            return int(val)
+                log.error("auto_white_balance: BalanceWhiteAuto parameter not found on device")
+                return False
+
+            # 3. Trigger One-Push Auto White Balance
+            log.info("Triggering One-Push Auto White Balance on Source0...")
+            r = param.SetValue("Once")
+            if not r.IsOK():
+                log.error("auto_white_balance failed to write 'Once': %s", r.GetCodeString())
+                return False
+
+            # 4. Wait for JAI firmware calibration to stabilize (value returns to 'Off')
+            import time
+            start_time = time.time()
+            success = False
+            while time.time() - start_time < 2.0:
+                time.sleep(0.1)
+                _, val = param.GetValue()
+                if val == "Off":
+                    success = True
+                    break
+
+            if success:
+                log.info("Auto White Balance calibration successful!")
+                r_ratio, b_ratio = -1.0, -1.0
+                ratio_sel = nm.GetEnum("BalanceRatioSelector")
+                ratio_val = nm.GetFloat("BalanceRatio")
+                if ratio_sel and ratio_val:
+                    ratio_sel.SetValue("Red")
+                    _, r_ratio = ratio_val.GetValue()
+                    ratio_sel.SetValue("Blue")
+                    _, b_ratio = ratio_val.GetValue()
+                log.info("Readback ratios after AWB — Red: %.2f | Blue: %.2f", r_ratio, b_ratio)
+                return True
+            else:
+                log.warning("Auto White Balance timed out (calibration still in progress)")
+                return False
         except Exception as e:
-            log.error("get_exposure exception: %s", e)
-            return -1
+            log.error("auto_white_balance exception: %s", e)
+            return False
 
 
     # ── Gain helpers ──────────────────────────────────────────────────────────
@@ -973,6 +1019,13 @@ class CameraInterface:
         if self._mode == "jai" and self._backend:
             return self._backend.get_gains_per_source()
         return []
+
+    def auto_white_balance(self) -> bool:
+        """Trigger One-Push Auto White Balance on the color channel (Source0). No-op in mock."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.auto_white_balance()
+        log.debug("auto_white_balance: mock mode — simulated success")
+        return True
 
     def grab_fps(self) -> float:
         """Actual camera acquisition FPS from grab thread. 0.0 in mock mode."""

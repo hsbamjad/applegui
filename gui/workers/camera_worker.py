@@ -54,6 +54,7 @@ class CameraWorker(QThread):
     sig_gains_readback    = pyqtSignal(float, float, float)  # actual CH1/CH2/CH3 gains in dB
     sig_cam_fps           = pyqtSignal(float)         # actual camera acquisition FPS (grab thread)
     sig_block_ids         = pyqtSignal(bool, int, int, int) # synced (bool), ch1_bid, ch2_bid, ch3_bid
+    sig_awb_completed     = pyqtSignal(bool, float, float)  # success (bool), red_ratio, blue_ratio
 
 
     def __init__(self, config: dict, display_fps: int = 30) -> None:
@@ -216,3 +217,29 @@ class CameraWorker(QThread):
             self.sig_gains_readback.emit(actuals[0], actuals[1], actuals[2])
         else:
             log.warning("set_gains ignored — camera not connected")
+
+    def trigger_auto_white_balance(self) -> None:
+        """
+        Trigger One-Push Auto White Balance on the background camera interface.
+        Emits sig_awb_completed upon firmware completion.
+        """
+        if self._camera is not None:
+            success = self._camera.auto_white_balance()
+            r_ratio, b_ratio = 1.0, 1.0
+            if success and self._camera.mode == "jai" and self._camera._backend:
+                try:
+                    nm = self._camera._backend._device.GetParameters()
+                    ratio_sel = nm.GetEnum("BalanceRatioSelector")
+                    ratio_val = nm.GetFloat("BalanceRatio")
+                    if ratio_sel and ratio_val:
+                        ratio_sel.SetValue("Red")
+                        _, r_ratio = ratio_val.GetValue()
+                        ratio_sel.SetValue("Blue")
+                        _, b_ratio = ratio_val.GetValue()
+                except Exception:
+                    pass
+            self.sig_awb_completed.emit(success, r_ratio, b_ratio)
+        else:
+            log.warning("trigger_auto_white_balance ignored — camera not connected")
+            self.sig_awb_completed.emit(False, -1.0, -1.0)
+

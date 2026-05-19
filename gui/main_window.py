@@ -309,6 +309,7 @@ class MainWindow(QMainWindow):
         self._left.sig_exposure_changed.connect(self._on_exposure_changed)
         self._left.sig_fps_changed.connect(self._on_fps_changed)
         self._left.sig_gains_changed.connect(self._on_gains_changed)
+        self._left.sig_awb_triggered.connect(self._on_awb_triggered)
 
     def _post_init(self) -> None:
         models_dir = Path(self._cfg.get("inference", {}).get("model_dir", "models/"))
@@ -356,6 +357,7 @@ class MainWindow(QMainWindow):
         self._cam_w.sig_gains_readback.connect(self._on_gains_readback)
         self._cam_w.sig_cam_fps.connect(self._on_cam_fps)
         self._cam_w.sig_block_ids.connect(self._on_block_ids)
+        self._cam_w.sig_awb_completed.connect(self._on_awb_completed)
         self._cam_w.start()
 
         # ── Inference worker ───────────────────────────────────────
@@ -561,4 +563,34 @@ class MainWindow(QMainWindow):
         color = "#10B981" if synced else "#EF4444"  # emerald green if OK, bright red if MISMATCH
         self._lbl_sync.setText(f"Sync: {sync_str}  ·  IDs: {ch1_bid} / {ch2_bid} / {ch3_bid}")
         self._lbl_sync.setStyleSheet(f"color: {color}; font-family: monospace; font-size: 11px; font-weight: bold; margin-right: 10px;")
+
+    @pyqtSlot()
+    def _on_awb_triggered(self) -> None:
+        """Triggered when user clicks the Auto White Balance button."""
+        running = self._cam_w is not None and self._cam_w.isRunning()
+        if running:
+            self._left._btn_awb.setEnabled(False)
+            self._left._btn_awb.setText("⚖  Calibrating AWB ...")
+            self.statusBar().showMessage("White Balance: calibrating visible light levels on CH1 (Source0) ...")
+            # Trigger asynchronous execution in the worker thread
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(10, self._cam_w.trigger_auto_white_balance)
+        else:
+            self.statusBar().showMessage("White Balance: camera not connected — connect first")
+
+    @pyqtSlot(bool, float, float)
+    def _on_awb_completed(self, success: bool, r_ratio: float, b_ratio: float) -> None:
+        """Receives status and balance ratios when White Balance is completed."""
+        self._left._btn_awb.setEnabled(True)
+        self._left._btn_awb.setText("⚖  Auto White Balance (CH1)")
+        if success:
+            self.statusBar().showMessage(
+                f"White Balance calibration successful!  —  "
+                f"Red Ratio: {r_ratio:.2f}  │  Blue Ratio: {b_ratio:.2f}"
+            )
+            log.info("Auto White Balance calibration successful! Red Ratio: %.2f, Blue Ratio: %.2f", r_ratio, b_ratio)
+        else:
+            self.statusBar().showMessage("White Balance: calibration failed or timed out")
+            log.warning("Auto White Balance calibration failed or timed out")
+
 
