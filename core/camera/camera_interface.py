@@ -638,7 +638,7 @@ class JAICamera:
         """
         Executes a One-Push Auto White Balance on the visible color channel (Source0).
         Temporarily sets SourceSelector to the color channel, activates 'Once' auto WB,
-        and waits up to 2 seconds for the camera firmware to finish calibrating.
+        and waits up to 3 seconds for the camera firmware to finish calibrating.
         """
         if self._device is None:
             log.warning("auto_white_balance: no device connected")
@@ -652,8 +652,8 @@ class JAICamera:
                 stack = eb.PvGenStateStack(nm)
                 stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
 
-            # 2. Get the BalanceWhiteAuto parameter
-            param = nm.GetEnum("BalanceWhiteAuto")
+            # 2. Get the BalanceWhiteAuto parameter using base Get() for robust retrieval
+            param = nm.Get("BalanceWhiteAuto")
             if param is None:
                 log.error("auto_white_balance: BalanceWhiteAuto parameter not found on device")
                 return False
@@ -671,7 +671,6 @@ class JAICamera:
             success = False
             while time.time() - start_time < 3.0:
                 time.sleep(0.1)
-                # Correct eBUS API usage: GetValueString returns (PvResult, str)
                 r_status, val = param.GetValueString()
                 if r_status.IsOK() and val == "Off":
                     success = True
@@ -692,7 +691,7 @@ class JAICamera:
     def get_white_balance_ratios(self) -> tuple[float, float]:
         """
         Read current Red and Blue BalanceRatio values from Source0.
-        Falls back to GainSelector -> Red/Blue under Source0 if BalanceRatio is absent.
+        Uses robust base node Get() and fuzzy search to resolve eBUS binding issues.
         """
         if self._device is None:
             return 1.0, 1.0
@@ -703,24 +702,29 @@ class JAICamera:
                 stack = eb.PvGenStateStack(nm)
                 stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
 
+            # Retrieve nodes using base Get() to bypass type-casting issues in eBUS bindings
+            ratio_sel = nm.Get("BalanceRatioSelector")
+            ratio_val = nm.Get("BalanceRatio")
+
+            # Fuzzy search if not found directly
+            if ratio_sel is None or ratio_val is None:
+                for k in range(nm.GetCount()):
+                    p = nm.Get(k)
+                    name = p.GetName()[1]
+                    if name.lower() == "balanceratioselector":
+                        ratio_sel = p
+                    elif name.lower() == "balanceratio":
+                        ratio_val = p
+
             r_ratio, b_ratio = 1.0, 1.0
-            ratio_sel = nm.GetEnum("BalanceRatioSelector")
-            ratio_val = nm.GetFloat("BalanceRatio")
             if ratio_sel and ratio_val:
                 ratio_sel.SetValue("Red")
                 _, r_ratio = ratio_val.GetValue()
                 ratio_sel.SetValue("Blue")
                 _, b_ratio = ratio_val.GetValue()
+                log.info("[CAM AWB] Read white balance ratios: Red: %.3f | Blue: %.3f", r_ratio, b_ratio)
             else:
-                # JAI FS-3200T fallback: uses Red/Blue GainSelector sub-channels
-                gs = nm.GetEnum("GainSelector")
-                g_val = nm.GetFloat("Gain")
-                if gs and g_val:
-                    gs.SetValue("Red")
-                    _, r_ratio = g_val.GetValue()
-                    gs.SetValue("Blue")
-                    _, b_ratio = g_val.GetValue()
-                    log.info("[CAM AWB] Read white balance using GainSelector Red/Blue: %.2f / %.2f", r_ratio, b_ratio)
+                log.warning("[CAM AWB] BalanceRatio parameters not found on JAI camera")
             return r_ratio, b_ratio
         except Exception as e:
             log.error("get_white_balance_ratios exception: %s", e)
@@ -729,7 +733,7 @@ class JAICamera:
     def set_white_balance_ratios(self, r_ratio: float, b_ratio: float) -> bool:
         """
         Manually write specific Red and Blue BalanceRatio values to Source0.
-        Falls back to GainSelector -> Red/Blue under Source0 if BalanceRatio is absent.
+        Uses robust base node Get() and fuzzy search to resolve eBUS binding issues.
         """
         if self._device is None:
             return False
@@ -741,16 +745,26 @@ class JAICamera:
                 stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
 
             # Ensure Auto WB is turned OFF before setting manual ratios
-            param = nm.GetEnum("BalanceWhiteAuto")
+            param = nm.Get("BalanceWhiteAuto")
             if param:
                 res = param.SetValue("Off")
                 log.info("[CAM AWB] Set BalanceWhiteAuto='Off' result: %s", res.GetCodeString())
 
-            ratio_sel = nm.GetEnum("BalanceRatioSelector")
-            ratio_val = nm.GetFloat("BalanceRatio")
-            
+            # Retrieve nodes using base Get() to bypass type-casting issues in eBUS bindings
+            ratio_sel = nm.Get("BalanceRatioSelector")
+            ratio_val = nm.Get("BalanceRatio")
+
+            # Fuzzy search if not found directly
+            if ratio_sel is None or ratio_val is None:
+                for k in range(nm.GetCount()):
+                    p = nm.Get(k)
+                    name = p.GetName()[1]
+                    if name.lower() == "balanceratioselector":
+                        ratio_sel = p
+                    elif name.lower() == "balanceratio":
+                        ratio_val = p
+
             if ratio_sel and ratio_val:
-                # Standard path
                 r1 = ratio_sel.SetValue("Red")
                 r2 = ratio_val.SetValue(float(r_ratio))
                 log.info("[CAM AWB] Set Red Selector result: %s | Set Red Ratio %.3f result: %s", 
@@ -770,30 +784,8 @@ class JAICamera:
                          verified_r, r_ratio, verified_b, b_ratio)
 
                 return r2.IsOK() and r4.IsOK()
-            else:
-                # JAI FS-3200T fallback: uses Red/Blue GainSelector sub-channels
-                gs = nm.GetEnum("GainSelector")
-                g_val = nm.GetFloat("Gain")
-                if gs and g_val:
-                    r1 = gs.SetValue("Red")
-                    r2 = g_val.SetValue(float(r_ratio))
-                    log.info("[CAM AWB] Set GainSelector='Red' result: %s | Set Red Gain %.2f result: %s",
-                             r1.GetCodeString(), r_ratio, r2.GetCodeString())
-                    
-                    r3 = gs.SetValue("Blue")
-                    r4 = g_val.SetValue(float(b_ratio))
-                    log.info("[CAM AWB] Set GainSelector='Blue' result: %s | Set Blue Gain %.2f result: %s",
-                             r3.GetCodeString(), b_ratio, r4.GetCodeString())
-                    
-                    # Verification Readback
-                    gs.SetValue("Red")
-                    _, verified_r = g_val.GetValue()
-                    gs.SetValue("Blue")
-                    _, verified_b = g_val.GetValue()
-                    log.info("[CAM AWB] Fallback Verify Readback — Red: %.2f (target: %.2f) | Blue: %.2f (target: %.2f)",
-                             verified_r, r_ratio, verified_b, b_ratio)
-                    return r2.IsOK() and r4.IsOK()
-            log.error("[CAM AWB] No WB controls found (neither BalanceRatio nor GainSelector Red/Blue)")
+            
+            log.error("[CAM AWB] BalanceRatio parameters not found on JAI camera")
             return False
         except Exception as e:
             log.error("set_white_balance_ratios exception: %s", e)
