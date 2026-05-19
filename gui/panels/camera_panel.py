@@ -315,14 +315,14 @@ class LeftControlPanel(QWidget):
         _sep(card)
 
         # Gain spinbox + Apply button
-        self._spn_gain = _dspinbox(0.0, 24.0, 0.0, 0.5, 1)
+        self._spn_gain = _dspinbox(1.0, 24.0, 1.0, 0.5, 1)
         self._spn_gain.setSuffix(" dB")
         self._spn_gain.setToolTip(
             "Digital gain applied to ALL 3 sources (Color, NIR1, NIR2).\n"
-            "0 dB  = no amplification (default, cleanest signal)\n"
-            "6 dB  = 2× signal boost\n"
-            "12 dB = 4× signal boost (recommended max for NIR)\n"
-            "24 dB = 16× — usable but noisy\n\n"
+            "1 dB  = hardware minimum (camera floor — Reset goes here)\n"
+            "6 dB  = ~2× signal boost\n"
+            "12 dB = ~4× signal boost (recommended max for NIR)\n"
+            "24 dB = ~16× — usable but noisy\n\n"
             "Increase if NIR channels appear dark or black.\n"
             "Click 'Apply Gain' to send to camera."
         )
@@ -388,9 +388,9 @@ class LeftControlPanel(QWidget):
         self.sig_gain_changed.emit(self._spn_gain.value())
 
     def _on_reset_gain(self) -> None:
-        """Reset gain to 0 dB and immediately apply."""
-        self._spn_gain.setValue(0.0)
-        self.sig_gain_changed.emit(0.0)
+        """Reset gain to hardware minimum (1 dB) and immediately apply."""
+        self._spn_gain.setValue(1.0)
+        self.sig_gain_changed.emit(1.0)
 
 
     def _conveyor_card(self) -> QWidget:
