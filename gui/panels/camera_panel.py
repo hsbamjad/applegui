@@ -328,10 +328,37 @@ class LeftControlPanel(QWidget):
         )
         card.add(_field("Gain", self._spn_gain))
 
+        # Apply + Reset row side by side
+        gain_btn_row = QWidget()
+        gain_btn_row.setStyleSheet("background: transparent; border: none;")
+        gain_btn_hl = QHBoxLayout(gain_btn_row)
+        gain_btn_hl.setContentsMargins(0, 0, 0, 0)
+        gain_btn_hl.setSpacing(6)
+
         self._btn_apply_gain = _btn_secondary("Apply Gain")
         self._btn_apply_gain.setToolTip("Send new gain value to all 3 camera sources")
         self._btn_apply_gain.clicked.connect(self._on_apply_gain)
-        card.add(self._btn_apply_gain)
+
+        self._btn_reset_gain = QPushButton("Reset")
+        self._btn_reset_gain.setFixedHeight(34)
+        self._btn_reset_gain.setFixedWidth(54)
+        self._btn_reset_gain.setToolTip("Reset gain to 0 dB (no amplification)")
+        self._btn_reset_gain.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                border: 1px solid {BORDER}; font-weight: 600; font-size: 11px;
+                border-radius: 7px;
+            }}
+            QPushButton:hover   {{ background-color: {WARNING}22; color: {WARNING};
+                                   border-color: {WARNING}; }}
+            QPushButton:pressed {{ background-color: {WARNING}44; }}
+        """)
+        self._btn_reset_gain.clicked.connect(self._on_reset_gain)
+
+        gain_btn_hl.addWidget(self._btn_apply_gain, stretch=1)
+        gain_btn_hl.addWidget(self._btn_reset_gain)
+        card.add(gain_btn_row)
+
 
         return card
 
@@ -359,6 +386,12 @@ class LeftControlPanel(QWidget):
     def _on_apply_gain(self) -> None:
         """Emit gain signal → main_window._on_gain_changed."""
         self.sig_gain_changed.emit(self._spn_gain.value())
+
+    def _on_reset_gain(self) -> None:
+        """Reset gain to 0 dB and immediately apply."""
+        self._spn_gain.setValue(0.0)
+        self.sig_gain_changed.emit(0.0)
+
 
     def _conveyor_card(self) -> QWidget:
         card = _Card()

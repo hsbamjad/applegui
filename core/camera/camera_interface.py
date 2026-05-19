@@ -590,21 +590,34 @@ class JAICamera:
 
                 gs = nm.GetEnum("GainSelector")
 
-                # Build list of selectors to try for this source
+                # IMPORTANT: only write to master '*All' selectors (DigitalAll,
+                # AnalogAll, All). NEVER write to individual channel selectors
+                # (Red, Green, Blue, NIR1, NIR2) — doing so destroys white balance
+                # on the color channel and causes pink/green tint artifacts.
                 selectors_to_try: list[str | None] = []
                 if gs:
-                    # Probe which entries this camera actually supports
+                    # Probe which entries this camera actually supports.
+                    # ONLY keep master '*All' selectors — never Red/Green/Blue/NIR
+                    # sub-channel selectors, which would destroy white balance.
                     try:
                         _, count = gs.GetEntriesCount()
                         for i in range(count):
                             _, entry = gs.GetEntryByIndex(i)
                             if entry:
                                 _, name = entry.GetName()
-                                selectors_to_try.append(name)
+                                if name.lower().endswith("all"):
+                                    selectors_to_try.append(name)
+                                    print(f"[CAM] GainSelector [{src._source_name}]: using '{name}'")
+                                else:
+                                    print(f"[CAM] GainSelector [{src._source_name}]: skipping '{name}' (per-channel)")
                     except Exception:
                         selectors_to_try = ["DigitalAll", "AnalogAll", "All"]
+                    # If no '*All' selector found, write Gain without selector
+                    if not selectors_to_try:
+                        selectors_to_try = [None]
                 else:
                     selectors_to_try = [None]  # no GainSelector — write Gain directly
+
 
                 wrote_any = False
                 for sel in selectors_to_try:
