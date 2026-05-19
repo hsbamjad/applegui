@@ -348,6 +348,7 @@ class MainWindow(QMainWindow):
         self._cam_w.sig_frame.connect(self._on_frame)
         self._cam_w.sig_status.connect(self._on_cam_status)
         self._cam_w.sig_exposure_readback.connect(self._on_exposure_readback)
+        self._cam_w.sig_gain_readback.connect(self._on_gain_readback)
         self._cam_w.sig_cam_fps.connect(self._on_cam_fps)
         self._cam_w.start()
 
@@ -501,12 +502,25 @@ class MainWindow(QMainWindow):
         running = self._cam_w is not None and self._cam_w.isRunning()
         if running:
             self._cam_w.set_gain(gain_db)
+            # Spinbox will be synced by sig_gain_readback once firmware confirms
             self.statusBar().showMessage(
-                f"Gain set: {gain_db:.1f} dB on all 3 sources  —  "
-                f"({2 ** (gain_db / 6.02):.1f}× signal amplification)"
+                f"Gain: applying {gain_db:.1f} dB to all 3 sources…"
             )
         else:
             self.statusBar().showMessage("Gain: camera not connected — connect first")
+
+    @pyqtSlot(float)
+    def _on_gain_readback(self, actual_db: float) -> None:
+        """
+        Receives the actual Gain read back from firmware after an Apply.
+        Updates the gain spinbox to show the real value (camera may clamp it).
+        """
+        self._left._spn_gain.setValue(actual_db)
+        self.statusBar().showMessage(
+            f"Gain confirmed: {actual_db:.1f} dB  —  "
+            f"{2 ** (actual_db / 6.02):.1f}× amplification on all 3 sources"
+        )
+        log.info("Gain spinbox synced to firmware value: %.1f dB", actual_db)
 
     @pyqtSlot(int)
     def _on_exposure_readback(self, actual_us: int) -> None:

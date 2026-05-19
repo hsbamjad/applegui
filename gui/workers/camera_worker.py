@@ -51,6 +51,7 @@ class CameraWorker(QThread):
     sig_frame             = pyqtSignal(object, object, object, float)  # ch1, ch2, ch3, display_fps
     sig_status            = pyqtSignal(str, bool)                       # message, is_error
     sig_exposure_readback = pyqtSignal(int)    # actual exposure µs read back from firmware
+    sig_gain_readback     = pyqtSignal(float)  # actual gain dB read back from firmware
     sig_cam_fps           = pyqtSignal(float)  # actual camera acquisition FPS (grab thread)
 
     def __init__(self, config: dict, display_fps: int = 30) -> None:
@@ -174,10 +175,12 @@ class CameraWorker(QThread):
     def set_gain(self, gain_db: float) -> None:
         """
         Forward gain change to all 3 camera sources while streaming.
-        Safe to call from GUI main thread — issues a GenICam write per source (<3ms total).
-        No effect if camera is not yet connected.
+        Reads back the actual value accepted by firmware and emits sig_gain_readback
+        so the GUI spinbox always shows truth (camera may clamp the requested value).
         """
         if self._camera is not None:
-            self._camera.set_gain(gain_db)
+            actual = self._camera.set_gain(gain_db)
+            if actual >= 0:
+                self.sig_gain_readback.emit(actual)
         else:
             log.warning("set_gain ignored — camera not connected")

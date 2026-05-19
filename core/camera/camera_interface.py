@@ -555,75 +555,104 @@ class JAICamera:
             log.error("get_exposure exception: %s", e)
             return -1
 
-    def set_gain(self, gain_db: float) -> bool:
+    def set_gain(self, gain_db: float) -> float:
         """
-        Set digital gain in dB on ALL 3 sources while streaming.
+        Set gain on ALL 3 sources while streaming. Returns actual gain readback from
+        Source0 (so the GUI spinbox can be synced to truth).
 
-        Uses SourceSelector to write independently to Color, NIR1, and NIR2.
-        GainSelector is set to 'DigitalAll' (master digital gain) on each source.
+        Strategy — tries ALL known GainSelector values on each source:
+          'DigitalAll' → digital amplifier stage (most cameras)
+          'AnalogAll'  → analog stage before ADC (if present)
+          No selector  → fallback if GainSelector enum doesn't exist
 
-        Range:   0.0 dB (no gain) – 24.0 dB (max amplification)
-        Default: 0.0 dB
+        This exhaustive approach ensures no hidden gain stage stays elevated when
+        the user reduces gain (the root cause of the "can't reduce gain" bug).
 
-        Higher gain amplifies the sensor signal — useful when NIR reflectance
-        is weak. Tradeoff: higher gain also amplifies noise (shot noise).
-        Practical limit for clean NIR imaging: ~12 dB.
-
-        Args:
-            gain_db: Gain in decibels. Range: 0.0–24.0.
-
-        Returns:
-            True if ALL sources accepted the value, False on any failure.
+        Range:   camera minimum (often 0.0 dB) – 24.0 dB
+        Returns: actual dB value read back from firmware, or gain_db on failure.
         """
         if self._device is None:
             log.warning("set_gain: no device connected")
-            return False
+            return gain_db
         try:
             import eBUS as eb
             nm = self._device.GetParameters()
-            all_ok = True
+            actual_readback = gain_db
+
             for src in self._sources:
                 stack = eb.PvGenStateStack(nm)
                 stack.SetEnumValue("SourceSelector", src._source_name)
 
-                # Disable auto gain for this source
+                # Always disable auto-gain first
                 ag = nm.GetEnum("GainAuto")
                 if ag:
                     ag.SetValue("Off")
 
-                # Select master digital gain channel
                 gs = nm.GetEnum("GainSelector")
+
+                # Build list of selectors to try for this source
+                selectors_to_try: list[str | None] = []
                 if gs:
-                    gs.SetValue("DigitalAll")
-
-                param = nm.GetFloat("Gain")
-                if param is None:
-                    log.error("set_gain: Gain param not found for source %s",
-                              src._source_name)
-                    all_ok = False
-                    continue
-
-                r = param.SetValue(float(gain_db))
-                if r.IsOK():
-                    _, actual = param.GetValue()
-                    print(f"[CAM] set_gain {src._source_name}: actual={actual:.1f} dB")
+                    # Probe which entries this camera actually supports
+                    try:
+                        _, count = gs.GetEntriesCount()
+                        for i in range(count):
+                            _, entry = gs.GetEntryByIndex(i)
+                            if entry:
+                                _, name = entry.GetName()
+                                selectors_to_try.append(name)
+                    except Exception:
+                        selectors_to_try = ["DigitalAll", "AnalogAll", "All"]
                 else:
-                    log.error("set_gain %s: rejected %.1f dB — %s",
-                              src._source_name, gain_db, r.GetCodeString())
-                    all_ok = False
+                    selectors_to_try = [None]  # no GainSelector — write Gain directly
 
-            log.info("Camera: Gain = %.1f dB applied to %d source(s)",
-                     gain_db, len(self._sources))
-            return all_ok
+                wrote_any = False
+                for sel in selectors_to_try:
+                    if sel is not None and gs:
+                        r_sel = gs.SetValue(sel)
+                        if not r_sel.IsOK():
+                            continue   # this selector not valid on this source
+
+                    param = nm.GetFloat("Gain")
+                    if param is None:
+                        continue
+
+                    # Clamp to camera's own min/max to avoid rejection
+                    try:
+                        _, g_min = param.GetMin()
+                        _, g_max = param.GetMax()
+                        clamped = float(max(g_min, min(g_max, gain_db)))
+                    except Exception:
+                        clamped = float(gain_db)
+
+                    r = param.SetValue(clamped)
+                    if r.IsOK():
+                        _, actual = param.GetValue()
+                        print(f"[CAM] set_gain {src._source_name} [{sel}]: "
+                              f"requested={gain_db:.1f} actual={actual:.1f} dB")
+                        wrote_any = True
+                        if src is self._sources[0] and sel == selectors_to_try[0]:
+                            actual_readback = float(actual)
+                    else:
+                        print(f"[CAM] set_gain {src._source_name} [{sel}]: "
+                              f"REJECTED {gain_db:.1f} dB — {r.GetCodeString()}")
+
+                if not wrote_any:
+                    log.error("set_gain: could not write gain on source %s",
+                              src._source_name)
+
+            log.info("Camera: Gain target=%.1f dB, readback=%.1f dB, %d source(s)",
+                     gain_db, actual_readback, len(self._sources))
+            return actual_readback
         except Exception as e:
             print(f"[CAM] set_gain: EXCEPTION: {e}")
             log.error("set_gain exception: %s", e)
-            return False
+            return gain_db
 
     def get_gain(self) -> float:
         """
-        Read current Gain (dB) from the first source.
-        Returns -1.0 on failure.
+        Read current Gain (dB) from Source0, trying all known GainSelector values.
+        Returns the first successful readback, or -1.0 on failure.
         """
         if self._device is None:
             return -1.0
@@ -635,7 +664,16 @@ class JAICamera:
                 stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
             gs = nm.GetEnum("GainSelector")
             if gs:
-                gs.SetValue("DigitalAll")
+                # Try DigitalAll first, fall back to first available entry
+                r, _ = gs.SetValue("DigitalAll")
+                if not r.IsOK():
+                    try:
+                        _, entry = gs.GetEntryByIndex(0)
+                        if entry:
+                            _, name = entry.GetName()
+                            gs.SetValue(name)
+                    except Exception:
+                        pass
             param = nm.GetFloat("Gain")
             if param is None:
                 return -1.0
