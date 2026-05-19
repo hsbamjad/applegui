@@ -20,30 +20,19 @@ import logging
 import ctypes
 
 import numpy as np
-import cv2
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.camera.camera_interface import CameraInterface
 
 log = logging.getLogger(__name__)
 
-# Display resolution for sig_frame emission.
-# The camera grab thread produces full 2048x1536 frames (raw data preserved).
-# Before emitting to Qt, frames are resized to this size so the GUI thread
-# does not have to scale 9 MP images at 60+ FPS (which causes severe lag).
-# Inference and saving always use the full-res FrameTriplet, not these copies.
-_DISP_W = 640
-_DISP_H = 480
-
-
-def _resize_for_display(frame: np.ndarray) -> np.ndarray:
-    """Resize a frame to display resolution using INTER_AREA (best for downscaling)."""
-    if frame is None:
-        return frame
-    h, w = frame.shape[:2]
-    if w == _DISP_W and h == _DISP_H:
-        return frame   # already correct size (e.g. mock frames)
-    return cv2.resize(frame, (_DISP_W, _DISP_H), interpolation=cv2.INTER_AREA)
+# Maximum rate at which frames are emitted to the Qt GUI (sig_frame).
+# Qt must create a QImage from a 2048×1536 frame (9 MP = ~15 MB/triplet).
+# Capping at 25 FPS limits memory bandwidth to ~375 MB/s — smooth on any PC.
+# The HARDWARE camera acquisition FPS is completely independent of this value.
+# At 60 FPS hardware the camera still grabs 60 sensor frames/s; Qt just
+# shows 25 of them, picking the freshest one each display cycle.
+_DISPLAY_FPS_MAX = 25
 
 # Windows high-resolution timer (1ms precision instead of default 15.625ms).
 # Without this, time.sleep() rounds to 15.625ms ticks, causing display FPS
@@ -73,10 +62,10 @@ class CameraWorker(QThread):
     sig_gain_readback     = pyqtSignal(float)  # actual gain dB read back from firmware
     sig_cam_fps           = pyqtSignal(float)  # actual camera acquisition FPS (grab thread)
 
-    def __init__(self, config: dict, display_fps: int = 30) -> None:
+    def __init__(self, config: dict, display_fps: int = _DISPLAY_FPS_MAX) -> None:
         super().__init__()
         self._config      = config
-        self._display_fps = display_fps
+        self._display_fps = min(display_fps, _DISPLAY_FPS_MAX)  # never exceed cap
         self._running     = False
         self._camera: CameraInterface | None = None  # set during run()
 
@@ -132,12 +121,10 @@ class CameraWorker(QThread):
                 if cam_fps > 0:
                     self.sig_cam_fps.emit(cam_fps)
 
-            # Resize to display resolution before emitting — keeps Qt fast at 60+ FPS.
-            # Raw full-res data remains in `triplet` for inference / saving.
-            d1 = _resize_for_display(triplet.ch1)
-            d2 = _resize_for_display(triplet.ch2)
-            d3 = _resize_for_display(triplet.ch3)
-            self.sig_frame.emit(d1, d2, d3, fps)
+            # Emit full-resolution frames. Display FPS is capped at _DISPLAY_FPS_MAX
+            # (25 FPS) so Qt only renders 25 × 9 MP/triplet/s regardless of how fast
+            # the hardware camera is running. The freshest frame is always shown.
+            self.sig_frame.emit(triplet.ch1, triplet.ch2, triplet.ch3, fps)
 
             sleep = min_interval - (time.perf_counter() - t0)
             if sleep > 0:
@@ -172,16 +159,20 @@ class CameraWorker(QThread):
 
     def set_fps(self, fps: float) -> None:
         """
-        Set camera hardware FPS AND update display emit rate to match.
+        Set camera HARDWARE acquisition FPS only.
+
+        This writes to the camera firmware (AcquisitionFrameRate) and
+        updates the display throttle ONLY up to _DISPLAY_FPS_MAX (25 FPS).
+        Even at 107 FPS hardware, Qt still renders at most 25 FPS so the
+        GUI stays smooth while the sensor captures every frame.
 
         Camera FPS  = sensor acquisition speed (firmware)
-        Display FPS = how fast sig_frame is emitted to the GUI
-
-        The status bar shows real camera FPS; channel headers show actual display FPS.
+        Display FPS = how fast sig_frame is emitted (capped at 25 FPS)
         """
-        self._display_fps = fps   # display tries to match camera; caps at machine limit
         if self._camera is not None:
             self._camera.set_fps(fps)
+        # Display rate tracks camera FPS but never exceeds the cap
+        self._display_fps = min(fps, _DISPLAY_FPS_MAX)
             log.info("CameraWorker: hardware=%.0f FPS, display target=%.0f FPS",
                      fps, fps)
             # Read back actual exposure — firmware may have clamped it at new FPS
