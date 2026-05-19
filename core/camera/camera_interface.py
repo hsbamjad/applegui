@@ -560,146 +560,163 @@ class JAICamera:
             return -1
 
 
+    # ── Gain helpers ──────────────────────────────────────────────────────────
+
+    def _apply_gain_loop(self, gains_per_source: list[float]) -> list[float]:
+        """
+        Core gain-writing loop shared by set_gain() and set_gain_per_source().
+
+        gains_per_source[i] is written to self._sources[i].
+        Only writes to '*All' GainSelector entries — never Red/Green/Blue which
+        would destroy white balance on the color channel.
+        Returns list of actual readback values (same length as self._sources).
+        """
+        import eBUS as eb
+        nm      = self._device.GetParameters()
+        actuals = []
+
+        for i, src in enumerate(self._sources):
+            gain_db = gains_per_source[i] if i < len(gains_per_source) else gains_per_source[0]
+
+            stack = eb.PvGenStateStack(nm)
+            stack.SetEnumValue("SourceSelector", src._source_name)
+
+            ag = nm.GetEnum("GainAuto")
+            if ag:
+                ag.SetValue("Off")
+
+            gs = nm.GetEnum("GainSelector")
+            selectors_to_try: list[str | None] = []
+            if gs:
+                try:
+                    _, count = gs.GetEntriesCount()
+                    for j in range(count):
+                        _, entry = gs.GetEntryByIndex(j)
+                        if entry:
+                            _, name = entry.GetName()
+                            if name.lower().endswith("all"):
+                                selectors_to_try.append(name)
+                            # else: skip Red/Green/Blue/NIR sub-channel selectors
+                except Exception:
+                    selectors_to_try = ["DigitalAll", "AnalogAll", "All"]
+                if not selectors_to_try:
+                    selectors_to_try = [None]
+            else:
+                selectors_to_try = [None]
+
+            actual   = gain_db
+            wrote    = False
+            for sel in selectors_to_try:
+                if sel is not None and gs:
+                    r_sel = gs.SetValue(sel)
+                    if not r_sel.IsOK():
+                        continue
+
+                param = nm.GetFloat("Gain")
+                if param is None:
+                    continue
+
+                try:
+                    _, g_min = param.GetMin()
+                    _, g_max = param.GetMax()
+                    clamped  = float(max(g_min, min(g_max, gain_db)))
+                except Exception:
+                    clamped = float(gain_db)
+
+                r = param.SetValue(clamped)
+                if r.IsOK():
+                    _, v = param.GetValue()
+                    actual = float(v)
+                    print(f"[CAM] Gain {src._source_name} [{sel}]: "
+                          f"req={gain_db:.1f} actual={actual:.1f} dB")
+                    wrote = True
+                else:
+                    print(f"[CAM] Gain {src._source_name} [{sel}]: "
+                          f"REJECTED {gain_db:.1f} dB — {r.GetCodeString()}")
+
+            if not wrote:
+                log.error("set_gain: could not write to source %s", src._source_name)
+
+            actuals.append(actual)
+            # stack destroyed here → SourceSelector reverts for next iteration
+
+        return actuals
+
     def set_gain(self, gain_db: float) -> float:
         """
-        Set gain on ALL 3 sources while streaming. Returns actual gain readback from
-        Source0 (so the GUI spinbox can be synced to truth).
-
-        Strategy — tries ALL known GainSelector values on each source:
-          'DigitalAll' → digital amplifier stage (most cameras)
-          'AnalogAll'  → analog stage before ADC (if present)
-          No selector  → fallback if GainSelector enum doesn't exist
-
-        This exhaustive approach ensures no hidden gain stage stays elevated when
-        the user reduces gain (the root cause of the "can't reduce gain" bug).
-
-        Range:   camera minimum (often 0.0 dB) – 24.0 dB
-        Returns: actual dB value read back from firmware, or gain_db on failure.
+        Set same gain on ALL 3 sources. Returns actual readback from Source0.
+        Used for global gain and Reset.
         """
         if self._device is None:
             log.warning("set_gain: no device connected")
             return gain_db
         try:
-            import eBUS as eb
-            nm = self._device.GetParameters()
-            actual_readback = gain_db
-
-            for src in self._sources:
-                stack = eb.PvGenStateStack(nm)
-                stack.SetEnumValue("SourceSelector", src._source_name)
-
-                # Always disable auto-gain first
-                ag = nm.GetEnum("GainAuto")
-                if ag:
-                    ag.SetValue("Off")
-
-                gs = nm.GetEnum("GainSelector")
-
-                # IMPORTANT: only write to master '*All' selectors (DigitalAll,
-                # AnalogAll, All). NEVER write to individual channel selectors
-                # (Red, Green, Blue, NIR1, NIR2) — doing so destroys white balance
-                # on the color channel and causes pink/green tint artifacts.
-                selectors_to_try: list[str | None] = []
-                if gs:
-                    # Probe which entries this camera actually supports.
-                    # ONLY keep master '*All' selectors — never Red/Green/Blue/NIR
-                    # sub-channel selectors, which would destroy white balance.
-                    try:
-                        _, count = gs.GetEntriesCount()
-                        for i in range(count):
-                            _, entry = gs.GetEntryByIndex(i)
-                            if entry:
-                                _, name = entry.GetName()
-                                if name.lower().endswith("all"):
-                                    selectors_to_try.append(name)
-                                    print(f"[CAM] GainSelector [{src._source_name}]: using '{name}'")
-                                else:
-                                    print(f"[CAM] GainSelector [{src._source_name}]: skipping '{name}' (per-channel)")
-                    except Exception:
-                        selectors_to_try = ["DigitalAll", "AnalogAll", "All"]
-                    # If no '*All' selector found, write Gain without selector
-                    if not selectors_to_try:
-                        selectors_to_try = [None]
-                else:
-                    selectors_to_try = [None]  # no GainSelector — write Gain directly
-
-
-                wrote_any = False
-                for sel in selectors_to_try:
-                    if sel is not None and gs:
-                        r_sel = gs.SetValue(sel)
-                        if not r_sel.IsOK():
-                            continue   # this selector not valid on this source
-
-                    param = nm.GetFloat("Gain")
-                    if param is None:
-                        continue
-
-                    # Clamp to camera's own min/max to avoid rejection
-                    try:
-                        _, g_min = param.GetMin()
-                        _, g_max = param.GetMax()
-                        clamped = float(max(g_min, min(g_max, gain_db)))
-                    except Exception:
-                        clamped = float(gain_db)
-
-                    r = param.SetValue(clamped)
-                    if r.IsOK():
-                        _, actual = param.GetValue()
-                        print(f"[CAM] set_gain {src._source_name} [{sel}]: "
-                              f"requested={gain_db:.1f} actual={actual:.1f} dB")
-                        wrote_any = True
-                        if src is self._sources[0] and sel == selectors_to_try[0]:
-                            actual_readback = float(actual)
-                    else:
-                        print(f"[CAM] set_gain {src._source_name} [{sel}]: "
-                              f"REJECTED {gain_db:.1f} dB — {r.GetCodeString()}")
-
-                if not wrote_any:
-                    log.error("set_gain: could not write gain on source %s",
-                              src._source_name)
-
-            log.info("Camera: Gain target=%.1f dB, readback=%.1f dB, %d source(s)",
-                     gain_db, actual_readback, len(self._sources))
-            return actual_readback
+            actuals  = self._apply_gain_loop([gain_db] * len(self._sources))
+            readback = actuals[0] if actuals else gain_db
+            log.info("Camera: Gain=%.1f dB (all), readback=%.1f dB", gain_db, readback)
+            return readback
         except Exception as e:
-            print(f"[CAM] set_gain: EXCEPTION: {e}")
             log.error("set_gain exception: %s", e)
             return gain_db
 
-    def get_gain(self) -> float:
+    def set_gain_per_source(self, gains: list[float]) -> list[float]:
         """
-        Read current Gain (dB) from Source0, trying all known GainSelector values.
-        Returns the first successful readback, or -1.0 on failure.
+        Set independent gain per source while streaming.
+        gains[0] → Source0 (Color / CH1)
+        gains[1] → Source1 (NIR1  / CH2)
+        gains[2] → Source2 (NIR2  / CH3)
+        Returns list of actual readback values from firmware.
         """
         if self._device is None:
-            return -1.0
+            log.warning("set_gain_per_source: no device connected")
+            return gains
+        try:
+            actuals = self._apply_gain_loop(gains)
+            log.info("Camera: Per-source gain req=%s actual=%s",
+                     [f"{g:.1f}" for g in gains],
+                     [f"{a:.1f}" for a in actuals])
+            return actuals
+        except Exception as e:
+            log.error("set_gain_per_source exception: %s", e)
+            return gains
+
+    def get_gains_per_source(self) -> list[float]:
+        """
+        Read current Gain (dB) from ALL sources independently.
+        Returns list of dB values (one per source), or [] on failure.
+        """
+        if self._device is None:
+            return []
         try:
             import eBUS as eb
-            nm = self._device.GetParameters()
-            if self._sources:
+            nm    = self._device.GetParameters()
+            gains = []
+            for src in self._sources:
                 stack = eb.PvGenStateStack(nm)
-                stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
-            gs = nm.GetEnum("GainSelector")
-            if gs:
-                # Try DigitalAll first, fall back to first available entry
-                r, _ = gs.SetValue("DigitalAll")
-                if not r.IsOK():
-                    try:
-                        _, entry = gs.GetEntryByIndex(0)
-                        if entry:
-                            _, name = entry.GetName()
-                            gs.SetValue(name)
-                    except Exception:
-                        pass
-            param = nm.GetFloat("Gain")
-            if param is None:
-                return -1.0
-            _, val = param.GetValue()
-            return float(val)
+                stack.SetEnumValue("SourceSelector", src._source_name)
+                gs = nm.GetEnum("GainSelector")
+                if gs:
+                    r, _ = gs.SetValue("DigitalAll")
+                    if not r.IsOK():
+                        try:
+                            _, entry = gs.GetEntryByIndex(0)
+                            if entry:
+                                _, name = entry.GetName()
+                                gs.SetValue(name)
+                        except Exception:
+                            pass
+                param = nm.GetFloat("Gain")
+                if param:
+                    _, val = param.GetValue()
+                    gains.append(float(val))
+                else:
+                    gains.append(-1.0)
+            return gains
         except Exception as e:
-            log.error("get_gain exception: %s", e)
-            return -1.0
+            log.error("get_gains_per_source exception: %s", e)
+            return []
+
+
 
     def disconnect(self) -> None:
         import eBUS as eb
@@ -811,26 +828,19 @@ class CameraInterface:
         )
 
 
-    def set_exposure(self, exposure_us: int) -> bool:
-        """Delegate to JAICamera.set_exposure(). No-op in mock mode."""
-        if self._mode == "jai" and self._backend:
-            return self._backend.set_exposure(exposure_us)
-        log.debug("set_exposure: mock mode — ignored")
-        return True
-
-    def set_fps(self, fps: float) -> bool:
-        """Delegate to JAICamera.set_fps(). No-op in mock mode."""
-        if self._mode == "jai" and self._backend:
-            return self._backend.set_fps(fps)
-        log.debug("set_fps: mock mode — ignored")
-        return True
-
-    def set_gain(self, gain_db: float) -> bool:
-        """Delegate to JAICamera.set_gain(). No-op in mock mode."""
+    def set_gain(self, gain_db: float) -> float:
+        """Delegate to JAICamera.set_gain(). Returns actual readback. No-op in mock mode."""
         if self._mode == "jai" and self._backend:
             return self._backend.set_gain(gain_db)
         log.debug("set_gain: mock mode — ignored")
-        return True
+        return gain_db
+
+    def set_gain_per_source(self, gains: list[float]) -> list[float]:
+        """Delegate to JAICamera.set_gain_per_source(). No-op in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.set_gain_per_source(gains)
+        log.debug("set_gain_per_source: mock mode — ignored")
+        return gains
 
     def get_exposure(self) -> int:
         """Read actual ExposureTime from firmware. Returns -1 on failure or in mock mode."""
@@ -838,11 +848,11 @@ class CameraInterface:
             return self._backend.get_exposure()
         return -1
 
-    def get_gain(self) -> float:
-        """Read actual Gain (dB) from firmware. Returns -1.0 on failure or in mock mode."""
+    def get_gains_per_source(self) -> list[float]:
+        """Read Gain (dB) from all 3 sources. Returns [] on failure or in mock mode."""
         if self._mode == "jai" and self._backend:
-            return self._backend.get_gain()
-        return -1.0
+            return self._backend.get_gains_per_source()
+        return []
 
     def grab_fps(self) -> float:
         """Actual camera acquisition FPS from grab thread. 0.0 in mock mode."""
@@ -853,4 +863,3 @@ class CameraInterface:
     @property
     def mode(self) -> str:
         return self._mode
-

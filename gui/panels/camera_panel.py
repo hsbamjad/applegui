@@ -195,9 +195,9 @@ class LeftControlPanel(QWidget):
     sig_sorter_toggled  = pyqtSignal(bool)
     sig_logging_toggled = pyqtSignal(bool)
     sig_speed_changed   = pyqtSignal(int)
-    sig_exposure_changed = pyqtSignal(int)   # µs  — emitted on Apply
-    sig_fps_changed      = pyqtSignal(float) # FPS — emitted on Apply
-    sig_gain_changed     = pyqtSignal(float) # dB  — emitted on Apply
+    sig_exposure_changed = pyqtSignal(int)            # µs  — emitted on Apply
+    sig_fps_changed      = pyqtSignal(float)           # FPS — emitted on Apply
+    sig_gains_changed    = pyqtSignal(float, float, float)  # CH1/CH2/CH3 dB — emitted on Apply All
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -341,28 +341,53 @@ class LeftControlPanel(QWidget):
 
         _sep(card)
 
-        # Gain spinbox + Apply button
-        self._spn_gain = _dspinbox(1.0, 24.0, 1.0, 0.5, 1)
-        self._spn_gain.setSuffix(" dB")
-        self._spn_gain.setToolTip(
-            "Digital gain applied to ALL 3 sources (Color, NIR1, NIR2).\n"
-            "1 dB  = hardware minimum (camera floor — Reset goes here)\n"
-            "6 dB  = ~2× signal boost\n"
-            "12 dB = ~4× signal boost (recommended max for NIR)\n"
-            "24 dB = ~16× — usable but noisy\n\n"
-            "Increase if NIR channels appear dark or black.\n"
-            "Click 'Apply Gain' to send to camera."
-        )
-        card.add(_field("Gain", self._spn_gain))
+        # ── Per-channel Gain (CH1 Color / CH2 NIR1 / CH3 NIR2) ───────────────
+        # Each source has independent gain control.
+        # Color: hardcoded hex matching channel header colors in image_display.py
+        ch_meta = [
+            ("CH1 Color", "#f59e0b"),  # amber — matches channel 1 header
+            ("CH2 NIR1",  "#22d3ee"),  # cyan  — matches channel 2 header
+            ("CH3 NIR2",  "#a78bfa"),  # violet — matches channel 3 header
+        ]
+        self._spn_gains: list[QDoubleSpinBox] = []
+        for ch_label, ch_color in ch_meta:
+            spn = _dspinbox(1.0, 24.0, 1.0, 0.5, 1)
+            spn.setSuffix(" dB")
+            spn.setToolTip(
+                f"Gain for {ch_label} only.\n"
+                "1 dB  = hardware minimum (camera floor)\n"
+                "6 dB  = ~2× signal boost\n"
+                "12 dB = ~4× boost (recommended max for NIR)\n"
+                "24 dB = ~16× — noisy at this level"
+            )
+            # Colored label row
+            row = QWidget()
+            row.setStyleSheet("background: transparent; border: none;")
+            hl = QHBoxLayout(row)
+            hl.setContentsMargins(0, 2, 0, 2)
+            hl.setSpacing(6)
+            lbl = QLabel(f"● {ch_label}")
+            lbl.setFixedWidth(LABEL_W)
+            lbl.setStyleSheet(
+                f"color: {ch_color}; font-size: 11px; font-weight: 700;"
+                " background: transparent;"
+            )
+            spn.setMinimumWidth(WIDGET_MIN_W)
+            hl.addWidget(lbl)
+            hl.addWidget(spn, stretch=1)
+            card.add(row)
+            self._spn_gains.append(spn)
 
-        # Apply Gain + Reset — side-by-side using add_layout (avoids QWidget clipping)
-        self._btn_apply_gain = _btn_secondary("Apply Gain")
-        self._btn_apply_gain.setToolTip("Send new gain value to all 3 camera sources")
-        self._btn_apply_gain.clicked.connect(self._on_apply_gain)
+        # Apply All Gains + Reset side-by-side
+        self._btn_apply_gain = _btn_secondary("Apply All Gains")
+        self._btn_apply_gain.setToolTip(
+            "Send CH1/CH2/CH3 gain values to camera independently"
+        )
+        self._btn_apply_gain.clicked.connect(self._on_apply_gains)
 
         self._btn_reset_gain = QPushButton("↺  Reset")
         self._btn_reset_gain.setFixedHeight(34)
-        self._btn_reset_gain.setToolTip("Reset gain to hardware minimum (1 dB)")
+        self._btn_reset_gain.setToolTip("Reset all 3 channels to hardware minimum (1 dB)")
         self._btn_reset_gain.setStyleSheet(f"""
             QPushButton {{
                 background-color: {BG_ELEVATED}; color: {TEXT_2};
@@ -373,7 +398,7 @@ class LeftControlPanel(QWidget):
                                    border-color: {WARNING}55; }}
             QPushButton:pressed {{ background-color: {WARNING}44; }}
         """)
-        self._btn_reset_gain.clicked.connect(self._on_reset_gain)
+        self._btn_reset_gain.clicked.connect(self._on_reset_gains)
 
         gain_btn_hl = QHBoxLayout()
         gain_btn_hl.setContentsMargins(0, 0, 0, 0)
@@ -381,7 +406,6 @@ class LeftControlPanel(QWidget):
         gain_btn_hl.addWidget(self._btn_apply_gain, stretch=1)
         gain_btn_hl.addWidget(self._btn_reset_gain)
         card.add_layout(gain_btn_hl)
-
 
         return card
 
@@ -411,14 +435,26 @@ class LeftControlPanel(QWidget):
         """Emit FPS signal → main_window._on_fps_changed."""
         self.sig_fps_changed.emit(float(self._spn_fps.value()))
 
-    def _on_apply_gain(self) -> None:
-        """Emit gain signal → main_window._on_gain_changed."""
-        self.sig_gain_changed.emit(self._spn_gain.value())
+    def _on_apply_gains(self) -> None:
+        """Emit per-channel gains → main_window._on_gains_changed."""
+        self.sig_gains_changed.emit(
+            self._spn_gains[0].value(),
+            self._spn_gains[1].value(),
+            self._spn_gains[2].value(),
+        )
 
-    def _on_reset_gain(self) -> None:
-        """Reset gain to hardware minimum (1 dB) and immediately apply."""
-        self._spn_gain.setValue(1.0)
-        self.sig_gain_changed.emit(1.0)
+    def _on_reset_gains(self) -> None:
+        """Reset all 3 channel gains to hardware minimum (1 dB) and immediately apply."""
+        for spn in self._spn_gains:
+            spn.setValue(1.0)
+        self.sig_gains_changed.emit(1.0, 1.0, 1.0)
+
+    def update_gains(self, ch1: float, ch2: float, ch3: float) -> None:
+        """Called by main_window after firmware readback to sync spinboxes to truth."""
+        values = [ch1, ch2, ch3]
+        for spn, val in zip(self._spn_gains, values):
+            if val >= 0:
+                spn.setValue(val)
 
 
     def _conveyor_card(self) -> QWidget:

@@ -303,7 +303,7 @@ class MainWindow(QMainWindow):
         # Camera hardware controls — forwarded to CameraWorker while streaming
         self._left.sig_exposure_changed.connect(self._on_exposure_changed)
         self._left.sig_fps_changed.connect(self._on_fps_changed)
-        self._left.sig_gain_changed.connect(self._on_gain_changed)
+        self._left.sig_gains_changed.connect(self._on_gains_changed)
 
     def _post_init(self) -> None:
         models_dir = Path(self._cfg.get("inference", {}).get("model_dir", "models/"))
@@ -348,7 +348,7 @@ class MainWindow(QMainWindow):
         self._cam_w.sig_frame.connect(self._on_frame)
         self._cam_w.sig_status.connect(self._on_cam_status)
         self._cam_w.sig_exposure_readback.connect(self._on_exposure_readback)
-        self._cam_w.sig_gain_readback.connect(self._on_gain_readback)
+        self._cam_w.sig_gains_readback.connect(self._on_gains_readback)
         self._cam_w.sig_cam_fps.connect(self._on_cam_fps)
         self._cam_w.start()
 
@@ -496,31 +496,30 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage("Frame rate: camera not connected — connect first")
 
-    @pyqtSlot(float)
-    def _on_gain_changed(self, gain_db: float) -> None:
-        """Forward gain change to all 3 camera sources while streaming."""
+    @pyqtSlot(float, float, float)
+    def _on_gains_changed(self, ch1_db: float, ch2_db: float, ch3_db: float) -> None:
+        """Forward per-channel gains to all 3 camera sources while streaming."""
         running = self._cam_w is not None and self._cam_w.isRunning()
         if running:
-            self._cam_w.set_gain(gain_db)
-            # Spinbox will be synced by sig_gain_readback once firmware confirms
+            self._cam_w.set_gains(ch1_db, ch2_db, ch3_db)
             self.statusBar().showMessage(
-                f"Gain: applying {gain_db:.1f} dB to all 3 sources…"
+                f"Gain: applying CH1={ch1_db:.1f} CH2={ch2_db:.1f} CH3={ch3_db:.1f} dB…"
             )
         else:
             self.statusBar().showMessage("Gain: camera not connected — connect first")
 
-    @pyqtSlot(float)
-    def _on_gain_readback(self, actual_db: float) -> None:
+    @pyqtSlot(float, float, float)
+    def _on_gains_readback(self, ch1: float, ch2: float, ch3: float) -> None:
         """
-        Receives the actual Gain read back from firmware after an Apply.
-        Updates the gain spinbox to show the real value (camera may clamp it).
+        Receives actual gains read back from firmware after an Apply.
+        Updates all 3 gain spinboxes to show real hardware values.
         """
-        self._left._spn_gain.setValue(actual_db)
+        self._left.update_gains(ch1, ch2, ch3)
         self.statusBar().showMessage(
-            f"Gain confirmed: {actual_db:.1f} dB  —  "
-            f"{2 ** (actual_db / 6.02):.1f}× amplification on all 3 sources"
+            f"Gain confirmed —  "
+            f"CH1: {ch1:.1f} dB  |  CH2: {ch2:.1f} dB  |  CH3: {ch3:.1f} dB"
         )
-        log.info("Gain spinbox synced to firmware value: %.1f dB", actual_db)
+        log.info("Gain readback — CH1=%.1f CH2=%.1f CH3=%.1f dB", ch1, ch2, ch3)
 
     @pyqtSlot(int)
     def _on_exposure_readback(self, actual_us: int) -> None:

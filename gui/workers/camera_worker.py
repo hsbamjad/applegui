@@ -50,9 +50,9 @@ class CameraWorker(QThread):
 
     sig_frame             = pyqtSignal(object, object, object, float)  # ch1, ch2, ch3, display_fps
     sig_status            = pyqtSignal(str, bool)                       # message, is_error
-    sig_exposure_readback = pyqtSignal(int)    # actual exposure µs read back from firmware
-    sig_gain_readback     = pyqtSignal(float)  # actual gain dB read back from firmware
-    sig_cam_fps           = pyqtSignal(float)  # actual camera acquisition FPS (grab thread)
+    sig_exposure_readback = pyqtSignal(int)          # actual exposure µs read back from firmware
+    sig_gains_readback    = pyqtSignal(float, float, float)  # actual CH1/CH2/CH3 gains in dB
+    sig_cam_fps           = pyqtSignal(float)         # actual camera acquisition FPS (grab thread)
 
     def __init__(self, config: dict, display_fps: int = 30) -> None:
         super().__init__()
@@ -177,13 +177,27 @@ class CameraWorker(QThread):
 
     def set_gain(self, gain_db: float) -> None:
         """
-        Forward gain change to all 3 camera sources while streaming.
-        Reads back the actual value accepted by firmware and emits sig_gain_readback
-        so the GUI spinbox always shows truth (camera may clamp the requested value).
+        Set same gain on all 3 sources (used by global Reset only).
+        Emits sig_gains_readback with the same actual value for all 3 channels.
         """
         if self._camera is not None:
             actual = self._camera.set_gain(gain_db)
             if actual >= 0:
-                self.sig_gain_readback.emit(actual)
+                self.sig_gains_readback.emit(actual, actual, actual)
         else:
             log.warning("set_gain ignored — camera not connected")
+
+    def set_gains(self, ch1_db: float, ch2_db: float, ch3_db: float) -> None:
+        """
+        Set independent gain per channel while streaming.
+        ch1_db → Source0 (Color), ch2_db → Source1 (NIR1), ch3_db → Source2 (NIR2).
+        Emits sig_gains_readback with the actual firmware-accepted values.
+        """
+        if self._camera is not None:
+            actuals = self._camera.set_gain_per_source([ch1_db, ch2_db, ch3_db])
+            # Pad to 3 values in case fewer sources exist
+            while len(actuals) < 3:
+                actuals.append(actuals[-1] if actuals else ch1_db)
+            self.sig_gains_readback.emit(actuals[0], actuals[1], actuals[2])
+        else:
+            log.warning("set_gains ignored — camera not connected")
