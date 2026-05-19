@@ -309,6 +309,9 @@ class MainWindow(QMainWindow):
         self._left.sig_exposure_changed.connect(self._on_exposure_changed)
         self._left.sig_fps_changed.connect(self._on_fps_changed)
         self._left.sig_gains_changed.connect(self._on_gains_changed)
+        # White balance controls — Source0 (Color CH1) only
+        self._left.sig_awb_triggered.connect(self._on_awb_triggered)
+        self._left.sig_wb_revert.connect(self._on_wb_revert)
 
     def _post_init(self) -> None:
         models_dir = Path(self._cfg.get("inference", {}).get("model_dir", "models/"))
@@ -356,6 +359,7 @@ class MainWindow(QMainWindow):
         self._cam_w.sig_gains_readback.connect(self._on_gains_readback)
         self._cam_w.sig_cam_fps.connect(self._on_cam_fps)
         self._cam_w.sig_block_ids.connect(self._on_block_ids)
+        self._cam_w.sig_wb_readback.connect(self._on_wb_readback)
         self._cam_w.start()
 
         # ── Inference worker ───────────────────────────────────────
@@ -562,3 +566,56 @@ class MainWindow(QMainWindow):
         self._lbl_sync.setText(f"Sync: {sync_str}  ·  IDs: {ch1_bid} / {ch2_bid} / {ch3_bid}")
         self._lbl_sync.setStyleSheet(f"color: {color}; font-family: monospace; font-size: 11px; font-weight: bold; margin-right: 10px;")
 
+    # ── White Balance slots ────────────────────────────────────────────────────
+
+    @pyqtSlot()
+    def _on_awb_triggered(self) -> None:
+        """
+        Forward One-Push AWB trigger to CameraWorker.
+        The worker runs trigger_auto_white_balance() (blocking ~0–3 s in its own
+        thread), then emits sig_wb_readback which calls _on_wb_readback here.
+        """
+        running = self._cam_w is not None and self._cam_w.isRunning()
+        if running:
+            self.statusBar().showMessage(
+                "White Balance: running One-Push calibration on Color channel…"
+            )
+            self._cam_w.trigger_awb()
+        else:
+            self.statusBar().showMessage(
+                "White Balance: camera not connected — connect first"
+            )
+
+    @pyqtSlot()
+    def _on_wb_revert(self) -> None:
+        """Revert WB to the ratios saved before the last One-Push AWB."""
+        running = self._cam_w is not None and self._cam_w.isRunning()
+        if running:
+            self.statusBar().showMessage(
+                "White Balance: reverting to pre-calibration ratios…"
+            )
+            self._cam_w.revert_white_balance()
+        else:
+            self.statusBar().showMessage(
+                "White Balance: camera not connected — connect first"
+            )
+
+    @pyqtSlot(bool, float, float, float)
+    def _on_wb_readback(
+        self, success: bool, r: float, g: float, b: float
+    ) -> None:
+        """
+        Called after AWB calibration completes or Revert finishes.
+        Updates the WB ratio display and status bar.
+        """
+        self._left.update_white_balance(success, r, g, b)
+        if success:
+            self.statusBar().showMessage(
+                f"White Balance confirmed — R: {r:.4f}  G: {g:.4f}  B: {b:.4f}"
+            )
+            log.info("WB readback — R=%.4f G=%.4f B=%.4f", r, g, b)
+        else:
+            self.statusBar().showMessage(
+                "White Balance: calibration failed — check connection and try again"
+            )
+            log.warning("WB readback: failed")

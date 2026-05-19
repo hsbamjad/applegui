@@ -196,6 +196,8 @@ class JAICamera:
         self._grab_fps      = 0.0
         self._grab_count    = 0
         self._grab_fps_t    = 0.0
+        # Saved WB ratios for Revert (set just before One-Push AWB is triggered)
+        self._saved_wb: Optional[tuple[float, float, float]] = None
 
     @property
     def grab_fps(self) -> float:
@@ -792,6 +794,227 @@ class JAICamera:
 
 
 
+    # ── White Balance helpers (Source0 / Color CH1 only) ──────────────────────
+
+    def _get_wb_selector_names(self, nm) -> dict:
+        """
+        Enumerate GainSelector entries on the currently-scoped source and
+        return a dict mapping role → entry_name for the WB channels.
+
+        The JAI FS-3200T may name these entries:
+          "Red" / "Green" / "Blue"   or
+          "DigitalRed" / "DigitalGreen" / "DigitalBlue"  etc.
+
+        We match by checking whether the entry name contains 'red', 'green',
+        or 'blue' (case-insensitive). First match per role wins.
+
+        Returns e.g. {'red': 'Red', 'green': 'Green', 'blue': 'Blue'}
+        Returns empty dict if GainSelector is not available.
+        """
+        result: dict = {}
+        gs = nm.GetEnum("GainSelector")
+        if gs is None:
+            return result
+        try:
+            _, count = gs.GetEntriesCount()
+            for i in range(count):
+                _, entry = gs.GetEntryByIndex(i)
+                if entry is None:
+                    continue
+                _, name = entry.GetName()
+                lower = name.lower()
+                if "red" in lower and "red" not in result:
+                    result["red"] = name
+                elif "green" in lower and "green" not in result:
+                    result["green"] = name
+                elif "blue" in lower and "blue" not in result:
+                    result["blue"] = name
+        except Exception as e:
+            log.warning("_get_wb_selector_names: %s", e)
+        return result
+
+    def get_white_balance_ratios(self) -> tuple:
+        """
+        Read current R/G/B WB ratios from Source0 (Color CH1) firmware registers.
+        Enumerates GainSelector on Source0 and reads the Gain float for each
+        of the Red / Green / Blue selectors.
+        Returns (r, g, b) as floats. Returns (1.0, 1.0, 1.0) on any failure.
+        """
+        if self._device is None or not self._sources:
+            return (1.0, 1.0, 1.0)
+        try:
+            import eBUS as eb
+            nm    = self._device.GetParameters()
+            stack = eb.PvGenStateStack(nm)
+            stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
+
+            wb_names = self._get_wb_selector_names(nm)
+            if not wb_names:
+                log.warning("get_white_balance_ratios: no R/G/B GainSelector entries found on %s",
+                            self._sources[0]._source_name)
+                return (1.0, 1.0, 1.0)
+
+            gs = nm.GetEnum("GainSelector")
+            ratios: dict = {"red": 1.0, "green": 1.0, "blue": 1.0}
+            for role, sel_name in wb_names.items():
+                r_sel = gs.SetValue(sel_name)
+                if not r_sel.IsOK():
+                    log.warning("get_wb: GainSelector.SetValue(%s) failed", sel_name)
+                    continue
+                param = nm.GetFloat("Gain")
+                if param is None:
+                    continue
+                _, val = param.GetValue()
+                ratios[role] = float(val)
+
+            log.info("WB readback Source0: R=%.4f G=%.4f B=%.4f",
+                     ratios["red"], ratios["green"], ratios["blue"])
+            return (ratios["red"], ratios["green"], ratios["blue"])
+        except Exception as e:
+            log.error("get_white_balance_ratios exception: %s", e)
+            return (1.0, 1.0, 1.0)
+
+    def set_white_balance_ratios(self, r: float, g: float, b: float) -> tuple:
+        """
+        Write explicit R/G/B WB ratios to Source0 GenICam registers.
+        - Scopes to Source0 only via PvGenStateStack
+        - Disables BalanceWhiteAuto first (sets to Off)
+        - Enumerates GainSelector, writes Gain for Red/Green/Blue entries
+        - Returns actual readback (r, g, b)
+        """
+        if self._device is None or not self._sources:
+            return (r, g, b)
+        try:
+            import eBUS as eb
+            nm    = self._device.GetParameters()
+            stack = eb.PvGenStateStack(nm)
+            stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
+
+            # Disable auto WB before manual write
+            bwa = nm.GetEnum("BalanceWhiteAuto")
+            if bwa:
+                bwa.SetValue("Off")
+
+            wb_names = self._get_wb_selector_names(nm)
+            if not wb_names:
+                log.warning("set_white_balance_ratios: no R/G/B GainSelector entries found")
+                return (r, g, b)
+
+            gs      = nm.GetEnum("GainSelector")
+            targets = {"red": r, "green": g, "blue": b}
+            actuals: dict = {"red": r, "green": g, "blue": b}
+
+            for role, sel_name in wb_names.items():
+                r_sel = gs.SetValue(sel_name)
+                if not r_sel.IsOK():
+                    log.warning("set_wb: GainSelector.SetValue(%s) failed", sel_name)
+                    continue
+                param = nm.GetFloat("Gain")
+                if param is None:
+                    continue
+                try:
+                    _, g_min = param.GetMin()
+                    _, g_max = param.GetMax()
+                    clamped  = float(max(g_min, min(g_max, targets[role])))
+                except Exception:
+                    clamped = float(targets[role])
+                r_write = param.SetValue(clamped)
+                if r_write.IsOK():
+                    _, v = param.GetValue()
+                    actuals[role] = float(v)
+                    print(f"[CAM] WB Source0 [{sel_name}]: "
+                          f"req={targets[role]:.4f} actual={actuals[role]:.4f}")
+                else:
+                    log.warning("set_wb: Gain.SetValue(%s, %.4f) failed: %s",
+                                sel_name, clamped, r_write.GetCodeString())
+
+            log.info("WB written Source0: R=%.4f G=%.4f B=%.4f",
+                     actuals["red"], actuals["green"], actuals["blue"])
+            return (actuals["red"], actuals["green"], actuals["blue"])
+        except Exception as e:
+            log.error("set_white_balance_ratios exception: %s", e)
+            return (r, g, b)
+
+    def trigger_auto_white_balance(self) -> tuple:
+        """
+        Trigger One-Push Auto White Balance on Source0 (Color CH1 only).
+
+        Steps:
+          1. Save current R/G/B ratios as revert target (self._saved_wb)
+          2. Set BalanceWhiteAuto = Once  (hardware calibration starts)
+          3. Poll BalanceWhiteAuto every 50 ms until it returns 'Off'
+             (firmware auto-reverts when calibration is complete)
+          4. Read back resulting R/G/B ratios from firmware
+
+        Returns:
+          (success: bool, r: float, g: float, b: float)
+        """
+        if self._device is None or not self._sources:
+            log.warning("trigger_auto_white_balance: no device / no sources")
+            return (False, 1.0, 1.0, 1.0)
+        try:
+            import eBUS as eb
+
+            # 1. Save current ratios as revert target
+            self._saved_wb = self.get_white_balance_ratios()
+            log.info("AWB: saved pre-calibration WB = R=%.4f G=%.4f B=%.4f",
+                     *self._saved_wb)
+
+            nm    = self._device.GetParameters()
+            stack = eb.PvGenStateStack(nm)
+            stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
+
+            bwa = nm.GetEnum("BalanceWhiteAuto")
+            if bwa is None:
+                log.error("AWB: BalanceWhiteAuto parameter not found on Source0")
+                return (False, 1.0, 1.0, 1.0)
+
+            # 2. Trigger One-Push
+            r_set = bwa.SetValue("Once")
+            if not r_set.IsOK():
+                log.error("AWB: BalanceWhiteAuto.SetValue('Once') failed: %s",
+                          r_set.GetCodeString())
+                return (False, 1.0, 1.0, 1.0)
+            log.info("AWB: BalanceWhiteAuto = Once — calibrating…")
+
+            # 3. Poll until firmware reverts flag to 'Off' (max 3 s)
+            deadline = time.time() + 3.0
+            poll_interval = 0.05
+            done = False
+            while time.time() < deadline:
+                time.sleep(poll_interval)
+                _, cur_val = bwa.GetValue()
+                cur_str = str(cur_val).lower()
+                if "off" in cur_str or cur_str == "0":
+                    done = True
+                    break
+                log.debug("AWB: BalanceWhiteAuto still = %s …", cur_val)
+
+            if not done:
+                log.warning("AWB: timed out waiting for BalanceWhiteAuto to return Off")
+
+            # 4. Read back resulting ratios
+            ratios = self.get_white_balance_ratios()
+            log.info("AWB complete: R=%.4f G=%.4f B=%.4f", *ratios)
+            return (True, ratios[0], ratios[1], ratios[2])
+
+        except Exception as e:
+            log.error("trigger_auto_white_balance exception: %s", e)
+            return (False, 1.0, 1.0, 1.0)
+
+    def revert_white_balance(self) -> tuple:
+        """
+        Restore the WB ratios saved before the last One-Push AWB calibration.
+        Returns (success, r, g, b). Fails gracefully if no save point exists.
+        """
+        if self._saved_wb is None:
+            log.warning("revert_white_balance: no saved WB target — AWB not yet triggered")
+            return (False, 1.0, 1.0, 1.0)
+        r, g, b = self._saved_wb
+        log.info("AWB revert: restoring R=%.4f G=%.4f B=%.4f", r, g, b)
+        actual = self.set_white_balance_ratios(r, g, b)
+        return (True, actual[0], actual[1], actual[2])
+
     def disconnect(self) -> None:
         import eBUS as eb
         self._running = False
@@ -957,6 +1180,33 @@ class CameraInterface:
         if self._mode == "jai" and self._backend:
             return self._backend.get_gains_per_source()
         return []
+
+    def get_white_balance_ratios(self) -> tuple:
+        """Read R/G/B WB ratios from Source0 firmware registers. Returns (1.0, 1.0, 1.0) in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.get_white_balance_ratios()
+        return (1.0, 1.0, 1.0)
+
+    def set_white_balance_ratios(self, r: float, g: float, b: float) -> tuple:
+        """Write R/G/B WB ratios to Source0 GenICam registers. No-op in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.set_white_balance_ratios(r, g, b)
+        log.debug("set_white_balance_ratios: mock mode — ignored")
+        return (r, g, b)
+
+    def trigger_auto_white_balance(self) -> tuple:
+        """Trigger One-Push AWB on Source0. Returns (success, r, g, b). No-op in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.trigger_auto_white_balance()
+        log.debug("trigger_auto_white_balance: mock mode — no-op")
+        return (False, 1.0, 1.0, 1.0)
+
+    def revert_white_balance(self) -> tuple:
+        """Restore pre-AWB WB ratios on Source0. Returns (success, r, g, b). No-op in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.revert_white_balance()
+        log.debug("revert_white_balance: mock mode — no-op")
+        return (False, 1.0, 1.0, 1.0)
 
     def grab_fps(self) -> float:
         """Actual camera acquisition FPS from grab thread. 0.0 in mock mode."""

@@ -54,6 +54,7 @@ class CameraWorker(QThread):
     sig_gains_readback    = pyqtSignal(float, float, float)  # actual CH1/CH2/CH3 gains in dB
     sig_cam_fps           = pyqtSignal(float)         # actual camera acquisition FPS (grab thread)
     sig_block_ids         = pyqtSignal(bool, int, int, int) # synced (bool), ch1_bid, ch2_bid, ch3_bid
+    sig_wb_readback       = pyqtSignal(bool, float, float, float)  # success, R, G, B ratios (Source0)
 
 
     def __init__(self, config: dict, display_fps: int = 30) -> None:
@@ -216,3 +217,42 @@ class CameraWorker(QThread):
             self.sig_gains_readback.emit(actuals[0], actuals[1], actuals[2])
         else:
             log.warning("set_gains ignored — camera not connected")
+
+    # ── White Balance controls (Source0 / Color CH1 only) ────────────────────
+
+    def trigger_awb(self) -> None:
+        """
+        Trigger One-Push Auto White Balance on Source0 (Color CH1 only).
+        Saves pre-AWB ratios internally for Revert.
+        Emits sig_wb_readback(success, r, g, b) when calibration completes.
+        """
+        if self._camera is not None:
+            success, r, g, b = self._camera.trigger_auto_white_balance()
+            self.sig_wb_readback.emit(success, r, g, b)
+        else:
+            log.warning("trigger_awb ignored — camera not connected")
+            self.sig_wb_readback.emit(False, 1.0, 1.0, 1.0)
+
+    def set_white_balance(self, r: float, g: float, b: float) -> None:
+        """
+        Write explicit R/G/B WB ratios directly to Source0 firmware registers.
+        Emits sig_wb_readback(success, r, g, b) with actual firmware-accepted values.
+        """
+        if self._camera is not None:
+            actual = self._camera.set_white_balance_ratios(r, g, b)
+            self.sig_wb_readback.emit(True, actual[0], actual[1], actual[2])
+        else:
+            log.warning("set_white_balance ignored — camera not connected")
+            self.sig_wb_readback.emit(False, r, g, b)
+
+    def revert_white_balance(self) -> None:
+        """
+        Restore the R/G/B WB ratios saved before the last One-Push AWB calibration.
+        Emits sig_wb_readback(success, r, g, b).
+        """
+        if self._camera is not None:
+            success, r, g, b = self._camera.revert_white_balance()
+            self.sig_wb_readback.emit(success, r, g, b)
+        else:
+            log.warning("revert_white_balance ignored — camera not connected")
+            self.sig_wb_readback.emit(False, 1.0, 1.0, 1.0)

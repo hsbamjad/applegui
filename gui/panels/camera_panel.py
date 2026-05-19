@@ -190,14 +190,16 @@ def _sep(card_layout) -> None:
 class LeftControlPanel(QWidget):
     """Left sidebar — all operator controls."""
 
-    sig_connect_camera  = pyqtSignal(bool)
-    sig_load_model      = pyqtSignal(str)
-    sig_sorter_toggled  = pyqtSignal(bool)
-    sig_logging_toggled = pyqtSignal(bool)
-    sig_speed_changed   = pyqtSignal(int)
+    sig_connect_camera   = pyqtSignal(bool)
+    sig_load_model       = pyqtSignal(str)
+    sig_sorter_toggled   = pyqtSignal(bool)
+    sig_logging_toggled  = pyqtSignal(bool)
+    sig_speed_changed    = pyqtSignal(int)
     sig_exposure_changed = pyqtSignal(int, int, int)  # CH1/CH2/CH3 µs — emitted on Apply
     sig_fps_changed      = pyqtSignal(float)           # FPS — emitted on Apply
     sig_gains_changed    = pyqtSignal(float, float, float)  # CH1/CH2/CH3 dB — emitted on Apply All
+    sig_awb_triggered    = pyqtSignal()                # One-Push AWB requested (Color CH1 / Source0)
+    sig_wb_revert        = pyqtSignal()                # Revert to pre-AWB ratios requested
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -430,6 +432,79 @@ class LeftControlPanel(QWidget):
         gain_btn_hl.addWidget(self._btn_reset_gain)
         card.add_layout(gain_btn_hl)
 
+        _sep(card)
+
+        # ── White Balance (Source0 / Color CH1 only) ────────────────────────────
+        # WB ratios live on GainSelector=Red/Green/Blue for Source0 (Color CH1) only.
+        # NIR channels have no Bayer pattern and no WB concept.
+        wb_hdr = QWidget()
+        wb_hdr.setStyleSheet("background: transparent; border: none;")
+        wb_hdr_hl = QHBoxLayout(wb_hdr)
+        wb_hdr_hl.setContentsMargins(0, 2, 0, 2)
+        wb_hdr_hl.setSpacing(6)
+        wb_ch_lbl = QLabel("● White Balance")
+        wb_ch_lbl.setStyleSheet(
+            "color: #f59e0b; font-size: 11px; font-weight: 700; background: transparent;"
+        )
+        wb_hdr_hl.addWidget(wb_ch_lbl)
+        wb_hdr_hl.addStretch()
+        self._lbl_wb_ratios = QLabel("R: —   G: —   B: —")
+        self._lbl_wb_ratios.setStyleSheet(
+            f"color: {TEXT_3}; font-size: 10px; background: transparent;"
+        )
+        wb_hdr_hl.addWidget(self._lbl_wb_ratios)
+        card.add(wb_hdr)
+
+        # Auto WB button (amber accent)
+        self._btn_awb = QPushButton("⚡  Auto WB")
+        self._btn_awb.setFixedHeight(34)
+        self._btn_awb.setToolTip(
+            "One-Push Auto White Balance on the Color channel (Source0).\n"
+            "Point camera at a neutral white/grey reference target, then click.\n"
+            "Firmware computes optimal R/G/B ratios under current illumination.\n"
+            "Previous ratios are saved automatically for Revert."
+        )
+        self._btn_awb.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #f59e0b22; color: #f59e0b;
+                border: 1px solid #f59e0b55; font-weight: 700; font-size: 12px;
+                border-radius: 7px;
+            }}
+            QPushButton:hover:enabled   {{ background-color: #f59e0b44; color: #fbbf24;
+                                           border-color: #f59e0b99; }}
+            QPushButton:pressed:enabled {{ background-color: #f59e0b66; }}
+            QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3}; border-color: {BORDER}; }}
+        """)
+        self._btn_awb.clicked.connect(self.sig_awb_triggered.emit)
+
+        # Revert WB button (warning/reset style) — disabled until first AWB run
+        self._btn_revert_wb = QPushButton("↺  Revert")
+        self._btn_revert_wb.setFixedHeight(34)
+        self._btn_revert_wb.setEnabled(False)
+        self._btn_revert_wb.setToolTip(
+            "Restore R/G/B WB ratios to their values before the last Auto WB.\n"
+            "Only available after Auto WB has been run at least once."
+        )
+        self._btn_revert_wb.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                border: 1px solid {BORDER}; font-weight: 600; font-size: 11px;
+                border-radius: 7px; padding: 0 10px;
+            }}
+            QPushButton:hover:enabled   {{ background-color: {WARNING}22; color: {WARNING};
+                                           border-color: {WARNING}55; }}
+            QPushButton:pressed:enabled {{ background-color: {WARNING}44; }}
+            QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3}; border-color: {BORDER}; }}
+        """)
+        self._btn_revert_wb.clicked.connect(self.sig_wb_revert.emit)
+
+        wb_btn_hl = QHBoxLayout()
+        wb_btn_hl.setContentsMargins(0, 4, 0, 0)
+        wb_btn_hl.setSpacing(6)
+        wb_btn_hl.addWidget(self._btn_awb, stretch=1)
+        wb_btn_hl.addWidget(self._btn_revert_wb)
+        card.add_layout(wb_btn_hl)
+
         return card
 
     # ── Camera card slots ─────────────────────────────────────────────────────
@@ -496,6 +571,23 @@ class LeftControlPanel(QWidget):
         for spn, val in zip(self._spn_gains, values):
             if val >= 0:
                 spn.setValue(val)
+
+    def update_white_balance(self, success: bool, r: float, g: float, b: float) -> None:
+        """
+        Called by main_window after AWB or manual WB write is confirmed by firmware.
+        Updates the ratio readout label and enables the Revert button.
+        """
+        if success:
+            self._lbl_wb_ratios.setText(f"R: {r:.3f}   G: {g:.3f}   B: {b:.3f}")
+            self._lbl_wb_ratios.setStyleSheet(
+                "color: #f59e0b; font-size: 10px; background: transparent;"
+            )
+            self._btn_revert_wb.setEnabled(True)
+        else:
+            self._lbl_wb_ratios.setText("R: —   G: —   B: — (failed)")
+            self._lbl_wb_ratios.setStyleSheet(
+                f"color: {DANGER}; font-size: 10px; background: transparent;"
+            )
 
 
     def _conveyor_card(self) -> QWidget:
