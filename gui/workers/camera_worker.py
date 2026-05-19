@@ -20,11 +20,30 @@ import logging
 import ctypes
 
 import numpy as np
+import cv2
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.camera.camera_interface import CameraInterface
 
 log = logging.getLogger(__name__)
+
+# Display resolution for sig_frame emission.
+# The camera grab thread produces full 2048x1536 frames (raw data preserved).
+# Before emitting to Qt, frames are resized to this size so the GUI thread
+# does not have to scale 9 MP images at 60+ FPS (which causes severe lag).
+# Inference and saving always use the full-res FrameTriplet, not these copies.
+_DISP_W = 640
+_DISP_H = 480
+
+
+def _resize_for_display(frame: np.ndarray) -> np.ndarray:
+    """Resize a frame to display resolution using INTER_AREA (best for downscaling)."""
+    if frame is None:
+        return frame
+    h, w = frame.shape[:2]
+    if w == _DISP_W and h == _DISP_H:
+        return frame   # already correct size (e.g. mock frames)
+    return cv2.resize(frame, (_DISP_W, _DISP_H), interpolation=cv2.INTER_AREA)
 
 # Windows high-resolution timer (1ms precision instead of default 15.625ms).
 # Without this, time.sleep() rounds to 15.625ms ticks, causing display FPS
@@ -113,7 +132,12 @@ class CameraWorker(QThread):
                 if cam_fps > 0:
                     self.sig_cam_fps.emit(cam_fps)
 
-            self.sig_frame.emit(triplet.ch1, triplet.ch2, triplet.ch3, fps)
+            # Resize to display resolution before emitting — keeps Qt fast at 60+ FPS.
+            # Raw full-res data remains in `triplet` for inference / saving.
+            d1 = _resize_for_display(triplet.ch1)
+            d2 = _resize_for_display(triplet.ch2)
+            d3 = _resize_for_display(triplet.ch3)
+            self.sig_frame.emit(d1, d2, d3, fps)
 
             sleep = min_interval - (time.perf_counter() - t0)
             if sleep > 0:
