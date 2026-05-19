@@ -312,6 +312,8 @@ class MainWindow(QMainWindow):
         # White balance controls — Source0 (Color CH1) only
         self._left.sig_awb_triggered.connect(self._on_awb_triggered)
         self._left.sig_wb_revert.connect(self._on_wb_revert)
+        # Black Level controls — all 3 sources independently
+        self._left.sig_black_level_changed.connect(self._on_black_level_changed)
 
     def _post_init(self) -> None:
         models_dir = Path(self._cfg.get("inference", {}).get("model_dir", "models/"))
@@ -360,6 +362,7 @@ class MainWindow(QMainWindow):
         self._cam_w.sig_cam_fps.connect(self._on_cam_fps)
         self._cam_w.sig_block_ids.connect(self._on_block_ids)
         self._cam_w.sig_wb_readback.connect(self._on_wb_readback)
+        self._cam_w.sig_black_level_readback.connect(self._on_black_level_readback)
         self._cam_w.start()
 
         # ── Inference worker ───────────────────────────────────────
@@ -619,3 +622,35 @@ class MainWindow(QMainWindow):
                 "White Balance: calibration failed — check connection and try again"
             )
             log.warning("WB readback: failed")
+
+    # ── Black Level slots ──────────────────────────────────────────────────────
+
+    @pyqtSlot(float, float, float)
+    def _on_black_level_changed(
+        self, ch1: float, ch2: float, ch3: float
+    ) -> None:
+        """Forward per-channel black level changes to CameraWorker while streaming."""
+        running = self._cam_w is not None and self._cam_w.isRunning()
+        if running:
+            self._cam_w.set_black_levels(ch1, ch2, ch3)
+            self.statusBar().showMessage(
+                f"Black Level: applying CH1={ch1:.1f}  CH2={ch2:.1f}  CH3={ch3:.1f} DN…"
+            )
+        else:
+            self.statusBar().showMessage(
+                "Black Level: camera not connected — connect first"
+            )
+
+    @pyqtSlot(float, float, float)
+    def _on_black_level_readback(
+        self, ch1: float, ch2: float, ch3: float
+    ) -> None:
+        """
+        Receives actual BlackLevel values read back from firmware after an Apply.
+        Updates all 3 spinboxes to reflect the real (possibly clamped) values.
+        """
+        self._left.update_black_levels(ch1, ch2, ch3)
+        self.statusBar().showMessage(
+            f"Black Level confirmed — CH1: {ch1:.1f}  CH2: {ch2:.1f}  CH3: {ch3:.1f} DN"
+        )
+        log.info("Black Level readback — CH1=%.1f CH2=%.1f CH3=%.1f DN", ch1, ch2, ch3)

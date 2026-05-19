@@ -1042,6 +1042,138 @@ class JAICamera:
         actual = self.set_white_balance_ratios(r, g, b)
         return (True, actual[0], actual[1], actual[2])
 
+    # ── Black Level helpers (per-source, hardware pedestal) ────────────────────
+
+    def _apply_black_level_loop(self, levels: list[float]) -> list[float]:
+        """
+        Write BlackLevel to each source independently.
+
+        GenICam pattern:
+          1. Scope to source via PvGenStateStack + SourceSelector
+          2. Set BlackLevelSelector = 'All' (or first available selector)
+          3. Write BlackLevel float value (firmware clamps to valid range)
+          4. Read back actual value
+
+        Returns list of actual readback values (one per source).
+        """
+        import eBUS as eb
+        nm      = self._device.GetParameters()
+        actuals = []
+
+        for i, src in enumerate(self._sources):
+            level = levels[i] if i < len(levels) else levels[0]
+
+            stack = eb.PvGenStateStack(nm)
+            stack.SetEnumValue("SourceSelector", src._source_name)
+
+            # Set BlackLevelSelector — try 'All' first, then enumerate to find best entry
+            bls = nm.GetEnum("BlackLevelSelector")
+            if bls:
+                # Try 'All' directly
+                r_sel = bls.SetValue("All")
+                if not r_sel.IsOK():
+                    # Enumerate and use first available entry
+                    try:
+                        _, count = bls.GetEntriesCount()
+                        for j in range(count):
+                            _, entry = bls.GetEntryByIndex(j)
+                            if entry:
+                                _, name = entry.GetName()
+                                r_try = bls.SetValue(name)
+                                if r_try.IsOK():
+                                    log.debug("BlackLevelSelector: using '%s' on %s",
+                                              name, src._source_name)
+                                    break
+                    except Exception as e:
+                        log.warning("BlackLevelSelector enumeration failed on %s: %s",
+                                    src._source_name, e)
+
+            param = nm.GetFloat("BlackLevel")
+            if param is None:
+                log.warning("BlackLevel parameter not found on %s", src._source_name)
+                actuals.append(level)
+                continue
+
+            try:
+                _, bl_min = param.GetMin()
+                _, bl_max = param.GetMax()
+                clamped   = float(max(bl_min, min(bl_max, level)))
+            except Exception:
+                clamped = float(level)
+
+            r_write = param.SetValue(clamped)
+            if r_write.IsOK():
+                _, v = param.GetValue()
+                actual = float(v)
+                print(f"[CAM] BlackLevel {src._source_name}: "
+                      f"req={level:.1f} actual={actual:.1f} DN")
+            else:
+                actual = level
+                log.warning("BlackLevel.SetValue(%.1f) failed on %s: %s",
+                            clamped, src._source_name, r_write.GetCodeString())
+
+            actuals.append(actual)
+            # stack destroyed → SourceSelector reverts for next iteration
+
+        return actuals
+
+    def set_black_levels_per_source(self, levels: list[float]) -> list[float]:
+        """
+        Set independent BlackLevel (DN) per source while streaming.
+        levels[0] → Source0 (Color / CH1)
+        levels[1] → Source1 (NIR1  / CH2)
+        levels[2] → Source2 (NIR2  / CH3)
+        Returns list of actual firmware-accepted values.
+        """
+        if self._device is None:
+            log.warning("set_black_levels_per_source: no device connected")
+            return levels
+        try:
+            actuals = self._apply_black_level_loop(levels)
+            log.info("Camera: BlackLevel per-source req=%s actual=%s", levels, actuals)
+            return actuals
+        except Exception as e:
+            log.error("set_black_levels_per_source exception: %s", e)
+            return levels
+
+    def get_black_levels_per_source(self) -> list[float]:
+        """
+        Read current BlackLevel (DN) from ALL sources independently.
+        Returns list of float values (one per source), or [] on failure.
+        """
+        if self._device is None:
+            return []
+        try:
+            import eBUS as eb
+            nm     = self._device.GetParameters()
+            levels = []
+            for src in self._sources:
+                stack = eb.PvGenStateStack(nm)
+                stack.SetEnumValue("SourceSelector", src._source_name)
+
+                bls = nm.GetEnum("BlackLevelSelector")
+                if bls:
+                    r_sel, _ = bls.SetValue("All")
+                    if not r_sel.IsOK():
+                        try:
+                            _, entry = bls.GetEntryByIndex(0)
+                            if entry:
+                                _, name = entry.GetName()
+                                bls.SetValue(name)
+                        except Exception:
+                            pass
+
+                param = nm.GetFloat("BlackLevel")
+                if param:
+                    _, val = param.GetValue()
+                    levels.append(float(val))
+                else:
+                    levels.append(0.0)
+            return levels
+        except Exception as e:
+            log.error("get_black_levels_per_source exception: %s", e)
+            return []
+
     def disconnect(self) -> None:
         import eBUS as eb
         self._running = False
@@ -1234,6 +1366,19 @@ class CameraInterface:
             return self._backend.revert_white_balance()
         log.debug("revert_white_balance: mock mode — no-op")
         return (False, 1.0, 1.0, 1.0)
+
+    def set_black_levels_per_source(self, levels: list[float]) -> list[float]:
+        """Write BlackLevel (DN) to all 3 sources independently. No-op in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.set_black_levels_per_source(levels)
+        log.debug("set_black_levels_per_source: mock mode — ignored")
+        return levels
+
+    def get_black_levels_per_source(self) -> list[float]:
+        """Read BlackLevel (DN) from all 3 sources. Returns [] on failure or in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.get_black_levels_per_source()
+        return []
 
     def grab_fps(self) -> float:
         """Actual camera acquisition FPS from grab thread. 0.0 in mock mode."""

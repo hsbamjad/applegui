@@ -48,13 +48,14 @@ def _set_timer_resolution(period_ms: int) -> None:
 class CameraWorker(QThread):
     """Background QThread: grabs synchronized frame triplets, emits to GUI."""
 
-    sig_frame             = pyqtSignal(object, object, object, float)  # ch1, ch2, ch3, display_fps
-    sig_status            = pyqtSignal(str, bool)                       # message, is_error
-    sig_exposure_readback = pyqtSignal(int, int, int) # actual CH1/CH2/CH3 exposures in µs
-    sig_gains_readback    = pyqtSignal(float, float, float)  # actual CH1/CH2/CH3 gains in dB
-    sig_cam_fps           = pyqtSignal(float)         # actual camera acquisition FPS (grab thread)
-    sig_block_ids         = pyqtSignal(bool, int, int, int) # synced (bool), ch1_bid, ch2_bid, ch3_bid
-    sig_wb_readback       = pyqtSignal(bool, float, float, float)  # success, R, G, B ratios (Source0)
+    sig_frame                 = pyqtSignal(object, object, object, float)  # ch1, ch2, ch3, display_fps
+    sig_status                = pyqtSignal(str, bool)                       # message, is_error
+    sig_exposure_readback     = pyqtSignal(int, int, int)    # actual CH1/CH2/CH3 exposures in µs
+    sig_gains_readback        = pyqtSignal(float, float, float)  # actual CH1/CH2/CH3 gains in dB
+    sig_cam_fps               = pyqtSignal(float)            # actual camera acquisition FPS (grab thread)
+    sig_block_ids             = pyqtSignal(bool, int, int, int)  # synced, ch1_bid, ch2_bid, ch3_bid
+    sig_wb_readback           = pyqtSignal(bool, float, float, float)  # success, R, G, B (Source0)
+    sig_black_level_readback  = pyqtSignal(float, float, float)  # actual CH1/CH2/CH3 black levels DN
 
 
     def __init__(self, config: dict, display_fps: int = 30) -> None:
@@ -256,3 +257,21 @@ class CameraWorker(QThread):
         else:
             log.warning("revert_white_balance ignored — camera not connected")
             self.sig_wb_readback.emit(False, 1.0, 1.0, 1.0)
+
+    # ── Black Level controls (per-source hardware pedestal) ──────────────────
+
+    def set_black_levels(self, ch1: float, ch2: float, ch3: float) -> None:
+        """
+        Set independent BlackLevel (DN) per channel while streaming.
+        ch1 → Source0 (Color / CH1)
+        ch2 → Source1 (NIR1  / CH2)
+        ch3 → Source2 (NIR2  / CH3)
+        Reads back firmware-accepted values and emits sig_black_level_readback.
+        """
+        if self._camera is not None:
+            actuals = self._camera.set_black_levels_per_source([ch1, ch2, ch3])
+            while len(actuals) < 3:
+                actuals.append(actuals[-1] if actuals else ch1)
+            self.sig_black_level_readback.emit(actuals[0], actuals[1], actuals[2])
+        else:
+            log.warning("set_black_levels ignored — camera not connected")

@@ -190,16 +190,17 @@ def _sep(card_layout) -> None:
 class LeftControlPanel(QWidget):
     """Left sidebar — all operator controls."""
 
-    sig_connect_camera   = pyqtSignal(bool)
-    sig_load_model       = pyqtSignal(str)
-    sig_sorter_toggled   = pyqtSignal(bool)
-    sig_logging_toggled  = pyqtSignal(bool)
-    sig_speed_changed    = pyqtSignal(int)
-    sig_exposure_changed = pyqtSignal(int, int, int)  # CH1/CH2/CH3 µs — emitted on Apply
-    sig_fps_changed      = pyqtSignal(float)           # FPS — emitted on Apply
-    sig_gains_changed    = pyqtSignal(float, float, float)  # CH1/CH2/CH3 dB — emitted on Apply All
-    sig_awb_triggered    = pyqtSignal()                # One-Push AWB requested (Color CH1 / Source0)
-    sig_wb_revert        = pyqtSignal()                # Revert to pre-AWB ratios requested
+    sig_connect_camera        = pyqtSignal(bool)
+    sig_load_model            = pyqtSignal(str)
+    sig_sorter_toggled        = pyqtSignal(bool)
+    sig_logging_toggled       = pyqtSignal(bool)
+    sig_speed_changed         = pyqtSignal(int)
+    sig_exposure_changed      = pyqtSignal(int, int, int)    # CH1/CH2/CH3 µs — emitted on Apply
+    sig_fps_changed           = pyqtSignal(float)            # FPS — emitted on Apply
+    sig_gains_changed         = pyqtSignal(float, float, float)   # CH1/CH2/CH3 dB — emitted on Apply
+    sig_awb_triggered         = pyqtSignal()                 # One-Push AWB requested (Color CH1 / Source0)
+    sig_wb_revert             = pyqtSignal()                 # Revert to pre-AWB ratios requested
+    sig_black_level_changed   = pyqtSignal(float, float, float)  # CH1/CH2/CH3 DN — emitted on Apply
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -505,6 +506,113 @@ class LeftControlPanel(QWidget):
         wb_btn_hl.addWidget(self._btn_revert_wb)
         card.add_layout(wb_btn_hl)
 
+        _sep(card)
+
+        # ── Black Level (per-source hardware pedestal) ─────────────────────────────────
+        # GenICam: BlackLevelSelector=All, BlackLevel float (DN)
+        # Removing ambient dark-pedestal and thermal noise at hardware level.
+        bl_hdr = QWidget()
+        bl_hdr.setStyleSheet("background: transparent; border: none;")
+        bl_hdr_hl = QHBoxLayout(bl_hdr)
+        bl_hdr_hl.setContentsMargins(0, 2, 0, 2)
+        bl_hdr_hl.setSpacing(0)
+        bl_ch_lbl = QLabel("● Black Level")
+        bl_ch_lbl.setStyleSheet(
+            "color: #94a3b8; font-size: 11px; font-weight: 700; background: transparent;"
+        )
+        bl_hdr_hl.addWidget(bl_ch_lbl)
+        bl_hdr_hl.addStretch()
+        bl_unit_lbl = QLabel("DN")
+        bl_unit_lbl.setStyleSheet(f"color: {TEXT_3}; font-size: 10px; background: transparent;")
+        bl_hdr_hl.addWidget(bl_unit_lbl)
+        card.add(bl_hdr)
+
+        # Channel colors match the rest of the panel (CH1=amber, CH2/CH3=cyan)
+        _BL_COLORS  = ["#f59e0b", "#06b6d4", "#06b6d4"]
+        _BL_LABELS  = ["CH1 Color", "CH2 NIR1", "CH3 NIR2"]
+        _BL_TIPS    = [
+            "Color sensor (Source0) black level pedestal (DN).",
+            "NIR1 sensor (Source1) black level pedestal (DN).",
+            "NIR2 sensor (Source2) black level pedestal (DN).",
+        ]
+        self._spn_black_levels: list[QDoubleSpinBox] = []
+        for ch_idx in range(3):
+            bl_row = QWidget()
+            bl_row.setStyleSheet("background: transparent; border: none;")
+            bl_rl = QHBoxLayout(bl_row)
+            bl_rl.setContentsMargins(0, 1, 0, 1)
+            bl_rl.setSpacing(6)
+
+            lbl_col = _BL_COLORS[ch_idx]
+            ch_label = QLabel(_BL_LABELS[ch_idx])
+            ch_label.setFixedWidth(LABEL_W)
+            ch_label.setStyleSheet(
+                f"color: {lbl_col}; font-size: 11px; "
+                f"font-weight: 600; background: transparent;"
+            )
+
+            spn = QDoubleSpinBox()
+            spn.setRange(0.0, 255.0)   # GenICam BlackLevel range; firmware clamps
+            spn.setDecimals(1)
+            spn.setSingleStep(1.0)
+            spn.setValue(0.0)
+            spn.setSuffix(" DN")
+            spn.setToolTip(_BL_TIPS[ch_idx])
+            spn.setMinimumWidth(WIDGET_MIN_W)
+            spn.setStyleSheet(f"""
+                QDoubleSpinBox {{
+                    background-color: {BG_ELEVATED}; color: {TEXT_1};
+                    border: 1px solid {BORDER}; border-radius: 5px; padding: 2px 6px;
+                }}
+                QDoubleSpinBox:focus {{ border-color: {lbl_col}; }}
+            """)
+            self._spn_black_levels.append(spn)
+
+            bl_rl.addWidget(ch_label)
+            bl_rl.addWidget(spn, stretch=1)
+            card.add(bl_row)
+
+        # Apply + Reset buttons
+        self._btn_apply_bl = QPushButton("✓  Apply")
+        self._btn_apply_bl.setFixedHeight(32)
+        self._btn_apply_bl.setToolTip(
+            "Write Black Level values to firmware for all 3 sources."
+        )
+        self._btn_apply_bl.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT}22; color: {ACCENT};
+                border: 1px solid {ACCENT}55; font-weight: 700; border-radius: 7px;
+            }}
+            QPushButton:hover:enabled   {{ background-color: {ACCENT}44; color: #fff;
+                                           border-color: {ACCENT}99; }}
+            QPushButton:pressed:enabled {{ background-color: {ACCENT}66; }}
+            QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3};
+                                    border-color: {BORDER}; }}
+        """)
+        self._btn_apply_bl.clicked.connect(self._on_apply_black_levels)
+
+        self._btn_reset_bl = QPushButton("↺")
+        self._btn_reset_bl.setFixedSize(32, 32)
+        self._btn_reset_bl.setToolTip("Reset all Black Levels to 0 DN (sensor default).")
+        self._btn_reset_bl.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                border: 1px solid {BORDER}; border-radius: 7px; font-size: 14px;
+            }}
+            QPushButton:hover:enabled {{ background-color: {WARNING}22; color: {WARNING};
+                                         border-color: {WARNING}55; }}
+            QPushButton:pressed:enabled {{ background-color: {WARNING}44; }}
+            QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3}; border-color: {BORDER}; }}
+        """)
+        self._btn_reset_bl.clicked.connect(self._on_reset_black_levels)
+
+        bl_btn_hl = QHBoxLayout()
+        bl_btn_hl.setContentsMargins(0, 4, 0, 0)
+        bl_btn_hl.setSpacing(6)
+        bl_btn_hl.addWidget(self._btn_apply_bl, stretch=1)
+        bl_btn_hl.addWidget(self._btn_reset_bl)
+        card.add_layout(bl_btn_hl)
+
         return card
 
     # ── Camera card slots ─────────────────────────────────────────────────────
@@ -589,6 +697,27 @@ class LeftControlPanel(QWidget):
                 f"color: {DANGER}; font-size: 10px; background: transparent;"
             )
 
+    def _on_apply_black_levels(self) -> None:
+        """Emit per-channel black levels → main_window._on_black_level_changed."""
+        self.sig_black_level_changed.emit(
+            self._spn_black_levels[0].value(),
+            self._spn_black_levels[1].value(),
+            self._spn_black_levels[2].value(),
+        )
+
+    def _on_reset_black_levels(self) -> None:
+        """Reset all 3 channel black levels to 0 DN (sensor default) and immediately apply."""
+        for spn in self._spn_black_levels:
+            spn.setValue(0.0)
+        self.sig_black_level_changed.emit(0.0, 0.0, 0.0)
+
+    def update_black_levels(self, ch1: float, ch2: float, ch3: float) -> None:
+        """Called by main_window after firmware readback to sync spinboxes to truth."""
+        values = [ch1, ch2, ch3]
+        for spn, val in zip(self._spn_black_levels, values):
+            spn.blockSignals(True)
+            spn.setValue(val)
+            spn.blockSignals(False)
 
     def _conveyor_card(self) -> QWidget:
         card = _Card()
