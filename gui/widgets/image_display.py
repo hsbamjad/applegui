@@ -51,6 +51,10 @@ class ChannelPanel(QWidget):
         self._meta   = CHANNEL_META[idx]
         self._color  = CH_COLORS[idx]
         self._frames = 0
+        # ROI preview overlay — sensor-space rectangle (None = full frame / no overlay)
+        self._roi_preview: tuple[int, int, int, int] | None = None  # (ox, oy, w, h)
+        self._sensor_w = 2048
+        self._sensor_h = 1536
         self._setup()
 
     def _setup(self) -> None:
@@ -213,10 +217,140 @@ class ChannelPanel(QWidget):
                 Qt.TransformationMode.SmoothTransformation,
             )
 
+        # Draw ROI overlay on top of the scaled pixmap (before display)
+        if self._roi_preview is not None:
+            pixmap = self._draw_roi_overlay(pixmap, w, h)
+
         self._display.setPixmap(pixmap)
         self._frames += 1
         self._lbl_res.setText(f"{w}×{h}")
         self._lbl_fps.setText(f"{fps:.1f} FPS")
+
+        # Update sensor dimensions for accurate overlay scaling
+        self._sensor_w = w
+        self._sensor_h = h
+
+    def _draw_roi_overlay(self, pixmap: QPixmap, frame_w: int, frame_h: int) -> QPixmap:
+        """
+        Draw a cyan ROI cut-line rectangle on top of the pixmap.
+        The area OUTSIDE the ROI is dimmed with a semi-transparent dark overlay.
+        The ROI boundary is shown as a dashed cyan border.
+
+        frame_w/frame_h = actual frame dimensions in the pixmap (after scaling).
+        """
+        if self._roi_preview is None:
+            return pixmap
+        ox, oy, rw, rh = self._roi_preview
+
+        # Check if ROI is full-frame — no overlay needed
+        if ox == 0 and oy == 0 and rw == self._sensor_w and rh == self._sensor_h:
+            return pixmap
+
+        pw = pixmap.width()
+        ph = pixmap.height()
+
+        # Map from sensor space to pixmap space
+        # The frame inside the pixmap may have letterbox padding (AspectRatio)
+        # Compute the actual image rect inside the pixmap
+        sensor_aspect = self._sensor_w / self._sensor_h
+        pixmap_aspect = pw / ph
+        if sensor_aspect > pixmap_aspect:
+            # Image is full width, letterboxed top/bottom
+            img_w = pw
+            img_h = int(pw / sensor_aspect)
+            img_x = 0
+            img_y = (ph - img_h) // 2
+        else:
+            # Image is full height, pillarboxed left/right
+            img_h = ph
+            img_w = int(ph * sensor_aspect)
+            img_x = (pw - img_w) // 2
+            img_y = 0
+
+        scale_x = img_w / self._sensor_w
+        scale_y = img_h / self._sensor_h
+
+        # ROI rect in pixmap coordinates
+        rx = img_x + int(ox * scale_x)
+        ry = img_y + int(oy * scale_y)
+        rw_px = int(rw * scale_x)
+        rh_px = int(rh * scale_y)
+
+        result = pixmap.copy()
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+        # Dim everything OUTSIDE the ROI with a dark translucent overlay
+        painter.setBrush(QBrush(QColor(0, 0, 0, 120)))
+        painter.setPen(Qt.PenStyle.NoPen)
+        # Top strip
+        if ry > img_y:
+            painter.drawRect(img_x, img_y, img_w, ry - img_y)
+        # Bottom strip
+        bot = ry + rh_px
+        if bot < img_y + img_h:
+            painter.drawRect(img_x, bot, img_w, (img_y + img_h) - bot)
+        # Left strip
+        if rx > img_x:
+            painter.drawRect(img_x, ry, rx - img_x, rh_px)
+        # Right strip
+        right = rx + rw_px
+        if right < img_x + img_w:
+            painter.drawRect(right, ry, (img_x + img_w) - right, rh_px)
+
+        # Dashed cyan border around ROI
+        pen = QPen(QColor("#06b6d4"))
+        pen.setWidth(2)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(rx, ry, rw_px, rh_px)
+
+        # Corner tick marks for clarity
+        tick = 12
+        pen.setStyle(Qt.PenStyle.SolidLine)
+        pen.setWidth(3)
+        painter.setPen(pen)
+        for cx, cy, dx, dy in [
+            (rx,           ry,           1,  1),
+            (rx + rw_px,   ry,          -1,  1),
+            (rx,           ry + rh_px,   1, -1),
+            (rx + rw_px,   ry + rh_px,  -1, -1),
+        ]:
+            painter.drawLine(cx, cy, cx + dx * tick, cy)
+            painter.drawLine(cx, cy, cx, cy + dy * tick)
+
+        # Label: 'W×H @ (X,Y)' near top-left of ROI
+        from PyQt6.QtGui import QFontMetrics
+        label_text = f"{rw}×{rh} @ ({ox},{oy})"
+        font = painter.font()
+        font.setPointSize(8)
+        font.setBold(True)
+        painter.setFont(font)
+        fm = QFontMetrics(font)
+        tw = fm.horizontalAdvance(label_text) + 8
+        th = fm.height() + 4
+        lx = rx + 4
+        ly = ry + 4
+        # Background pill
+        painter.setBrush(QBrush(QColor(0, 0, 0, 160)))
+        pen2 = QPen(QColor("#06b6d4"))
+        pen2.setWidth(1)
+        painter.setPen(pen2)
+        painter.drawRoundedRect(lx - 2, ly - 2, tw, th, 3, 3)
+        painter.setPen(QColor("#06b6d4"))
+        painter.drawText(lx + 2, ly + fm.ascent(), label_text)
+
+        painter.end()
+        return result
+
+    def set_roi_preview(self, ox: int, oy: int, w: int, h: int) -> None:
+        """Update the ROI overlay rectangle. Called by main_window on spinbox change."""
+        self._roi_preview = (ox, oy, w, h)
+
+    def clear_roi_preview(self) -> None:
+        """Remove the ROI overlay (full frame mode)."""
+        self._roi_preview = None
 
     def reset(self) -> None:
         self._frames = 0
@@ -255,3 +389,13 @@ class MultiChannelDisplay(QWidget):
     def reset_all(self) -> None:
         for panel in self._panels:
             panel.reset()
+
+    def set_roi_preview(self, ox: int, oy: int, w: int, h: int) -> None:
+        """Push ROI overlay to all 3 channel panels simultaneously."""
+        for panel in self._panels:
+            panel.set_roi_preview(ox, oy, w, h)
+
+    def clear_roi_preview(self) -> None:
+        """Remove ROI overlay from all panels (full frame)."""
+        for panel in self._panels:
+            panel.clear_roi_preview()

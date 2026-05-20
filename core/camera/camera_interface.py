@@ -1229,14 +1229,18 @@ class JAICamera:
         """
         Apply ROI to ALL sources (they share the same physical FOV).
 
-        GenICam registers written per source:
-          OffsetX, OffsetY, Width, Height
+        IMPORTANT: Width/Height/OffsetX/OffsetY are locked while streaming.
+        We must stop acquisition on all sources, write the registers, then
+        restart acquisition. This causes a ~0.5s frame gap — acceptable for
+        a deliberate calibration action.
 
-        Order matters — firmware requires:
-          1. Reduce Width/Height first (before increasing Offset)
-             OR increase Offset first (before reducing Width/Height)
-          Safe order: always set Width=max, Height=max, then Offset, then W/H.
-          Actually safest: reset to full frame first, then apply new ROI.
+        Safe write order per source:
+          1. Stop acquisition
+          2. Reset offsets to 0 (so Width/Height can expand to full sensor)
+          3. Set Width/Height to max (clear any previous crop)
+          4. Set new OffsetX, OffsetY
+          5. Set new Width, Height
+          6. Restart acquisition
 
         Returns (actual_x, actual_y, actual_w, actual_h) read back from Source0.
         """
@@ -1256,29 +1260,37 @@ class JAICamera:
             # Align all values to firmware step requirements
             ox = self._align(max(0, offset_x), xs)
             oy = self._align(max(0, offset_y), ys)
-            # Width/Height must be at least 1 step and fit within sensor
             w  = self._align(max(ws, min(width,  mw - ox)), ws)
             h  = self._align(max(hs, min(height, mh - oy)), hs)
 
-            nm = self._device.GetParameters()
+            log.info("ROI: stopping acquisition to apply OffsetX=%d OffsetY=%d "
+                     "Width=%d Height=%d …", ox, oy, w, h)
 
+            # ── Step 1: Stop all acquisitions ──────────────────────────────
+            for src in self._sources:
+                try:
+                    src.stop_acquisition()
+                except Exception as e:
+                    log.warning("ROI: stop_acquisition failed on %s: %s",
+                                src._source_name, e)
+
+            # ── Step 2: Write ROI to each source ───────────────────────────
+            nm = self._device.GetParameters()
             for src in self._sources:
                 stack = eb.PvGenStateStack(nm)
                 stack.SetEnumValue("SourceSelector", src._source_name)
 
-                # Safe write order:
-                # Step 1 — reset Width/Height to max so offset writes don't conflict
-                p_w = nm.GetInteger("Width")
-                p_h = nm.GetInteger("Height")
                 p_ox = nm.GetInteger("OffsetX")
                 p_oy = nm.GetInteger("OffsetY")
+                p_w  = nm.GetInteger("Width")
+                p_h  = nm.GetInteger("Height")
 
                 if p_ox and p_oy and p_w and p_h:
+                    # Reset to full frame first, then apply new ROI
                     p_ox.SetValue(0)
                     p_oy.SetValue(0)
                     p_w.SetValue(mw)
                     p_h.SetValue(mh)
-                    # Now write the target ROI
                     p_ox.SetValue(ox)
                     p_oy.SetValue(oy)
                     r_w = p_w.SetValue(w)
@@ -1290,20 +1302,33 @@ class JAICamera:
                         log.warning("ROI: Height.SetValue(%d) failed on %s: %s",
                                     h, src._source_name, r_h.GetCodeString())
                 else:
-                    log.warning("ROI: one or more integer params not found on %s",
-                                src._source_name)
+                    log.warning("ROI: integer params not found on %s", src._source_name)
                 # stack destroyed → SourceSelector reverts
 
-            # Read back from Source0 to confirm
+            # ── Step 3: Restart all acquisitions ───────────────────────────
+            for src in self._sources:
+                try:
+                    src.start_acquisition()
+                except Exception as e:
+                    log.warning("ROI: start_acquisition failed on %s: %s",
+                                src._source_name, e)
+
+            # ── Step 4: Read back actual values from Source0 ────────────────
             actual = self.get_roi()
-            log.info("ROI set: OffsetX=%d OffsetY=%d Width=%d Height=%d → actual=%s",
-                     ox, oy, w, h, actual)
+            log.info("ROI confirmed: OffsetX=%d OffsetY=%d Width=%d Height=%d",
+                     *actual)
             print(f"[CAM] ROI applied: ({actual[0]}, {actual[1]}) "
                   f"{actual[2]}×{actual[3]} px")
             return actual
 
         except Exception as e:
             log.error("set_roi exception: %s", e)
+            # Best-effort: try to restart acquisition if we stopped it
+            try:
+                for src in self._sources:
+                    src.start_acquisition()
+            except Exception:
+                pass
             return (offset_x, offset_y, width, height)
 
     def get_roi(self) -> tuple:

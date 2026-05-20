@@ -317,6 +317,7 @@ class MainWindow(QMainWindow):
         # ROI controls — all 3 sources simultaneously
         self._left.sig_roi_changed.connect(self._on_roi_changed)
         self._left.sig_roi_reset.connect(self._on_roi_reset)
+        self._left.sig_roi_preview.connect(self._on_roi_preview)
 
     def _post_init(self) -> None:
         models_dir = Path(self._cfg.get("inference", {}).get("model_dir", "models/"))
@@ -709,3 +710,16 @@ class MainWindow(QMainWindow):
                    f"[{pct}% of frame — {(100-pct)}% data saved]")
         self.statusBar().showMessage(msg)
         log.info("ROI readback — x=%d y=%d w=%d h=%d (%d%% of frame)", x, y, w, h, pct)
+        # Sync the display overlay with the firmware-confirmed values
+        self._center.channel_display.set_roi_preview(x, y, w, h)
+
+    @pyqtSlot(int, int, int, int)
+    def _on_roi_preview(
+        self, ox: int, oy: int, w: int, h: int
+    ) -> None:
+        """
+        Instantly update the ROI cut-line overlay on the live camera display
+        as the user moves the spinboxes — no Apply click required to see the
+        effect on the image.
+        """
+        self._center.channel_display.set_roi_preview(ox, oy, w, h)

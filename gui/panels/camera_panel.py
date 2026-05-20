@@ -203,6 +203,7 @@ class LeftControlPanel(QWidget):
     sig_black_level_changed   = pyqtSignal(float, float, float)  # CH1/CH2/CH3 DN — emitted on Apply
     sig_roi_changed           = pyqtSignal(int, int, int, int)   # OffsetX, OffsetY, Width, Height
     sig_roi_reset             = pyqtSignal()                 # Reset ROI to full frame
+    sig_roi_preview           = pyqtSignal(int, int, int, int)   # Live preview as spinboxes change
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -776,19 +777,8 @@ class LeftControlPanel(QWidget):
             row_l.addWidget(spn, stretch=1)
             card.add(row_w)
 
-        # ── Constraint wiring: OffsetX + Width ≤ 2048, OffsetY + Height ≤ 1536
-        self._spn_roi["OffsetX"].valueChanged.connect(
-            lambda v: self._spn_roi["Width"].setMaximum(2048 - v)
-        )
-        self._spn_roi["OffsetY"].valueChanged.connect(
-            lambda v: self._spn_roi["Height"].setMaximum(1536 - v)
-        )
-        self._spn_roi["Width"].valueChanged.connect(
-            lambda v: self._spn_roi["OffsetX"].setMaximum(2048 - v)
-        )
-        self._spn_roi["Height"].valueChanged.connect(
-            lambda v: self._spn_roi["OffsetY"].setMaximum(1536 - v)
-        )
+        # NOTE: No cross-constraint wiring — static ranges are clear.
+        # Firmware clamps OffsetX+Width<=2048 etc. on Apply automatically.
 
         # ── Buttons: Apply + Full Frame ──────────────────────────────
         self._btn_apply_roi = _btn_secondary("Apply ROI")
@@ -826,7 +816,7 @@ class LeftControlPanel(QWidget):
         return card
 
     def _update_roi_label(self) -> None:
-        """Refresh the live ROI readout label whenever any spinbox changes."""
+        """Refresh the live ROI readout label and push preview overlay to display."""
         x = self._spn_roi["OffsetX"].value()
         y = self._spn_roi["OffsetY"].value()
         w = self._spn_roi["Width"].value()
@@ -837,6 +827,8 @@ class LeftControlPanel(QWidget):
             self._lbl_roi.setText("Full Frame  —  2048 × 1536 @ (0, 0)")
         else:
             self._lbl_roi.setText(f"{w} × {h} px @ ({x}, {y})  —  {pct}% of frame")
+        # Push live preview overlay to camera display (appears immediately, no Apply needed)
+        self.sig_roi_preview.emit(x, y, w, h)
 
     def _on_apply_roi(self) -> None:
         """Emit ROI values → main_window._on_roi_changed."""
