@@ -1,0 +1,23 @@
+# ── Core Dependencies ─────────────────────────────────────────────────────────
+numpy==2.2.6
+opencv-python==4.13.0.92
+pyyaml==6.0.3
+
+# ── GUI Framework & Plotting ──────────────────────────────────────────────────
+PyQt6==6.11.0
+pyqtgraph==0.14.0
+
+# ── AI & Deep Learning (with PyTorch CUDA 12.4 index for RTX 4050/Shuttle PC) ─
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
+
+# ── Hardware Control & Acquisition ────────────────────────────────────────────
+harvesters==1.4.3
+pyserial==3.5
+
+# ── Development & Testing ─────────────────────────────────────────────────────
+pytest==9.0.3
+black==26.3.1
+flake8==7.3.0
+isort==8.0.1
