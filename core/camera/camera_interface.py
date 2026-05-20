@@ -333,27 +333,61 @@ class JAICamera:
         Runs in a daemon thread at camera acquisition speed.
         Measures actual grab FPS independently of display FPS.
         Always stores the latest processed triplet in self._latest.
+
+        Block ID validation: all 3 sources must report the same GEV block ID
+        for a triplet to be considered synchronized. If they diverge (e.g.
+        after an ROI stop/start), the loop self-corrects by advancing the
+        lagging source(s) until they catch up to the most advanced block ID.
+        This recovers sync within 1-3 frames without requiring a full restart.
         """
         self._grab_fps_t = time.time()
         try:
             while self._running:
-                raws     = []
-                block_id = -1
-                ok       = True
+                raws = []
+                bids = []
+                ok   = True
 
                 for src in self._sources:
-                    raw, bid = src.grab(timeout_ms=100)
+                    raw, bid = src.grab(timeout_ms=150)
                     if raw is None:
                         ok = False
                         break
                     raws.append((raw, src.pixel_format, bid))
-                    if block_id == -1:
-                        block_id = bid
+                    bids.append(bid)
 
                 if not ok or len(raws) < len(self._sources):
                     continue
 
-                # Track actual camera FPS
+                # ── Block ID validation ────────────────────────────────────
+                # All 3 bids must match. After ROI restart, sources may be
+                # 1-2 frames out of phase — advance lagging ones to recover.
+                if not (bids[0] == bids[1] == bids[2]):
+                    max_bid  = max(bids)
+                    log.debug("Sync mismatch bids=%s — re-syncing to bid=%d",
+                              bids, max_bid)
+                    for i, src in enumerate(self._sources):
+                        attempts = 0
+                        while bids[i] < max_bid and self._running and attempts < 16:
+                            raw, bid = src.grab(timeout_ms=150)
+                            if raw is None:
+                                ok = False
+                                break
+                            raws[i] = (raw, src.pixel_format, bid)
+                            bids[i] = bid
+                            attempts += 1
+                        if not ok:
+                            break
+
+                    if not ok or not (bids[0] == bids[1] == bids[2]):
+                        # Could not recover — skip and try next iteration
+                        log.debug("Sync recovery incomplete bids=%s — skipping", bids)
+                        continue
+
+                    log.debug("Sync recovered — bids=%s", bids)
+
+                block_id = bids[0]
+
+                # ── Track actual camera FPS ────────────────────────────────
                 self._grab_count += 1
                 elapsed = time.time() - self._grab_fps_t
                 if elapsed >= 1.0:
@@ -1274,6 +1308,22 @@ class JAICamera:
                     log.warning("ROI: stop_acquisition failed on %s: %s",
                                 src._source_name, e)
 
+            # ── Step 1b: Drain stale pipeline buffers ───────────────────────
+            # After AcquisitionStop, up to BUFFER_COUNT (16) pre-ROI frames
+            # remain queued in each source's PvPipeline. If not flushed they
+            # mix with post-restart frames → block ID mismatch.
+            log.info("ROI: draining pipeline buffers …")
+            for src in self._sources:
+                drained = 0
+                while True:
+                    r, buf, op = src.pipeline.RetrieveNextBuffer(20)  # 20 ms
+                    if r.IsFailure():
+                        break
+                    src.pipeline.ReleaseBuffer(buf)
+                    drained += 1
+                log.debug("ROI: drained %d stale frames from %s",
+                          drained, src._source_name)
+
             # ── Step 2: Write ROI to each source ───────────────────────────
             nm = self._device.GetParameters()
             for src in self._sources:
@@ -1327,6 +1377,20 @@ class JAICamera:
                 except Exception as e:
                     log.warning("ROI: start_acquisition failed on %s: %s",
                                 src._source_name, e)
+
+            # ── Step 3b: Post-restart mini-drain ───────────────────────────
+            # Sources restart sequentially so Source0 produces 1-2 frames
+            # before Source2 even starts. Discard the first 5 frames from
+            # each source so the grab loop begins with all sources at the
+            # same frame number, avoiding block ID divergence.
+            log.info("ROI: post-restart stabilisation drain …")
+            time.sleep(0.05)   # 50 ms — let all sources begin transmitting
+            for _ in range(5):
+                for src in self._sources:
+                    r, buf, op = src.pipeline.RetrieveNextBuffer(100)
+                    if r.IsOK():
+                        src.pipeline.ReleaseBuffer(buf)
+            log.info("ROI: pipeline stabilised — resuming grab")
 
             # ── Step 4: Read back actual values from Source0 ────────────────
             actual = self.get_roi()
