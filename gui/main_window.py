@@ -314,6 +314,9 @@ class MainWindow(QMainWindow):
         self._left.sig_wb_revert.connect(self._on_wb_revert)
         # Black Level controls — all 3 sources independently
         self._left.sig_black_level_changed.connect(self._on_black_level_changed)
+        # ROI controls — all 3 sources simultaneously
+        self._left.sig_roi_changed.connect(self._on_roi_changed)
+        self._left.sig_roi_reset.connect(self._on_roi_reset)
 
     def _post_init(self) -> None:
         models_dir = Path(self._cfg.get("inference", {}).get("model_dir", "models/"))
@@ -363,6 +366,7 @@ class MainWindow(QMainWindow):
         self._cam_w.sig_block_ids.connect(self._on_block_ids)
         self._cam_w.sig_wb_readback.connect(self._on_wb_readback)
         self._cam_w.sig_black_level_readback.connect(self._on_black_level_readback)
+        self._cam_w.sig_roi_readback.connect(self._on_roi_readback)
         self._cam_w.start()
 
         # ── Inference worker ───────────────────────────────────────
@@ -654,3 +658,54 @@ class MainWindow(QMainWindow):
             f"Black Level confirmed — CH1: {ch1:.1f}  CH2: {ch2:.1f}  CH3: {ch3:.1f} DN"
         )
         log.info("Black Level readback — CH1=%.1f CH2=%.1f CH3=%.1f DN", ch1, ch2, ch3)
+
+    # ── ROI slots ──────────────────────────────────────────────────────────────
+
+    @pyqtSlot(int, int, int, int)
+    def _on_roi_changed(
+        self, offset_x: int, offset_y: int, width: int, height: int
+    ) -> None:
+        """Forward ROI Apply to CameraWorker while streaming."""
+        running = self._cam_w is not None and self._cam_w.isRunning()
+        if running:
+            self._cam_w.set_roi(offset_x, offset_y, width, height)
+            pct = round(100 * width * height / (2048 * 1536))
+            self.statusBar().showMessage(
+                f"ROI: applying {width}×{height} @ ({offset_x}, {offset_y}) "
+                f"— {pct}% of full frame…"
+            )
+        else:
+            self.statusBar().showMessage(
+                "ROI: camera not connected — connect first"
+            )
+
+    @pyqtSlot()
+    def _on_roi_reset(self) -> None:
+        """Reset ROI to full 2048×1536 frame via CameraWorker."""
+        running = self._cam_w is not None and self._cam_w.isRunning()
+        if running:
+            self._cam_w.reset_roi()
+            self.statusBar().showMessage("ROI: resetting to full frame 2048×1536…")
+        else:
+            # Update spinboxes to full frame values even if not connected
+            self._left.update_roi(0, 0, 2048, 1536)
+            self.statusBar().showMessage("ROI reset to full frame (camera not connected)")
+
+    @pyqtSlot(int, int, int, int)
+    def _on_roi_readback(
+        self, x: int, y: int, w: int, h: int
+    ) -> None:
+        """
+        Receives actual ROI values confirmed by firmware after Apply/Reset.
+        Syncs spinboxes to the step-aligned, clamped values the camera accepted.
+        """
+        self._left.update_roi(x, y, w, h)
+        pct = round(100 * w * h / (2048 * 1536))
+        full = (x == 0 and y == 0 and w == 2048 and h == 1536)
+        if full:
+            msg = "ROI confirmed — Full Frame 2048×1536"
+        else:
+            msg = (f"ROI confirmed — {w}×{h} px @ ({x}, {y})  "
+                   f"[{pct}% of frame — {(100-pct)}% data saved]")
+        self.statusBar().showMessage(msg)
+        log.info("ROI readback — x=%d y=%d w=%d h=%d (%d%% of frame)", x, y, w, h, pct)

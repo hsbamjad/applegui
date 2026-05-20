@@ -1174,6 +1174,174 @@ class JAICamera:
             log.error("get_black_levels_per_source exception: %s", e)
             return []
 
+    # ── ROI (Region of Interest) ───────────────────────────────────────────────
+
+    def _align(self, value: int, step: int) -> int:
+        """Round value DOWN to the nearest multiple of step (firmware alignment)."""
+        return max(0, (value // max(step, 1)) * max(step, 1))
+
+    def get_roi_limits(self) -> dict:
+        """
+        Read the absolute sensor limits from firmware.
+        Returns dict with keys: max_width, max_height, offset_x_step,
+        offset_y_step, width_step, height_step.
+        Falls back to JAI FS-3200T defaults if parameters are unavailable.
+        """
+        defaults = {
+            "max_width":      2048,
+            "max_height":     1536,
+            "offset_x_step":    4,
+            "offset_y_step":    2,
+            "width_step":       4,
+            "height_step":      2,
+        }
+        if self._device is None:
+            return defaults
+        try:
+            nm = self._device.GetParameters()
+            result = dict(defaults)
+            for key, param_name in [("max_width",  "WidthMax"),
+                                     ("max_height", "HeightMax")]:
+                p = nm.GetInteger(param_name)
+                if p:
+                    _, v = p.GetValue()
+                    result[key] = int(v)
+            # Step / increment from Width parameter
+            for key, param_name in [("width_step",    "Width"),
+                                     ("height_step",   "Height"),
+                                     ("offset_x_step", "OffsetX"),
+                                     ("offset_y_step", "OffsetY")]:
+                p = nm.GetInteger(param_name)
+                if p:
+                    try:
+                        _, inc = p.GetIncrement()
+                        result[key] = max(1, int(inc))
+                    except Exception:
+                        pass
+            return result
+        except Exception as e:
+            log.warning("get_roi_limits exception: %s — using defaults", e)
+            return defaults
+
+    def set_roi(
+        self, offset_x: int, offset_y: int, width: int, height: int
+    ) -> tuple:
+        """
+        Apply ROI to ALL sources (they share the same physical FOV).
+
+        GenICam registers written per source:
+          OffsetX, OffsetY, Width, Height
+
+        Order matters — firmware requires:
+          1. Reduce Width/Height first (before increasing Offset)
+             OR increase Offset first (before reducing Width/Height)
+          Safe order: always set Width=max, Height=max, then Offset, then W/H.
+          Actually safest: reset to full frame first, then apply new ROI.
+
+        Returns (actual_x, actual_y, actual_w, actual_h) read back from Source0.
+        """
+        if self._device is None:
+            log.warning("set_roi: no device connected")
+            return (offset_x, offset_y, width, height)
+        try:
+            import eBUS as eb
+            limits = self.get_roi_limits()
+            mw = limits["max_width"]
+            mh = limits["max_height"]
+            xs = limits["offset_x_step"]
+            ys = limits["offset_y_step"]
+            ws = limits["width_step"]
+            hs = limits["height_step"]
+
+            # Align all values to firmware step requirements
+            ox = self._align(max(0, offset_x), xs)
+            oy = self._align(max(0, offset_y), ys)
+            # Width/Height must be at least 1 step and fit within sensor
+            w  = self._align(max(ws, min(width,  mw - ox)), ws)
+            h  = self._align(max(hs, min(height, mh - oy)), hs)
+
+            nm = self._device.GetParameters()
+
+            for src in self._sources:
+                stack = eb.PvGenStateStack(nm)
+                stack.SetEnumValue("SourceSelector", src._source_name)
+
+                # Safe write order:
+                # Step 1 — reset Width/Height to max so offset writes don't conflict
+                p_w = nm.GetInteger("Width")
+                p_h = nm.GetInteger("Height")
+                p_ox = nm.GetInteger("OffsetX")
+                p_oy = nm.GetInteger("OffsetY")
+
+                if p_ox and p_oy and p_w and p_h:
+                    p_ox.SetValue(0)
+                    p_oy.SetValue(0)
+                    p_w.SetValue(mw)
+                    p_h.SetValue(mh)
+                    # Now write the target ROI
+                    p_ox.SetValue(ox)
+                    p_oy.SetValue(oy)
+                    r_w = p_w.SetValue(w)
+                    r_h = p_h.SetValue(h)
+                    if not r_w.IsOK():
+                        log.warning("ROI: Width.SetValue(%d) failed on %s: %s",
+                                    w, src._source_name, r_w.GetCodeString())
+                    if not r_h.IsOK():
+                        log.warning("ROI: Height.SetValue(%d) failed on %s: %s",
+                                    h, src._source_name, r_h.GetCodeString())
+                else:
+                    log.warning("ROI: one or more integer params not found on %s",
+                                src._source_name)
+                # stack destroyed → SourceSelector reverts
+
+            # Read back from Source0 to confirm
+            actual = self.get_roi()
+            log.info("ROI set: OffsetX=%d OffsetY=%d Width=%d Height=%d → actual=%s",
+                     ox, oy, w, h, actual)
+            print(f"[CAM] ROI applied: ({actual[0]}, {actual[1]}) "
+                  f"{actual[2]}×{actual[3]} px")
+            return actual
+
+        except Exception as e:
+            log.error("set_roi exception: %s", e)
+            return (offset_x, offset_y, width, height)
+
+    def get_roi(self) -> tuple:
+        """
+        Read current ROI from Source0.
+        Returns (offset_x, offset_y, width, height) as ints.
+        """
+        if self._device is None:
+            return (0, 0, 2048, 1536)
+        try:
+            import eBUS as eb
+            nm    = self._device.GetParameters()
+            stack = eb.PvGenStateStack(nm)
+            stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
+
+            vals = {}
+            for name in ("OffsetX", "OffsetY", "Width", "Height"):
+                p = nm.GetInteger(name)
+                if p:
+                    _, v = p.GetValue()
+                    vals[name] = int(v)
+                else:
+                    vals[name] = {"OffsetX": 0, "OffsetY": 0,
+                                  "Width": 2048, "Height": 1536}[name]
+            return (vals["OffsetX"], vals["OffsetY"],
+                    vals["Width"],   vals["Height"])
+        except Exception as e:
+            log.error("get_roi exception: %s", e)
+            return (0, 0, 2048, 1536)
+
+    def reset_roi(self) -> tuple:
+        """
+        Reset ROI to full sensor frame on all sources.
+        Returns (0, 0, max_width, max_height).
+        """
+        limits = self.get_roi_limits()
+        return self.set_roi(0, 0, limits["max_width"], limits["max_height"])
+
     def disconnect(self) -> None:
         import eBUS as eb
         self._running = False
@@ -1379,6 +1547,36 @@ class CameraInterface:
         if self._mode == "jai" and self._backend:
             return self._backend.get_black_levels_per_source()
         return []
+
+    def get_roi_limits(self) -> dict:
+        """Read sensor ROI limits from firmware. Returns defaults if in mock mode."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.get_roi_limits()
+        return {"max_width": 2048, "max_height": 1536,
+                "offset_x_step": 4, "offset_y_step": 2,
+                "width_step": 4, "height_step": 2}
+
+    def set_roi(
+        self, offset_x: int, offset_y: int, width: int, height: int
+    ) -> tuple:
+        """Apply ROI to all sources. Returns (actual_x, actual_y, actual_w, actual_h)."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.set_roi(offset_x, offset_y, width, height)
+        log.debug("set_roi: mock mode — no-op")
+        return (offset_x, offset_y, width, height)
+
+    def get_roi(self) -> tuple:
+        """Read current ROI from Source0. Returns (x, y, w, h)."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.get_roi()
+        return (0, 0, 2048, 1536)
+
+    def reset_roi(self) -> tuple:
+        """Reset ROI to full frame. Returns (0, 0, max_w, max_h)."""
+        if self._mode == "jai" and self._backend:
+            return self._backend.reset_roi()
+        log.debug("reset_roi: mock mode — no-op")
+        return (0, 0, 2048, 1536)
 
     def grab_fps(self) -> float:
         """Actual camera acquisition FPS from grab thread. 0.0 in mock mode."""
