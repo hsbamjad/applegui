@@ -158,19 +158,20 @@ class _JAISource:
         Call AFTER stop_acquisition() and BEFORE writing new ROI registers to
         ensure no stale pre-ROI frames remain when acquisition restarts.
 
+        Uses not result.IsOK() to break — covers both TIMEOUT and ERROR so
+        the loop terminates immediately when the queue is empty.
+
         Returns the number of frames discarded.
         """
         if self.pipeline is None:
             return 0
         discarded = 0
-        while True:
+        while discarded < 64:   # safety cap
             result, buffer, op_result = self.pipeline.RetrieveNextBuffer(timeout_ms)
-            if result.IsFailure():
-                break   # queue empty — timeout with no frame
+            if not result.IsOK():
+                break           # TIMEOUT or error — queue is empty
             self.pipeline.ReleaseBuffer(buffer)
             discarded += 1
-            if discarded > 64:  # safety cap — should never need this many
-                break
         return discarded
 
     def resize_pipeline_buffers(self) -> None:
@@ -217,7 +218,7 @@ class JAICamera:
 
     WARMUP_S        = 2.0
     DRAIN_FRAMES    = 30
-    ROI_RESYNC_SLEEP_S = 0.5   # seconds to wait post-restart before second drain
+    ROI_RESYNC_SLEEP_S = 0.2   # seconds to wait post-restart before second drain
 
     def __init__(self, config: dict) -> None:
         self._cfg          = config
@@ -1399,16 +1400,6 @@ class JAICamera:
                 else:
                     log.warning("ROI: integer params not found on %s", src._source_name)
                 # stack destroyed → SourceSelector reverts
-
-            # ── Step 2b: Resize pipeline buffers to new payload size ────────
-            # Stops + resizes + restarts each PvPipeline to match the new frame
-            # dimensions. Prevents buffer-size mismatches at large crop ratios.
-            for src in self._sources:
-                try:
-                    src.resize_pipeline_buffers()
-                except Exception as e:
-                    log.warning("ROI: resize_pipeline_buffers failed on %s: %s",
-                                src._source_name, e)
 
             # ── Step 3: Restart all acquisitions ───────────────────────────
             for src in self._sources:
