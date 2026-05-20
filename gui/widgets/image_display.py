@@ -226,10 +226,6 @@ class ChannelPanel(QWidget):
         self._lbl_res.setText(f"{w}×{h}")
         self._lbl_fps.setText(f"{fps:.1f} FPS")
 
-        # Update sensor dimensions for accurate overlay scaling
-        self._sensor_w = w
-        self._sensor_h = h
-
     def _draw_roi_overlay(self, pixmap: QPixmap, frame_w: int, frame_h: int) -> QPixmap:
         """
         Draw a cyan ROI cut-line rectangle on top of the pixmap.
