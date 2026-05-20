@@ -404,17 +404,19 @@ class JAICamera:
                         continue  # throw this triplet away
 
                 # ── Block ID cross-validation ──────────────────────────────
-                # All 3 sources must share the same block ID or the triplet is
-                # a sync mismatch — discard rather than deliver bad data.
+                # All 3 sources should share the same block ID (hardware sync).
+                # If they don't, log a warning but DELIVER the frame anyway.
+                # DO NOT discard/continue — sequential grabs never reconverge
+                # when sources are 1 frame apart, causing a permanent stall.
                 bid0 = raws[0][2]
                 bid1 = raws[1][2]
                 bid2 = raws[2][2]
                 if not (bid0 == bid1 == bid2):
                     log.warning(
-                        "Sync mismatch — block IDs: CH1=%d CH2=%d CH3=%d — discarding",
+                        "Sync mismatch — block IDs: CH1=%d CH2=%d CH3=%d — "
+                        "delivering (hardware sync will self-correct)",
                         bid0, bid1, bid2,
                     )
-                    continue
 
                 # Track actual camera FPS
                 self._grab_count += 1
