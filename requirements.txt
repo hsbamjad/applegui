@@ -16,6 +16,14 @@ torchvision==0.21.0+cu124
 harvesters==1.4.3
 pyserial==3.5
 
+# NOTE: Pleora eBUS SDK Python API (proprietary commercial package, not on PyPI)
+# To install eBUS-Python in your conda/virtual environment, use the local wheel (.whl)
+# provided with the eBUS SDK installation.
+# Command:
+#   python -m pip install "C:\Program Files\Common Files\Pleora\eBUS SDK\Python\ebus_python-6.x.x-*-py310-none-win_amd64.whl"
+# (Adjust path/version matching your eBUS SDK installation and Python 3.10 environment)
+
+
 # ── Development & Testing ─────────────────────────────────────────────────────
 pytest==9.0.3
 black==26.3.1
