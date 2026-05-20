@@ -206,3 +206,24 @@ Bayer Demosaic (BGR)        Fixed Normalization         Fixed Normalization
 ```
 
 *   **Fixed-Range Normalization**: Unlike visual normalization (which stretches pixels per-frame and makes identical apples evaluate to different values if lighting shifts), the AI path divides the raw intensity directly by the physical limits of the simultaneous multisource setup, preserving absolute, repeatable radiometric intensity.
+
+---
+
+## 8. Hardware vs. Software Processing Boundary
+
+To guarantee the mathematical integrity of research data and prevent calibration drift, the pipeline maintains a strict separation between operations executed in the camera's physical electronic circuits (Hardware) and operations executed on your PC's CPU (Software).
+
+| Operation / Control | Executed By | Location / Stage | Impact on Raw Pixel Data |
+| :--- | :--- | :--- | :--- |
+| **Exposure Time** | Camera Hardware | Analog Photodiode Arrays | **True Physical Change** (modifies photon count) |
+| **Per-Channel Gain** | Camera Hardware | Analog Amplifier / Sensor ADC | **True Physical Change** (analog/digital signal gain) |
+| **Black Level** | Camera Hardware | Sensor ADC / FPGA | **True Physical Change** (subtracts hardware noise floor) |
+| **Auto White Balance** | Camera Hardware | Camera FPGA | **True Physical Change** (adjusts digital red/blue gains) |
+| **Region of Interest (ROI)** | Camera Hardware | CMOS Sensor / FPGA | **True Physical Change** (only crops the transmitted GEV packets) |
+| **Frame Rate (FPS)** | Camera Hardware | Master Clock Generator | **Timing Control** (limits maximum physical exposure) |
+| **Bayer Demosaicing** | PC Software (`cv2`) | Grab Loop (`JAI-grab` thread) | **Software Math** (interpolates BayerRG8 to BGR) |
+| **Grayscale Expansion** | PC Software (`cv2`) | Display Path (UI thread) | **Software Math** (converts Mono8 to RGB888 for graphics cards) |
+| **Memory-Safe Deep Copy** | PC Software (`QImage`) | Display Path (UI thread) | **RAM Duplication** (isolates buffer, zero pixel changes) |
+| **Bilinear Scaling** | PC Software (`Qt`) | Viewport Rendering (UI thread) | **Visual Only** (resizes pixels for screen preview) |
+| **Cyan ROI Overlay** | PC Software (`QPainter`) | Viewport Rendering (UI thread) | **Visual Only** (draws preview guides over displayed pixmap) |
+
