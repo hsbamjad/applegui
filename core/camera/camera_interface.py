@@ -1190,10 +1190,10 @@ class JAICamera:
         defaults = {
             "max_width":      2048,
             "max_height":     1536,
-            "offset_x_step":   16,   # confirmed on JAI FS-3200T (200 → 192)
-            "offset_y_step":    2,
+            "offset_x_step":   16,   # confirmed: 200 → 192
+            "offset_y_step":    8,   # confirmed:  10 →   8
             "width_step":      16,   # same physical constraint as OffsetX
-            "height_step":      2,
+            "height_step":      8,   # same physical constraint as OffsetY
         }
         if self._device is None:
             return defaults

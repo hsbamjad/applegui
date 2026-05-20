@@ -733,14 +733,14 @@ class LeftControlPanel(QWidget):
 
         # ── Four spinboxes ──────────────────────────────────────────────
         # Layout: Label (fixed) | Spinbox (stretch)
-        # Hardware step sizes on JAI FS-3200T:
-        #   OffsetX / Width  → must be multiples of 16 (confirmed: 200→192)
-        #   OffsetY / Height → must be multiples of 2
+        # Hardware step sizes on JAI FS-3200T (both confirmed by observation):
+        #   OffsetX / Width  → multiples of 16 (200 → 192)
+        #   OffsetY / Height → multiples of  8 ( 10 →   8)
         ROI_PARAMS = [
             ("OffsetX", "px",  0, 2032, 16, "Left crop start. Must be multiple of 16 — arrow keys step by 16."),
-            ("OffsetY", "px",  0, 1534,  2, "Top crop start. Must be multiple of 2 — arrow keys step by 2."),
+            ("OffsetY", "px",  0, 1528,  8, "Top crop start. Must be multiple of 8 — arrow keys step by 8."),
             ("Width",   "px", 16, 2048, 16, "Capture width. Must be multiple of 16 — arrow keys step by 16."),
-            ("Height",  "px",  2, 1536,  2, "Capture height. Must be multiple of 2 — arrow keys step by 2."),
+            ("Height",  "px",  8, 1536,  8, "Capture height. Must be multiple of 8 — arrow keys step by 8."),
         ]
         self._spn_roi: dict[str, QSpinBox] = {}
 
