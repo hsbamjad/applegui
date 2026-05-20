@@ -1,167 +1,208 @@
-# JAI FS-3200T — Frame Preprocessing & Visualization Pipeline Handbook
+# JAI FS-3200T Multispectral Camera Preprocessing & Hardware Controls Pipeline Handbook
 
 **Project:** Apple Sorting GUI — MSU ASABE AIM26  
-**Applies to:** `core/camera/camera_interface.py` · `gui/widgets/image_display.py` · `scripts/camera_live_view.py` · `scripts/camera_probe_jai.py`  
-**Last updated:** 2026-05-18
+**Applies to:** `core/camera/camera_interface.py` · `gui/widgets/image_display.py` · `gui/workers/camera_worker.py` · `gui/panels/camera_panel.py`  
+**Last Updated:** May 20, 2026
 
 ---
 
-## 1. System Overview: Display Path vs. Inference Path
+## 1. System Overview: End-to-End Processing Architecture
 
-The JAI FS-3200T simultaneously streams three independent hardware-synchronized GigE Vision (GEV) sensors. Depending on the destination, these frames follow two completely separate processing pipelines:
+The JAI FS-3200T multispectral camera contains three independent CMOS sensors in a single physical body. It streams three hardware-synchronized GigE Vision (GEV) channels over a single 10 GigE link. 
 
-```
-                            Raw Hardware Frame Triplet
-                                         │
-        ┌────────────────────────────────┴────────────────────────────────┐
-        ▼                                                                 ▼
-[ DISPLAY PATH (What you see) ]                          [ INFERENCE PATH (What the AI sees) ]
-  - Goal: Premium visual comfort, rich colors,              - Goal: Maximum diagnostic accuracy,
-    stable brightness, zero lag, and no grey glare.           consistent pixel values, and high resolution.
-  - Preprocessing: early 10x downsample, Bayer             - Preprocessing: Full-resolution raw grab,
-    demosaic, EMA Min-Max norm, and PySide6 .copy().          fixed scale division, and letterbox padding.
-```
+In our upgraded architecture, **frame acquisition is completely decoupled from visual representation**. The core camera backend operates strictly on raw, full-resolution buffers, while the frontend handles memory-safe rendering, scaling, and interactive ROI previews.
 
----
+```mermaid
+graph TD
+    %% Physical Sensors
+    subgraph Camera Hardware (JAI FS-3200T-10GE)
+        S0[Source0: Color Sensor - BayerRG8]
+        S1[Source1: NIR1 Sensor - Mono8]
+        S2[Source2: NIR2 Sensor - Mono8]
+    end
 
-## 2. Script Inventory & Preprocessing Roles
+    %% GenICam Controls
+    subgraph Hardware Calibration / Control Layer
+        EX[Exposure & Gain Ramping]
+        BL[Black Level Pedestal Subtraction]
+        WB[One-Push Auto White Balance]
+        ROI[GenICam Step-Aligned ROI]
+    end
 
-| Script / Component File | Role in Preprocessing | Preprocessing Details Implemented |
-| :--- | :--- | :--- |
-| **[camera_probe_jai.py](file:///S:/MSU_Research/ASABE%20AIM26/apple_gui/scripts/camera_probe_jai.py)** | Offline Diagnostic / Calibration | Saves **raw** full-resolution frames (Bayer/Mono8 unchanged) alongside display-normalized PNGs (`NORM_MINMAX`). |
-| **[camera_live_view.py](file:///S:/MSU_Research/ASABE%20AIM26/apple_gui/scripts/camera_live_view.py)** | Real-Time Diagnostic Visualizer | Conversions at full resolution (Bayer demosaic, per-frame `NORM_MINMAX` stretch) and downscales using standard OpenCV resize. |
-| **[camera_interface.py](file:///S:/MSU_Research/ASABE%20AIM26/apple_gui/core/camera/camera_interface.py)** | Core Production Backend (GUI) | Highly optimized: **early 10x downsampling**, full-resolution max highlight tracking, and **EMA-Stabilized Min-Max Normalization** (C++ `convertScaleAbs`). |
-| **[image_display.py](file:///S:/MSU_Research/ASABE%20AIM26/apple_gui/gui/widgets/image_display.py)** | Production UI Rendering (GUI) | Performs **memory-safe QImage deep-copying (`.copy()`)** and high-fidelity **bilinear downscaling (`SmoothTransformation`)** in PySide6. |
+    S0 --> EX
+    S1 --> BL
+    S2 --> BL
 
----
+    %% eBUS Streams
+    subgraph eBUS Python SDK Driver
+        D0[Stream Channel 0]
+        D1[Stream Channel 1]
+        D2[Stream Channel 2]
+    end
 
-## 3. Step-by-Step Preprocessing: CH1 — Color Channel (BayerRG8)
+    EX --> D0
+    BL --> D1
+    BL --> D2
 
-### Step 1.1: Bayer Demosaicing
+    %% Grab Loop & Sync
+    subgraph core/camera/camera_interface.py (JAI-grab Thread)
+        GL[Background Grab Loop]
+        VS[Block ID Sync Validation]
+        BDR[Bayer Demosaicing COLOR_BayerBG2BGR]
+        FT[FrameTriplet Object 2048x1536]
+    end
 
-*   **WHAT**: Converts a raw single-channel Bayer checkerboard mosaic into a standard 3-channel BGR color image.
-*   **WHY**: The physical sensor has a single photodetector layer covered by an alternating Red, Green, and Blue filter grid. The raw frame looks like a gray checkerboard. Demosaicing mathematically interpolates the missing two color channels per pixel from spatial neighbors.
-*   **HOW**: `ch1 = cv2.cvtColor(raw0, cv2.COLOR_BayerBG2BGR)` — using SIMD-optimized bilinear interpolation.
-*   **WHERE**: Done in `camera_interface.py` (background `JAI-grab` thread), `camera_live_view.py`, and `camera_probe_jai.py`.
-*   **MANDATORY?**: **YES — always.** It is impossible to feed standard color models (like YOLO) or display a normal color image to an operator without this hardware compensation step.
-*   **Inference Effect**: Essential. The AI model expects a standard 3-channel color image (BGR or RGB) to extract features.
-*   **Temporary or Permanent?**: **PERMANENT.** This step will remain identical in both the display and inference paths.
+    D0 & D1 & D2 --> GL
+    GL --> VS
+    VS -- "LAGGING SOURCE: Advance Frame Buffer" --> GL
+    VS -- "SYNCED: GEV Block IDs Match" --> BDR
+    BDR --> FT
 
----
+    %% GUI Representation
+    subgraph gui/widgets/image_display.py (PySide6 UI Thread)
+        MC[MultiChannelDisplay]
+        CP[ChannelPanel - CH1 / CH2 / CH3]
+        MC_CP[Memory-Safe QImage Deep Copy .copy]
+        ROIO[Interactive Cyan ROI Overlay]
+        BLS[Bilinear smooth viewport scaling]
+        DISP[High-Fidelity UI Rendering]
+    end
 
-### Step 1.2: Downsampling (2048×1536 → 640×480)
-
-*   **WHAT**: Downscales the full-resolution color image to display dimensions.
-*   **WHY**: Passing a massive $2048 \times 1536$ color image (9.4 MB) across the PySide6 thread boundary 30 times a second creates severe lag. Downsampling in the background thread reduces the payload by **90.2%** (down to ~920 KB), keeping the GUI light and smooth.
-*   **HOW**: `ch1 = cv2.resize(ch1, (640, 480), interpolation=cv2.INTER_LINEAR)` — fast bilinear area interpolation.
-*   **WHERE**: Done in `camera_interface.py` (background thread) and `camera_live_view.py`.
-*   **MANDATORY?**: **Display only. NOT mandatory for inference.**
-*   **Inference Effect**: Resizing would discard the microscopic spatial details (such as tiny skin breaks, punctures, or early insect stings) necessary for accurate apple grading. **This downsampling step will be completely removed from the AI inference path.**
-*   **Temporary or Permanent?**: **TEMPORARY (Display-only).** 
-*   *How we get the full resolution later for inference*: We will call a separate raw grab method (`grab_raw()`) that retrieves the full-resolution $2048 \times 1536$ array directly from the eBUS pipeline buffers and passes it directly to the model's preprocessing stage (described in Section 6).
-
----
-
-## 4. Step-by-Step Preprocessing: CH2 & CH3 — NIR Channels (Mono8)
-
-### Step 2.1: Early Downsampling (10x Performance Boost)
-
-*   **WHAT**: Resizes the raw NIR frames from $2048 \times 1536$ down to $640 \times 480$ *before* applying contrast adjustments.
-*   **WHY**: Raw mathematical array calculations (EMA limits, scaling, and offset subtraction) are CPU-intensive. Resizing first cuts the raw pixel count from 3.1 million to just 307,200. This delivers a **10x speed boost** to the background thread.
-*   **HOW**: `raw_small = cv2.resize(raw, (640, 480), interpolation=cv2.INTER_LINEAR)`.
-*   **WHERE**: Done in `camera_interface.py` (background `JAI-grab` thread).
-*   **MANDATORY?**: **Display only. NOT mandatory for inference.**
-*   **Inference Effect**: Discarding spatial detail before feeding a model would ruin defect detection. **This early downsampling is completely bypassed in the inference path.**
-*   **Temporary or Permanent?**: **TEMPORARY (Display-only).**
-
----
-
-### Step 2.2: Full-Resolution Highlight Max Tracking
-
-*   **WHAT**: Scans the full-resolution $2048 \times 1536$ raw image to locate the absolute min/max peak values.
-*   **WHY**: If we downsample the frame *before* finding the maximums, bilinear interpolation will blur out hot pixels and tiny specular reflections. Scanning the full-res array first (<0.3ms) ensures that our normalization limits remain perfectly true to physical highlight changes.
-*   **HOW**: `cur_min, cur_max = float(raw.min()), float(raw.max())`.
-*   **WHERE**: Done in `camera_interface.py` (background thread) and `camera_probe_jai.py`.
-*   **MANDATORY?**: **YES.** It is the only way to protect the pre-processor from underestimating bright highlights.
-*   **Inference Effect**: Keeps normalization scaling factors perfectly aligned with full-resolution sensor reality.
-*   **Temporary or Permanent?**: **PERMANENT.**
-
----
-
-### Step 2.3: EMA-Stabilized Min-Max Normalization
-
-*   **WHAT**: Dynamically subtracts the sensor's physical black-level offset (pedestal) and stretches the dark raw pixels (typically 0-50) to the full visual range (0-255) using a temporally smoothed average.
-*   **WHY**: 
-    *   **Problem A (Grey Glare)**: Max-only scaling does not remove the sensor's black offset (pedestal). This offset gets amplified, turning the black conveyor background into a flat, light-grey glare. We must subtract the minimum value.
-    *   **Problem B (Flickering)**: Traditional per-frame min-max normalization (`NORM_MINMAX`) recalculates gain instantly. When a bright apple enters, the gain drops, dimming the entire screen. When it leaves, the gain spikes, creating erratic frame-to-frame flickering.
-*   **HOW**: We track both the pedestal (min) and highlight (max) using a slow Exponential Moving Average (EMA, $\alpha = 0.05$). We then calculate the stable range `diff = Max_EMA - Min_EMA` and scale factor, and apply them in a **single, highly optimized C++ operation**:
-    ```python
-    scale = 255.0 / max(diff, 1.0)
-    offset = -Min_EMA * scale
-    ch_norm = cv2.convertScaleAbs(raw_small, alpha=scale, beta=offset)
-    ```
-*   **WHERE**: Done in `camera_interface.py` (background thread).
-*   **MANDATORY?**: **Display only. NOT mandatory for inference.**
-*   **Inference Effect**: ⚠️ **EMA normalization is unacceptable for AI models.** Because EMA changes dynamically depending on what recently passed on the conveyor belt, two identical apples will yield completely different pixel values if a bright reflection occurred between them. The AI model requires **consistent, reproducible, and deterministic** pixel values. 
-    For inference, we will use **Fixed-Range Normalization** (e.g., `pixel / 50.0`, dividing by the known physical limits of the simultaneous multisource setup) or a strict per-frame `NORM_MINMAX` (only if the model was trained with it).
-*   **Temporary or Permanent?**: **TEMPORARY (Display-only).**
-
----
-
-## 5. Step-by-Step Preprocessing: PySide6 GUI Display (`image_display.py`)
-
-### Step 3.1: Memory-Safe Deep Copying (`.copy()`)
-
-*   **WHAT**: Clones the compiled QImage pixel buffer into a persistent, dedicated memory block in Qt space.
-*   **WHY**: PySide6's `QImage(numpy_array.data, ...)` wraps a lightweight pointer directly to the NumPy array. Because the background grab thread overwrites and garbage-collects this NumPy array immediately, **Qt is forced to read stale, partially corrupted heap memory**. This causes the colors in the GUI to become dull, washed out, and yellowish-gray. `.copy()` guarantees 100% stable, uncorrupted, rich BGR color representation.
-*   **HOW**: `qt_img = QImage(rgb_frame.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()`
-*   **WHERE**: Done in `gui/widgets/image_display.py:L193`.
-*   **MANDATORY?**: **YES — always** when displaying numpy buffers in PySide6 to prevent memory leaks and color distortion.
-*   **Inference Effect**: None. This is a visual-display safety guard.
-*   **Temporary or Permanent?**: **PERMANENT.**
-
----
-
-### Step 3.2: Bilinear Viewport Scaling (`SmoothTransformation`)
-
-*   **WHAT**: Downscales the display pixmap on the fly to match the dynamic size of the QLabel display cards.
-*   **WHY**: Nearest-neighbor scaling (`FastTransformation`) throws away pixels, creating jagged edges and making the text on the watch face blocky and unreadable. Bilinear scaling renders smooth edges and high-fidelity textures.
-*   **HOW**: `pixmap.scaled(disp_size, KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)`
-*   **WHERE**: Done in `gui/widgets/image_display.py:L203`.
-*   **MANDATORY?**: **YES** for premium visual quality.
-*   **Inference Effect**: None.
-*   **Temporary or Permanent?**: **PERMANENT.**
-
----
-
-## 6. The Phase 6 Inference Path Architecture
-
-### Is Full-Resolution Necessary for Inference?
-**YES, absolutely.** High-speed grading models must detect tiny surface defects (e.g. skin punctures, early decay, and minor bruising) that only occupy a few pixels at full resolution ($2048 \times 1536$). Downsampling the images first to $640 \times 480$ would discard **90.2% of the spatial details**, rendering the AI model ineffective.
-
-### How We Retrieve the Full-Resolution Stream Later for Inference:
-We will introduce a separate, non-blocking `grab_raw()` method in `JAICamera`. The inference thread will poll this method independently. It will retrieve the raw, untouched high-resolution buffers directly from the GEV stream, apply **Fixed-Range Normalization** (consistent pixel scaling), and feed them straight to YOLO:
-
-```
-JAICamera.grab_raw()  (Pulls untouched 2048×1536 buffers)
-        │
-        ├── CH1 (BayerRG8) ──► Bayer Demosaic ──► Full-Res BGR (9.4 MB) ──► Crop/Pad ──► YOLOv8
-        │
-        ├── CH2 (Mono8) ────► Fixed Normalization (÷ 50.0) ──► Full-Res NIR1 (3.1 MB) ──► Concatenate
-        │
-        └── CH3 (Mono8) ────► Fixed Normalization (÷ 50.0) ──► Full-Res NIR2 (3.1 MB) ──► Concatenate
+    FT -->|QThread sig_frame Emit| MC
+    MC --> CP
+    CP --> MC_CP
+    MC_CP --> ROIO
+    ROIO --> BLS
+    BLS --> DISP
 ```
 
 ---
 
-## 7. Summary Preprocessing Matrix
+## 2. Multi-Spectral Frame Triplet Format
 
-| Preprocessing Step | `camera_probe_jai.py` | `camera_live_view.py` | `camera_interface.py` (GUI) | Mandatory? | Inference Path Effect | Permanent? |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Bayer Demosaicing** | ✅ Yes (Full Res) | ✅ Yes (Full Res) | ✅ Yes (Full Res) | **YES** | REQUIRED for BGR color models. | **PERMANENT** |
-| **Early Downsampling** | ❌ Raw (Full Res) | ❌ Raw (Full Res) | ✅ Yes ($640 \times 480$) | **Display Only** | **BYPASSED** (AI needs 2048×1536 detail). | **TEMPORARY** |
-| **Max Tracking (Full-Res)** | ✅ Yes | ❌ No | ✅ Yes | **YES** | Protects the scaler from blurring. | **PERMANENT** |
-| **Per-Frame Min-Max Norm** | ✅ Yes (normalized save) | ✅ Yes (`NORM_MINMAX`) | ❌ No | **No** | Bypassed. (Causes visual flicker). | **TEMPORARY** |
-| **EMA Min-Max Norm** | ❌ No | ❌ No | ✅ Yes (C++ `convertScaleAbs`) | **Display Only** | **REMOVED** (Inference needs consistent scales). | **TEMPORARY** |
-| **QImage Deep Copy** | ❌ No | ❌ No | ✅ Yes (`.copy()`) | **YES (GUI)** | None. (Visual color-safe guard). | **PERMANENT** |
-| **Bilinear GUI Scaling** | ❌ No | ❌ No | ✅ Yes (Smooth Scale) | **YES (GUI)** | None. (Eliminates jagged jaggies). | **PERMANENT** |
+Every successful acquisition outputs a `FrameTriplet` object consisting of three full-resolution NumPy arrays and precise timing indicators:
+
+| Channel | Physical Sensor | Target Spectrum | Data Shape | Pixel Format | Description |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **CH1** | Color (Bayer RGB) | Visible (~400–670 nm) | `(1536, 2048, 3)` | `uint8` | Standard color image (Bayer demosaiced to BGR) |
+| **CH2** | NIR 1 (Monochrome) | Near-Infrared (~800 nm) | `(1536, 2048)` | `uint8` | Reveals internal fruit structure & bruises |
+| **CH3** | NIR 2 (Monochrome) | Near-Infrared (~900 nm) | `(1536, 2048)` | `uint8` | Captures different water absorption/reflectance bands |
+
+---
+
+## 3. Real-Time Hardware Frame Synchronization
+
+Because eBUS retrieves buffers in separate threads for each physical channel, network jitter or firmware interruptions (e.g. during an ROI update) can cause channels to go out of phase.
+
+### GigE Vision Block ID Sync Validation
+In `camera_interface.py`, the background `JAI-grab` thread implements active re-synchronization based on the hardware GEV Block ID:
+1. Every buffer popped from `PvPipeline` contains a monotonic `BlockID`.
+2. The grab loop verifies that `BlockID_CH1 == BlockID_CH2 == BlockID_CH3`.
+3. **Lagging Channel Recovery**: If a sync mismatch is detected (e.g., `[142, 140, 142]`), the loop identifies the maximum Block ID (`142`) and actively calls `.grab()` on the lagging channel (CH2) in a tight recovery loop to flush outdated buffers until it catches up.
+4. This active correction recovers perfect phase synchronization within **1 to 3 frames** without interrupting the stream or requiring a device disconnect.
+
+---
+
+## 4. Hardware Calibration & Camera Controls
+
+All adjustments are applied directly to the camera's analog and digital electronics inside the FPGA, ensuring maximum signal-to-noise ratio before analog-to-digital conversion.
+
+### 4.1. Exposure Time (Per-Source Independent Ramping)
+*   **What**: Integrates photons on each sensor independently.
+*   **Safe-Ramping Protocol**: Ramping exposure times abruptly across three channels can trigger device driver timeouts and eBUS pipeline sync failures. We implement a **synchronized incremental ramping algorithm**:
+    *   Exposures are stepped by a maximum of `4000 µs` per iteration with a `30 ms` inter-step delay.
+    *   Ramp lengths are padded so that all channels conclude their ramping steps in perfect unison, preventing screen flashing and driver locks.
+*   **Firmware Clamp**: Capped globally by FPS: $\text{ExposureTime (µs)} \le \frac{1,000,000}{\text{FPS}}$.
+
+### 4.2. Frame Rate (FPS)
+*   **What**: Adjusts the global clock of the sensor. 
+*   **Dynamic Exposure Clamping**: Setting a high FPS (e.g., 30 to 60) automatically reduces the maximum integration period. Our system captures the `sig_fps_changed` signal, applies the value to `AcquisitionFrameRate` globally, queries the new firmware-clamped exposure limits, and immediately syncs the UI spinboxes to avoid out-of-bounds requests.
+
+### 4.3. Per-Channel Gain
+*   **What**: Logarithmic analog and digital amplification inside the sensor (0.0 to 16.0 dB).
+*   **White-Balance Protection**: Gain writes are restricted strictly to GenICam `*All` selectors (`DigitalAll`, `AnalogAll`, or `All` depending on firmware structure). Sub-channel selectors (e.g., Red/Green/Blue) are explicitly bypassed in gain sweeps to prevent destroying the active white balance on CH1.
+
+### 4.4. One-Push Auto White Balance & Revert
+*   **What**: Calibrates color neutrality under the specific LEDs.
+*   **Auto-White Balance Sequence**:
+    1. Scopes parameters to `Source0` (Color CH1) using `PvGenStateStack`.
+    2. Caches current Red, Green, and Blue ratios into `self._saved_wb` as a recovery point.
+    3. Writes `BalanceWhiteAuto = Once` to launch the camera's internal FPGA calibration algorithm.
+    4. Polls `BalanceWhiteAuto` every `50 ms` until it returns to `Off` (calibration complete).
+    5. Reads the newly calculated digital red and blue gains and updates the UI readout.
+*   **Revert Feature**: If calibration is performed against an invalid reference (e.g. a colored background instead of a grey card), the operator can click **↺ Revert** to restore the cached pre-calibration ratios directly to the GenICam registers.
+
+### 4.5. Sensor-Level Black Level Subtraction
+*   **What**: Subtracts the physical dark current pedestal (thermal noise and electronics bias) directly at the ADC stage.
+*   **Why**: Under normal operation, the NIR channels have a fake floor of `~7 DN` (NIR1) and `~6 DN` (NIR2) even in complete darkness. This dark pedestal shifts all reflectance measurements, leading to grey glare on the conveyor belt and distorted AI inference values.
+*   **How**: Scopes to `BlackLevelSelector = All` and adjusts the `BlackLevel` float parameter (0.0 to 64.0 DN) independently for each source. This reclaims the full 8-bit dynamic range, making true darkness evaluate to `0 DN`.
+
+---
+
+## 5. Region of Interest (ROI) Controls
+
+Applying an ROI limits the sensor's active pixel area, reducing data rates and allowing high-speed crop matching. Because GenICam parameters are locked during active acquisition, we implement a safe, sequential stop-write-start routine.
+
+> [!CAUTION]
+> Writing ROI parameters in an incorrect sequence or failing to flush streams before/after will trigger driver exceptions, GenICam boundary violations, and immediate block ID desynchronization.
+
+### The GenICam Safe Write Sequence
+1.  **Stop Acquisition**: Calls `AcquisitionStop` on all three streams to release hardware resource locks.
+2.  **Drain Pre-ROI Buffers**: Flushes up to 16 stale buffers remaining in each `PvPipeline` stream to prevent old full-size frames from mixing with new cropped frames.
+3.  **SFNC Write-Order Execution**:
+    *   *Constraint*: $\text{OffsetX} + \text{Width} \le \text{MaxWidth (2048)}$ and $\text{OffsetY} + \text{Height} \le \text{MaxHeight (1536)}$.
+    *   *Order*:
+        1. Set `OffsetX = 0`, `OffsetY = 0` (expands physical boundaries).
+        2. Set `Width = MaxWidth`, `Height = MaxHeight` (resets any previous crops).
+        3. Write target **Width** and **Height** *first* (shrinks the bounding box).
+        4. Write target **OffsetX** and **OffsetY** *second* (moves the bounding box).
+4.  **Restart Stream & Post-Drain**: Calls `AcquisitionStart` sequentially. Because sources start at slightly different millisecond offsets, we apply a brief `50 ms` settling delay and discard the first 5 frames from each stream to guarantee the background loop begins with all channels completely in phase.
+
+---
+
+## 6. Real-Time Viewport Rendering & Display Pipeline
+
+To achieve premium UI performance (stable 30+ FPS) without taxing the CPU, all heavy math and downsampling operations have been completely removed from the camera worker thread.
+
+### Step 1: Grayscale and Color Standardization
+All incoming frames are processed at full resolution. If a monochrome frame (`ndim == 2`) is received, it is converted to RGB via `cv2.COLOR_GRAY2RGB` to ensure absolute display compatibility. Color channels are converted from standard BGR to RGB.
+
+### Step 2: Memory-Safe Deep Copy (`.copy()`)
+PySide6's `QImage` wrapper maps a light pointer directly to the underlying NumPy array. Since the JAI grab thread overwrites and recycles frame buffers rapidly, failing to duplicate this memory causes Qt to read partially corrupted heap blocks. This produces dull, yellowish-gray tones and visual horizontal tearing. Calling **`.copy()`** is **mandatory** to duplicate the pixel buffer into a persistent, dedicated memory block in Qt space, guaranteeing 100% stable, rich BGR color representation.
+
+### Step 3: Bilinear Viewport Scaling (`SmoothTransformation`)
+*   **Problem**: High-speed nearest-neighbor scaling (`FastTransformation`) creates severe aliasing, making text or fine defects appear jagged and blocky.
+*   **Solution**: The `ChannelPanel` compares the frame's dimensions to the current display card `QLabel` size. If they differ, it applies PySide6's highly optimized **`SmoothTransformation`** (bilinear interpolation) to render smooth edges and high-fidelity surface details.
+
+### Step 4: Aspect-Ratio Aware Cyan ROI Overlay
+While an operator is dragging spinboxes, the UI draws a live preview overlay:
+*   A dashed **cyan border** `#06b6d4` with solid corner tick marks outlines the targeted region.
+*   Everything *outside* the targeted ROI is dimmed with a **translucent dark mask** (`rgba(0, 0, 0, 120)`).
+*   **Cropped Space Mapping**: If a hardware ROI is already active (e.g. streaming a $1648 \times 1536$ sub-frame), the coordinates of the preview ROI are mapped dynamically relative to the active ROI's origin, accounting for the current aspect ratio and letterboxing. A floating pill label reads `Width × Height @ (OffsetX, OffsetY)`.
+
+---
+
+## 7. Decoupled AI Inference Path (Future Architecture)
+
+For production apple grading, the AI model requires **untouched, full-resolution raw pixels** to detect microscopic defects like punctures or early decay. The dynamic, display-oriented EMA normalization is bypassed entirely:
+
+```
+                  JAICamera.grab() [Pulls synchronized full-res 2048x1536 raw buffers]
+                                   │
+       ┌───────────────────────────┼───────────────────────────┐
+       ▼                           ▼                           ▼
+CH1: Visible RGB            CH2: NIR1 Mono8             CH3: NIR2 Mono8
+       │                           │                           │
+Bayer Demosaic (BGR)        Fixed Normalization         Fixed Normalization
+ (cv2.COLOR_BayerBG2BGR)     (Divide by 255.0)           (Divide by 255.0)
+       │                           │                           │
+       └───────────────────────────┼───────────────────────────┘
+                                   ▼
+                   Concatenate Channels (C, H, W)
+                                   │
+                   Crop & Pad (640x640 letterbox)
+                                   │
+                      YOLOv8 Spectral Grading
+```
+
+*   **Fixed-Range Normalization**: Unlike visual normalization (which stretches pixels per-frame and makes identical apples evaluate to different values if lighting shifts), the AI path divides the raw intensity directly by the physical limits of the simultaneous multisource setup, preserving absolute, repeatable radiometric intensity.
