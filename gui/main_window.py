@@ -710,8 +710,10 @@ class MainWindow(QMainWindow):
                    f"[{pct}% of frame — {(100-pct)}% data saved]")
         self.statusBar().showMessage(msg)
         log.info("ROI readback — x=%d y=%d w=%d h=%d (%d%% of frame)", x, y, w, h, pct)
-        # Sync the display overlay with the firmware-confirmed values
+        # Sync the display overlay with the firmware-confirmed values, then clear it —
+        # the camera is now sending the cropped frame, overlay is no longer needed.
         self._center.channel_display.set_roi_preview(x, y, w, h)
+        self._center.channel_display.clear_roi_preview()
 
     @pyqtSlot(int, int, int, int)
     def _on_roi_preview(
