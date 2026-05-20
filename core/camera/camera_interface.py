@@ -1286,21 +1286,36 @@ class JAICamera:
                 p_h  = nm.GetInteger("Height")
 
                 if p_ox and p_oy and p_w and p_h:
-                    # Reset to full frame first, then apply new ROI
+                    # GenICam SFNC write order — CRITICAL:
+                    # Constraint: OffsetX + Width  <= MaxWidth  (2048)
+                    #             OffsetY + Height <= MaxHeight (1536)
+                    #
+                    # Step 1: Reset both offsets to 0 so size can expand freely
                     p_ox.SetValue(0)
                     p_oy.SetValue(0)
+                    # Step 2: Reset size to full sensor (clear any previous crop)
                     p_w.SetValue(mw)
                     p_h.SetValue(mh)
-                    p_ox.SetValue(ox)
-                    p_oy.SetValue(oy)
+                    # Step 3: Set target WIDTH and HEIGHT *first*
+                    #   e.g. Width=1648 → 0+1648=1648 ≤ 2048 ✓
                     r_w = p_w.SetValue(w)
                     r_h = p_h.SetValue(h)
+                    # Step 4: Now set OffsetX/OffsetY (size already reduced to fit)
+                    #   e.g. OffsetX=400 → 400+1648=2048 ≤ 2048 ✓
+                    r_ox = p_ox.SetValue(ox)
+                    r_oy = p_oy.SetValue(oy)
                     if not r_w.IsOK():
                         log.warning("ROI: Width.SetValue(%d) failed on %s: %s",
                                     w, src._source_name, r_w.GetCodeString())
                     if not r_h.IsOK():
                         log.warning("ROI: Height.SetValue(%d) failed on %s: %s",
                                     h, src._source_name, r_h.GetCodeString())
+                    if not r_ox.IsOK():
+                        log.warning("ROI: OffsetX.SetValue(%d) failed on %s: %s",
+                                    ox, src._source_name, r_ox.GetCodeString())
+                    if not r_oy.IsOK():
+                        log.warning("ROI: OffsetY.SetValue(%d) failed on %s: %s",
+                                    oy, src._source_name, r_oy.GetCodeString())
                 else:
                     log.warning("ROI: integer params not found on %s", src._source_name)
                 # stack destroyed → SourceSelector reverts
