@@ -51,6 +51,15 @@ class ChannelPanel(QWidget):
         self._meta   = CHANNEL_META[idx]
         self._color  = CH_COLORS[idx]
         self._frames = 0
+        # ROI preview overlay — sensor-space rectangle (None = no overlay)
+        self._roi_preview: tuple[int, int, int, int] | None = None  # (ox, oy, w, h)
+        # Active ROI: the sensor-space region the camera is currently streaming.
+        # Defaults to full frame. Updated by set_active_roi() after firmware confirms.
+        self._active_roi: tuple[int, int, int, int] = (0, 0, 2048, 1536)
+        # Actual frame dimensions from the last received frame (may differ from
+        # full sensor after ROI is applied).
+        self._frame_w: int = 2048
+        self._frame_h: int = 1536
         self._setup()
 
     def _setup(self) -> None:
@@ -213,10 +222,157 @@ class ChannelPanel(QWidget):
                 Qt.TransformationMode.SmoothTransformation,
             )
 
+        # Draw ROI overlay on top of the scaled pixmap (before display)
+        if self._roi_preview is not None:
+            pixmap = self._draw_roi_overlay(pixmap, w, h)
+
         self._display.setPixmap(pixmap)
         self._frames += 1
         self._lbl_res.setText(f"{w}×{h}")
         self._lbl_fps.setText(f"{fps:.1f} FPS")
+        # Track live frame dimensions for accurate overlay aspect-ratio mapping
+        self._frame_w = w
+        self._frame_h = h
+
+    def _draw_roi_overlay(self, pixmap: QPixmap, frame_w: int, frame_h: int) -> QPixmap:
+        """
+        Draw a cyan ROI cut-line rectangle on top of the pixmap.
+
+        Coordinate mapping:
+          - self._active_roi = sensor-space region currently streaming
+            (e.g. (400, 0, 1648, 1536) after a previous ROI was applied).
+          - self._roi_preview = new sensor-space ROI the user is previewing.
+          - The displayed frame represents ONLY the active_roi region.
+          - We map the preview ROI relative to the active ROI so the border
+            appears at the correct visual position in the current frame.
+        """
+        if self._roi_preview is None:
+            return pixmap
+        ox, oy, rw, rh = self._roi_preview
+        aox, aoy, aw, ah = self._active_roi
+
+        # No overlay if new ROI exactly matches the active ROI
+        if (ox, oy, rw, rh) == (aox, aoy, aw, ah):
+            return pixmap
+
+        pw = pixmap.width()
+        ph = pixmap.height()
+
+        # Use ACTUAL FRAME aspect ratio (not fixed sensor) for letterbox calculation.
+        # After ROI is applied, frame_w/h reflect the cropped dimensions.
+        frame_aspect = self._frame_w / max(self._frame_h, 1)
+        pixmap_aspect = pw / max(ph, 1)
+
+        if frame_aspect > pixmap_aspect:
+            img_w = pw
+            img_h = int(pw / frame_aspect)
+            img_x = 0
+            img_y = (ph - img_h) // 2
+        else:
+            img_h = ph
+            img_w = int(ph * frame_aspect)
+            img_x = (pw - img_w) // 2
+            img_y = 0
+
+        # Map new ROI from SENSOR space to DISPLAY space, using active ROI as origin.
+        # The displayed frame covers sensor region [aox, aox+aw] x [aoy, aoy+ah].
+        sx = img_w / max(aw, 1)   # pixels per sensor-pixel (x)
+        sy = img_h / max(ah, 1)   # pixels per sensor-pixel (y)
+
+        rx    = img_x + int((ox - aox) * sx)
+        ry    = img_y + int((oy - aoy) * sy)
+        rw_px = int(rw * sx)
+        rh_px = int(rh * sy)
+
+        # Clamp to image bounds (preview can extend outside current frame)
+        rx    = max(img_x, min(rx, img_x + img_w))
+        ry    = max(img_y, min(ry, img_y + img_h))
+        rw_px = max(0, min(rw_px, img_x + img_w - rx))
+        rh_px = max(0, min(rh_px, img_y + img_h - ry))
+
+        result = pixmap.copy()
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+        # Dim everything OUTSIDE the ROI with a dark translucent overlay
+        painter.setBrush(QBrush(QColor(0, 0, 0, 120)))
+        painter.setPen(Qt.PenStyle.NoPen)
+        # Top strip
+        if ry > img_y:
+            painter.drawRect(img_x, img_y, img_w, ry - img_y)
+        # Bottom strip
+        bot = ry + rh_px
+        if bot < img_y + img_h:
+            painter.drawRect(img_x, bot, img_w, (img_y + img_h) - bot)
+        # Left strip
+        if rx > img_x:
+            painter.drawRect(img_x, ry, rx - img_x, rh_px)
+        # Right strip
+        right = rx + rw_px
+        if right < img_x + img_w:
+            painter.drawRect(right, ry, (img_x + img_w) - right, rh_px)
+
+        # Dashed cyan border around ROI
+        pen = QPen(QColor("#06b6d4"))
+        pen.setWidth(2)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(rx, ry, rw_px, rh_px)
+
+        # Corner tick marks for clarity
+        tick = 12
+        pen.setStyle(Qt.PenStyle.SolidLine)
+        pen.setWidth(3)
+        painter.setPen(pen)
+        for cx, cy, dx, dy in [
+            (rx,           ry,           1,  1),
+            (rx + rw_px,   ry,          -1,  1),
+            (rx,           ry + rh_px,   1, -1),
+            (rx + rw_px,   ry + rh_px,  -1, -1),
+        ]:
+            painter.drawLine(cx, cy, cx + dx * tick, cy)
+            painter.drawLine(cx, cy, cx, cy + dy * tick)
+
+        # Label: 'W×H @ (X,Y)' near top-left of ROI
+        from PyQt6.QtGui import QFontMetrics
+        label_text = f"{rw}×{rh} @ ({ox},{oy})"
+        font = painter.font()
+        font.setPointSize(8)
+        font.setBold(True)
+        painter.setFont(font)
+        fm = QFontMetrics(font)
+        tw = fm.horizontalAdvance(label_text) + 8
+        th = fm.height() + 4
+        lx = rx + 4
+        ly = ry + 4
+        # Background pill
+        painter.setBrush(QBrush(QColor(0, 0, 0, 160)))
+        pen2 = QPen(QColor("#06b6d4"))
+        pen2.setWidth(1)
+        painter.setPen(pen2)
+        painter.drawRoundedRect(lx - 2, ly - 2, tw, th, 3, 3)
+        painter.setPen(QColor("#06b6d4"))
+        painter.drawText(lx + 2, ly + fm.ascent(), label_text)
+
+        painter.end()
+        return result
+
+    def set_roi_preview(self, ox: int, oy: int, w: int, h: int) -> None:
+        """Update the ROI overlay rectangle. Called by main_window on spinbox change."""
+        self._roi_preview = (ox, oy, w, h)
+
+    def set_active_roi(self, ox: int, oy: int, w: int, h: int) -> None:
+        """
+        Update the active ROI — the sensor-space region the camera is currently
+        streaming. Called after firmware confirms a new ROI so subsequent overlays
+        map against the correct frame content instead of the full 2048x1536 sensor.
+        """
+        self._active_roi = (ox, oy, w, h)
+
+    def clear_roi_preview(self) -> None:
+        """Remove the ROI overlay (applied — no longer previewing)."""
+        self._roi_preview = None
 
     def reset(self) -> None:
         self._frames = 0
@@ -255,3 +411,18 @@ class MultiChannelDisplay(QWidget):
     def reset_all(self) -> None:
         for panel in self._panels:
             panel.reset()
+
+    def set_roi_preview(self, ox: int, oy: int, w: int, h: int) -> None:
+        """Push ROI overlay to all 3 channel panels simultaneously."""
+        for panel in self._panels:
+            panel.set_roi_preview(ox, oy, w, h)
+
+    def set_active_roi(self, ox: int, oy: int, w: int, h: int) -> None:
+        """Update active ROI on all 3 panels after firmware confirms an apply."""
+        for panel in self._panels:
+            panel.set_active_roi(ox, oy, w, h)
+
+    def clear_roi_preview(self) -> None:
+        """Remove ROI overlay from all panels."""
+        for panel in self._panels:
+            panel.clear_roi_preview()

@@ -56,6 +56,7 @@ class CameraWorker(QThread):
     sig_block_ids             = pyqtSignal(bool, int, int, int)  # synced, ch1_bid, ch2_bid, ch3_bid
     sig_wb_readback           = pyqtSignal(bool, float, float, float)  # success, R, G, B (Source0)
     sig_black_level_readback  = pyqtSignal(float, float, float)  # actual CH1/CH2/CH3 black levels DN
+    sig_roi_readback          = pyqtSignal(int, int, int, int)   # actual x, y, w, h after apply
 
 
     def __init__(self, config: dict, display_fps: int = 30) -> None:
@@ -275,3 +276,30 @@ class CameraWorker(QThread):
             self.sig_black_level_readback.emit(actuals[0], actuals[1], actuals[2])
         else:
             log.warning("set_black_levels ignored — camera not connected")
+
+    # ── ROI (Region of Interest) controls ───────────────────────────────────
+
+    def set_roi(self, offset_x: int, offset_y: int, width: int, height: int) -> None:
+        """
+        Apply ROI to all 3 sources simultaneously (they share the same physical FOV).
+        Firmware aligns values to step boundaries and clamps to sensor limits.
+        Emits sig_roi_readback(x, y, w, h) with the actual accepted values.
+        """
+        if self._camera is not None:
+            actual = self._camera.set_roi(offset_x, offset_y, width, height)
+            self.sig_roi_readback.emit(int(actual[0]), int(actual[1]),
+                                       int(actual[2]), int(actual[3]))
+        else:
+            log.warning("set_roi ignored — camera not connected")
+
+    def reset_roi(self) -> None:
+        """
+        Reset ROI to full sensor frame (OffsetX=0, OffsetY=0, Width=max, Height=max).
+        Emits sig_roi_readback with the resulting full-frame values.
+        """
+        if self._camera is not None:
+            actual = self._camera.reset_roi()
+            self.sig_roi_readback.emit(int(actual[0]), int(actual[1]),
+                                       int(actual[2]), int(actual[3]))
+        else:
+            log.warning("reset_roi ignored — camera not connected")

@@ -201,6 +201,9 @@ class LeftControlPanel(QWidget):
     sig_awb_triggered         = pyqtSignal()                 # One-Push AWB requested (Color CH1 / Source0)
     sig_wb_revert             = pyqtSignal()                 # Revert to pre-AWB ratios requested
     sig_black_level_changed   = pyqtSignal(float, float, float)  # CH1/CH2/CH3 DN — emitted on Apply
+    sig_roi_changed           = pyqtSignal(int, int, int, int)   # OffsetX, OffsetY, Width, Height
+    sig_roi_reset             = pyqtSignal()                 # Reset ROI to full frame
+    sig_roi_preview           = pyqtSignal(int, int, int, int)   # Live preview as spinboxes change
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -224,6 +227,7 @@ class LeftControlPanel(QWidget):
 
         vlayout.addWidget(_SectionHeader("Camera"))
         vlayout.addWidget(self._camera_card())
+        vlayout.addWidget(self._roi_card())
 
         vlayout.addWidget(_SectionHeader("Conveyor"))
         vlayout.addWidget(self._conveyor_card())
@@ -579,17 +583,18 @@ class LeftControlPanel(QWidget):
         )
         self._btn_apply_bl.clicked.connect(self._on_apply_black_levels)
 
-        self._btn_reset_bl = QPushButton("↺")
-        self._btn_reset_bl.setFixedSize(34, 34)
+        self._btn_reset_bl = QPushButton("↺  Reset")
+        self._btn_reset_bl.setFixedHeight(34)
         self._btn_reset_bl.setToolTip("Reset all Black Levels to 0 DN (sensor default).")
         self._btn_reset_bl.setStyleSheet(f"""
             QPushButton {{
-                background-color: {BG_ELEVATED}; color: {TEXT_1};
-                border: 1px solid {BORDER}; border-radius: 7px; font-size: 14px;
+                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                border: 1px solid {BORDER}; font-weight: 600; font-size: 11px;
+                border-radius: 7px; padding: 0 10px;
             }}
-            QPushButton:hover:enabled {{ background-color: {WARNING}33; color: {WARNING};
-                                         border-color: {WARNING}88; }}
-            QPushButton:pressed:enabled {{ background-color: {WARNING}55; }}
+            QPushButton:hover   {{ background-color: {WARNING}22; color: {WARNING};
+                                   border-color: {WARNING}55; }}
+            QPushButton:pressed {{ background-color: {WARNING}44; }}
         """)
         self._btn_reset_bl.clicked.connect(self._on_reset_black_levels)
 
@@ -705,6 +710,151 @@ class LeftControlPanel(QWidget):
             spn.blockSignals(True)
             spn.setValue(val)
             spn.blockSignals(False)
+
+    # ── ROI card ─────────────────────────────────────────────────────────────
+
+    def _roi_card(self) -> QWidget:
+        """
+        ROI (Region of Interest) card.
+        Controls: OffsetX, OffsetY, Width, Height spinboxes.
+        GenICam registers: OffsetX, OffsetY, Width, Height (integer, per-source).
+        All 3 sources receive the same ROI (co-registered sensors, same FOV).
+        """
+        card = _Card()
+        card.add(_SectionHeader("ROI — Region of Interest"))
+
+        # Readout label — shows current ROI as 'W × H  @ (X, Y)'
+        self._lbl_roi = QLabel("Full Frame  —  2048 × 1536 @ (0, 0)")
+        self._lbl_roi.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl_roi.setStyleSheet(
+            "color: #06b6d4; font-size: 10px; font-weight: 600; "
+            "background: transparent; padding: 4px 0;"
+        )
+        card.add(self._lbl_roi)
+
+        # ── Four spinboxes ──────────────────────────────────────────────
+        # Layout: Label (fixed) | Spinbox (stretch)
+        # Hardware step sizes on JAI FS-3200T (both confirmed by observation):
+        #   OffsetX / Width  → multiples of 16 (200 → 192)
+        #   OffsetY / Height → multiples of  8 ( 10 →   8)
+        ROI_PARAMS = [
+            ("OffsetX", "px",  0, 2032, 16, "Left crop start. Must be multiple of 16 — arrow keys step by 16."),
+            ("OffsetY", "px",  0, 1528,  8, "Top crop start. Must be multiple of 8 — arrow keys step by 8."),
+            ("Width",   "px", 16, 2048, 16, "Capture width. Must be multiple of 16 — arrow keys step by 16."),
+            ("Height",  "px",  8, 1536,  8, "Capture height. Must be multiple of 8 — arrow keys step by 8."),
+        ]
+        self._spn_roi: dict[str, QSpinBox] = {}
+
+        for param, unit, lo, hi, step, tip in ROI_PARAMS:
+            row_w = QWidget()
+            row_w.setStyleSheet("background: transparent; border: none;")
+            row_l = QHBoxLayout(row_w)
+            row_l.setContentsMargins(0, 1, 0, 1)
+            row_l.setSpacing(6)
+
+            lbl = QLabel(param)
+            lbl.setFixedWidth(LABEL_W)
+            lbl.setStyleSheet(
+                f"color: {TEXT_2}; font-size: 11px; "
+                f"font-weight: 600; background: transparent;"
+            )
+
+            spn = QSpinBox()
+            spn.setRange(lo, hi)
+            spn.setSingleStep(step)
+            spn.setValue(hi if param in ("Width", "Height") else 0)
+            spn.setSuffix(f" {unit}")
+            spn.setToolTip(tip)
+            spn.setMinimumWidth(WIDGET_MIN_W)
+            spn.setStyleSheet(f"""
+                QSpinBox {{
+                    background-color: {BG_ELEVATED}; color: {TEXT_1};
+                    border: 1px solid {BORDER}; border-radius: 5px; padding: 2px 6px;
+                }}
+                QSpinBox:focus {{ border-color: #06b6d4; }}
+            """)
+            # Live preview: update the readout label on any value change
+            spn.valueChanged.connect(self._update_roi_label)
+            self._spn_roi[param] = spn
+
+            row_l.addWidget(lbl)
+            row_l.addWidget(spn, stretch=1)
+            card.add(row_w)
+
+        # NOTE: No cross-constraint wiring — static ranges are clear.
+        # Firmware clamps OffsetX+Width<=2048 etc. on Apply automatically.
+
+        # ── Buttons: Apply + Full Frame ──────────────────────────────
+        self._btn_apply_roi = _btn_secondary("Apply ROI")
+        self._btn_apply_roi.setToolTip(
+            "Apply ROI to all 3 sensors. Values are step-aligned by firmware."
+        )
+        self._btn_apply_roi.clicked.connect(self._on_apply_roi)
+
+        self._btn_reset_roi = QPushButton("▦ Full Frame")
+        self._btn_reset_roi.setFixedHeight(34)
+        self._btn_reset_roi.setToolTip(
+            "Reset ROI to full 2048×1536 sensor frame."
+        )
+        self._btn_reset_roi.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_ELEVATED}; color: {TEXT_1};
+                border: 1px solid {BORDER}; border-radius: 7px;
+                font-weight: 600; font-size: 11px;
+            }}
+            QPushButton:hover:enabled {{
+                background-color: {WARNING}33; color: {WARNING};
+                border-color: {WARNING}88;
+            }}
+            QPushButton:pressed:enabled {{ background-color: {WARNING}55; }}
+        """)
+        self._btn_reset_roi.clicked.connect(self.sig_roi_reset.emit)
+
+        btn_hl = QHBoxLayout()
+        btn_hl.setContentsMargins(0, 4, 0, 0)
+        btn_hl.setSpacing(6)
+        btn_hl.addWidget(self._btn_apply_roi, stretch=1)
+        btn_hl.addWidget(self._btn_reset_roi)
+        card.add_layout(btn_hl)
+
+        return card
+
+    def _update_roi_label(self) -> None:
+        """Refresh the live ROI readout label and push preview overlay to display."""
+        x = self._spn_roi["OffsetX"].value()
+        y = self._spn_roi["OffsetY"].value()
+        w = self._spn_roi["Width"].value()
+        h = self._spn_roi["Height"].value()
+        full = (x == 0 and y == 0 and w == 2048 and h == 1536)
+        pct  = round(100 * w * h / (2048 * 1536))
+        if full:
+            self._lbl_roi.setText("Full Frame  —  2048 × 1536 @ (0, 0)")
+        else:
+            self._lbl_roi.setText(f"{w} × {h} px @ ({x}, {y})  —  {pct}% of frame")
+        # Push live preview overlay to camera display (appears immediately, no Apply needed)
+        self.sig_roi_preview.emit(x, y, w, h)
+
+    def _on_apply_roi(self) -> None:
+        """Emit ROI values → main_window._on_roi_changed."""
+        self.sig_roi_changed.emit(
+            self._spn_roi["OffsetX"].value(),
+            self._spn_roi["OffsetY"].value(),
+            self._spn_roi["Width"].value(),
+            self._spn_roi["Height"].value(),
+        )
+
+    def update_roi(self, x: int, y: int, w: int, h: int) -> None:
+        """
+        Called by main_window after firmware readback to sync spinboxes
+        to the actual (step-aligned, clamped) ROI values accepted by the camera.
+        """
+        for key, val in (("OffsetX", x), ("OffsetY", y),
+                         ("Width",   w), ("Height",  h)):
+            spn = self._spn_roi[key]
+            spn.blockSignals(True)
+            spn.setValue(val)
+            spn.blockSignals(False)
+        self._update_roi_label()
 
     def _conveyor_card(self) -> QWidget:
         card = _Card()
