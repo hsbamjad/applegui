@@ -583,17 +583,18 @@ class LeftControlPanel(QWidget):
         )
         self._btn_apply_bl.clicked.connect(self._on_apply_black_levels)
 
-        self._btn_reset_bl = QPushButton("↺")
-        self._btn_reset_bl.setFixedSize(34, 34)
+        self._btn_reset_bl = QPushButton("↺  Reset")
+        self._btn_reset_bl.setFixedHeight(34)
         self._btn_reset_bl.setToolTip("Reset all Black Levels to 0 DN (sensor default).")
         self._btn_reset_bl.setStyleSheet(f"""
             QPushButton {{
-                background-color: {BG_ELEVATED}; color: {TEXT_1};
-                border: 1px solid {BORDER}; border-radius: 7px; font-size: 14px;
+                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                border: 1px solid {BORDER}; font-weight: 600; font-size: 11px;
+                border-radius: 7px; padding: 0 10px;
             }}
-            QPushButton:hover:enabled {{ background-color: {WARNING}33; color: {WARNING};
-                                         border-color: {WARNING}88; }}
-            QPushButton:pressed:enabled {{ background-color: {WARNING}55; }}
+            QPushButton:hover   {{ background-color: {WARNING}22; color: {WARNING};
+                                   border-color: {WARNING}55; }}
+            QPushButton:pressed {{ background-color: {WARNING}44; }}
         """)
         self._btn_reset_bl.clicked.connect(self._on_reset_black_levels)
 
