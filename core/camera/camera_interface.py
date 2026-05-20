@@ -152,6 +152,41 @@ class _JAISource:
         nm.Get("AcquisitionStop").Execute()
         self._device.StreamDisable()
 
+    def drain_pipeline(self, timeout_ms: int = 50) -> int:
+        """
+        Pull and discard all queued buffers from the pipeline until it is empty.
+        Call AFTER stop_acquisition() and BEFORE writing new ROI registers to
+        ensure no stale pre-ROI frames remain when acquisition restarts.
+
+        Returns the number of frames discarded.
+        """
+        if self.pipeline is None:
+            return 0
+        discarded = 0
+        while True:
+            result, buffer, op_result = self.pipeline.RetrieveNextBuffer(timeout_ms)
+            if result.IsFailure():
+                break   # queue empty — timeout with no frame
+            self.pipeline.ReleaseBuffer(buffer)
+            discarded += 1
+            if discarded > 64:  # safety cap — should never need this many
+                break
+        return discarded
+
+    def resize_pipeline_buffers(self) -> None:
+        """
+        Update pipeline buffer size to match the new payload after ROI change.
+        Must be called while the pipeline is running but acquisition is stopped.
+        Stops the pipeline, resizes buffers, and restarts it.
+        """
+        if self.pipeline is None or self.stream is None:
+            return
+        new_payload = self._device.GetPayloadSize()
+        self.pipeline.Stop()
+        self.pipeline.SetBufferSize(new_payload)
+        self.pipeline.SetBufferCount(self.BUFFER_COUNT)
+        self.pipeline.Start()
+
     def grab(self, timeout_ms: int = 500) -> tuple[Optional[np.ndarray], int]:
         """
         Retrieve one frame from the pipeline.
@@ -180,8 +215,9 @@ class JAICamera:
     Simultaneous 3-source MultiSource acquisition with hardware sync.
     """
 
-    WARMUP_S     = 2.0
-    DRAIN_FRAMES = 30
+    WARMUP_S        = 2.0
+    DRAIN_FRAMES    = 30
+    ROI_RESYNC_FRAMES = 8   # frames to skip post-ROI to let pipelines resync
 
     def __init__(self, config: dict) -> None:
         self._cfg          = config
@@ -198,6 +234,12 @@ class JAICamera:
         self._grab_fps_t    = 0.0
         # Saved WB ratios for Revert (set just before One-Push AWB is triggered)
         self._saved_wb: Optional[tuple[float, float, float]] = None
+        # Post-ROI-change frame skip counter.
+        # set_roi() sets this to ROI_RESYNC_FRAMES after restarting acquisition.
+        # _grab_loop decrements it and discards frames while > 0, giving all 3
+        # sources time to flush stale buffers and re-synchronize block IDs.
+        self._roi_skip_frames: int = 0
+        self._roi_skip_lock = threading.Lock()
 
     @property
     def grab_fps(self) -> float:
@@ -351,6 +393,27 @@ class JAICamera:
                         block_id = bid
 
                 if not ok or len(raws) < len(self._sources):
+                    continue
+
+                # ── Post-ROI resync skip ───────────────────────────────────
+                # After set_roi() restarts acquisition the first few triplets
+                # may still be stale or from misaligned sources. Discard them.
+                with self._roi_skip_lock:
+                    if self._roi_skip_frames > 0:
+                        self._roi_skip_frames -= 1
+                        continue  # throw this triplet away
+
+                # ── Block ID cross-validation ──────────────────────────────
+                # All 3 sources must share the same block ID or the triplet is
+                # a sync mismatch — discard rather than deliver bad data.
+                bid0 = raws[0][2]
+                bid1 = raws[1][2]
+                bid2 = raws[2][2]
+                if not (bid0 == bid1 == bid2):
+                    log.warning(
+                        "Sync mismatch — block IDs: CH1=%d CH2=%d CH3=%d — discarding",
+                        bid0, bid1, bid2,
+                    )
                     continue
 
                 # Track actual camera FPS
@@ -1274,6 +1337,20 @@ class JAICamera:
                     log.warning("ROI: stop_acquisition failed on %s: %s",
                                 src._source_name, e)
 
+            # ── Step 1b: Drain stale pre-ROI frames from every pipeline ────
+            # After AcquisitionStop the PvPipeline still holds up to BUFFER_COUNT
+            # frames filled before the stop. If not drained they will contaminate
+            # the first triplets assembled after restart, causing sync mismatch.
+            total_drained = 0
+            for src in self._sources:
+                try:
+                    n = src.drain_pipeline()
+                    total_drained += n
+                except Exception as e:
+                    log.warning("ROI: drain_pipeline failed on %s: %s",
+                                src._source_name, e)
+            log.info("ROI: drained %d stale frames across all pipelines", total_drained)
+
             # ── Step 2: Write ROI to each source ───────────────────────────
             nm = self._device.GetParameters()
             for src in self._sources:
@@ -1320,6 +1397,17 @@ class JAICamera:
                     log.warning("ROI: integer params not found on %s", src._source_name)
                 # stack destroyed → SourceSelector reverts
 
+            # ── Step 2b: Resize pipeline buffers to match new payload ───────
+            # The PvPipeline was sized for the old frame dimensions. After ROI,
+            # payload size changes. Resize now (while acquisition is stopped) so
+            # buffer management is correct for the new frame size.
+            for src in self._sources:
+                try:
+                    src.resize_pipeline_buffers()
+                except Exception as e:
+                    log.warning("ROI: resize_pipeline_buffers failed on %s: %s",
+                                src._source_name, e)
+
             # ── Step 3: Restart all acquisitions ───────────────────────────
             for src in self._sources:
                 try:
@@ -1327,6 +1415,15 @@ class JAICamera:
                 except Exception as e:
                     log.warning("ROI: start_acquisition failed on %s: %s",
                                 src._source_name, e)
+
+            # ── Step 3b: Schedule post-restart frame skip ───────────────────
+            # Even after a clean restart the 3 sources may not begin sending
+            # frames in perfect sync. The grab loop will discard the first
+            # ROI_RESYNC_FRAMES frames so only fully-stabilized triplets reach
+            # the display and inference pipeline.
+            with self._roi_skip_lock:
+                self._roi_skip_frames = self.ROI_RESYNC_FRAMES
+            log.info("ROI: post-restart skip set to %d frames", self.ROI_RESYNC_FRAMES)
 
             # ── Step 4: Read back actual values from Source0 ────────────────
             actual = self.get_roi()
