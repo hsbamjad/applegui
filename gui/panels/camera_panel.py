@@ -219,14 +219,15 @@ def _sub_header(card: "_Card", text: str, icon: str = "", color: str = TEXT_2) -
 
 class CameraControlsWindow(QWidget):
     """
-    Frameless floating sub-window that holds all camera control widgets.
-    Appears to the right of the left sidebar when the Camera Controls button
-    is clicked. Supports dragging by the title bar and has a close button.
+    Frameless floating sub-window — 2-column, no scroll.
+    Left column: Exposure · FPS · Gain
+    Right column: WB · Black Level · ROI
+    Drag by title bar. Close button syncs sidebar toggle.
     """
 
     sig_hidden = pyqtSignal()   # emitted when window is closed/hidden
 
-    POPUP_WIDTH  = 310
+    POPUP_WIDTH  = 660
     POPUP_TITLE  = "Camera Controls"
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -241,7 +242,7 @@ class CameraControlsWindow(QWidget):
         self._drag_pos: QPoint | None = None
         self._build_shell()
 
-    # ── Shell (title bar + scroll area) ─────────────────────────────────
+    # ── Shell (title bar + 2-column content) ───────────────────────────
 
     def _build_shell(self) -> None:
         root = QVBoxLayout(self)
@@ -262,144 +263,144 @@ class CameraControlsWindow(QWidget):
         outer_vl.setContentsMargins(0, 0, 0, 0)
         outer_vl.setSpacing(0)
 
-        # ── Title bar ──────────────────────────────────────────────────
+        # ── Title bar ───────────────────────────────────────────────
         title_bar = QWidget()
         title_bar.setObjectName("cam_titlebar")
-        title_bar.setFixedHeight(48)
+        title_bar.setFixedHeight(50)
         title_bar.setCursor(Qt.CursorShape.SizeAllCursor)
         title_bar.setStyleSheet(f"""
             QWidget#cam_titlebar {{
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {ACCENT}33, stop:1 {ACCENT}0A
+                    stop:0 {ACCENT}33, stop:1 {ACCENT}08
                 );
                 border-radius: 12px 12px 0 0;
                 border-bottom: 1px solid {ACCENT}33;
             }}
         """)
         tb_hl = QHBoxLayout(title_bar)
-        tb_hl.setContentsMargins(14, 0, 10, 0)
-        tb_hl.setSpacing(10)
+        tb_hl.setContentsMargins(16, 0, 12, 0)
+        tb_hl.setSpacing(12)
 
-        # Camera icon
         ic = QLabel("📷")
         ic.setStyleSheet(
-            f"color: {ACCENT}; font-size: 18px; "
-            "background: transparent; border: none;"
+            f"color: {ACCENT}; font-size: 20px; background: transparent; border: none;"
         )
         tb_hl.addWidget(ic)
 
-        # Title + subtitle stacked
         txt_col = QVBoxLayout()
         txt_col.setSpacing(1)
         txt_col.setContentsMargins(0, 0, 0, 0)
         ttl = QLabel("Camera Controls")
         ttl.setStyleSheet(
-            f"color: {TEXT_1}; font-size: 13px; font-weight: 700; "
-            "background: transparent; border: none;"
+            f"color: {TEXT_1}; font-size: 14px; font-weight: 700; "
+            "background: transparent; border: none; letter-spacing: 0.2px;"
         )
-        sub = QLabel("Exposure · FPS · Gain · WB · Black Level · ROI")
+        sub = QLabel(
+            "⏱ Exposure  ·  🎥 Frame Rate  ·  🔊 Gain  ·  ☀️ White Balance  ·  🌑 Black Level  ·  ▦ ROI"
+        )
         sub.setStyleSheet(
-            f"color: {TEXT_3}; font-size: 9px; "
-            "background: transparent; border: none;"
+            f"color: {TEXT_3}; font-size: 9px; background: transparent; border: none;"
         )
         txt_col.addWidget(ttl)
         txt_col.addWidget(sub)
         tb_hl.addLayout(txt_col)
         tb_hl.addStretch()
 
-        # Close button
+        # Column labels badge
+        col_badge = QLabel("LEFT: Exposure · FPS · Gain      RIGHT: WB · Black Level · ROI")
+        col_badge.setStyleSheet(
+            f"color: {TEXT_3}; font-size: 8px; background: {ACCENT}11; "
+            f"border: 1px solid {ACCENT}22; border-radius: 6px; padding: 2px 8px;"
+        )
+        tb_hl.addWidget(col_badge)
+
         close_btn = QPushButton("✕")
         close_btn.setFixedSize(28, 28)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {BG_ELEVATED};
-                color: {TEXT_2};
-                border: 1px solid {BORDER};
-                border-radius: 14px;
-                font-size: 12px;
-                font-weight: 700;
-                padding: 0;
+                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                border: 1px solid {BORDER}; border-radius: 14px;
+                font-size: 12px; font-weight: 700; padding: 0;
             }}
             QPushButton:hover {{
-                background-color: {DANGER};
-                color: white;
-                border-color: {DANGER};
+                background-color: {DANGER}; color: white; border-color: {DANGER};
             }}
-            QPushButton:pressed {{
-                background-color: #DC2626;
-            }}
+            QPushButton:pressed {{ background-color: #DC2626; }}
         """)
         close_btn.clicked.connect(self.hide)
         tb_hl.addWidget(close_btn)
 
-        # Make title bar draggable
         title_bar.mousePressEvent   = self._tb_mouse_press
         title_bar.mouseMoveEvent    = self._tb_mouse_move
         title_bar.mouseReleaseEvent = self._tb_mouse_release
-
         outer_vl.addWidget(title_bar)
 
-        # ── Thin accent divider ───────────────────────────────────────
+        # ── Accent divider ────────────────────────────────────────────
         div = QFrame()
         div.setFixedHeight(2)
         div.setStyleSheet(
             f"background: qlineargradient("
             f"x1:0,y1:0,x2:1,y2:0,"
-            f"stop:0 {ACCENT},stop:0.5 {ACCENT}88,stop:1 transparent);"
+            f"stop:0 {ACCENT},stop:0.6 {ACCENT}88,stop:1 transparent);"
             f" border: none;"
         )
         outer_vl.addWidget(div)
 
-        # ── Scrollable content area ───────────────────────────────────
-        self._content_widget = QWidget()
-        self._content_widget.setStyleSheet(
-            f"background: transparent; border: none;"
+        # ── Two-column content (NO scroll) ────────────────────────────
+        body = QWidget()
+        body.setStyleSheet("background: transparent; border: none;")
+        body_hl = QHBoxLayout(body)
+        body_hl.setContentsMargins(12, 10, 12, 14)
+        body_hl.setSpacing(10)
+
+        # Vertical separator between columns
+        def _make_col() -> tuple[QWidget, QVBoxLayout]:
+            w = QWidget()
+            w.setStyleSheet("background: transparent; border: none;")
+            vl = QVBoxLayout(w)
+            vl.setContentsMargins(0, 0, 0, 0)
+            vl.setSpacing(8)
+            return w, vl
+
+        self._left_w,  self._left_col  = _make_col()
+        self._right_w, self._right_col = _make_col()
+
+        col_sep = QFrame()
+        col_sep.setFixedWidth(1)
+        col_sep.setStyleSheet(
+            f"background: qlineargradient("
+            f"x1:0,y1:0,x2:0,y2:1,"
+            f"stop:0 transparent,stop:0.2 {BORDER},"
+            f"stop:0.8 {BORDER},stop:1 transparent);"
+            f" border: none;"
         )
-        self._content_layout = QVBoxLayout(self._content_widget)
-        self._content_layout.setContentsMargins(10, 8, 10, 12)
-        self._content_layout.setSpacing(8)
 
-        scroll = QScrollArea()
-        scroll.setWidget(self._content_widget)
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setStyleSheet(f"""
-            QScrollArea {{
-                border: none;
-                background: transparent;
-                border-radius: 0 0 12px 12px;
-            }}
-            QScrollBar:vertical {{
-                background: transparent; width: 5px; margin: 4px 0;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {BORDER}; border-radius: 3px; min-height: 20px;
-            }}
-            QScrollBar::handle:vertical:hover {{ background: {ACCENT}; }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
-        """)
-        outer_vl.addWidget(scroll, stretch=1)
+        body_hl.addWidget(self._left_w,  stretch=1)
+        body_hl.addWidget(col_sep)
+        body_hl.addWidget(self._right_w, stretch=1)
 
+        outer_vl.addWidget(body)
         root.addWidget(outer)
 
     # ── Content population (called by LeftControlPanel) ────────────────
 
-    def add_widget(self, widget: QWidget) -> None:
-        self._content_layout.addWidget(widget)
+    def add_widget(self, widget: QWidget, col: int = 0) -> None:
+        """Add widget to left (col=0) or right (col=1) column."""
+        if col == 0:
+            self._left_col.addWidget(widget)
+        else:
+            self._right_col.addWidget(widget)
 
     def finalize(self) -> None:
-        """Call after all widgets are added to set a sensible max height."""
-        self._content_widget.adjustSize()
-        # Cap at 85% of screen height
-        from PyQt6.QtWidgets import QApplication
-        screen_h = QApplication.primaryScreen().availableGeometry().height()
-        self.setMaximumHeight(int(screen_h * 0.85))
+        """Call after all widgets are added. Stretches both columns at bottom and sizes window."""
+        self._left_col.addStretch()
+        self._right_col.addStretch()
         self.adjustSize()
-
-    # ── Show / position ──────────────────────────────────────────────
+        # Ensure both columns are equal height (the taller one sets the window)
+        self.setFixedHeight(self.sizeHint().height())
+    # ── Show / position ────────────────────────────────────────────
 
     def show_beside(self, anchor: QWidget) -> None:
         """
@@ -469,9 +470,11 @@ class LeftControlPanel(QWidget):
         # Build the floating camera controls window first (so cards can be added)
         self._cam_win = CameraControlsWindow(self.window())
         self._build()
-        # Populate the floating window with camera control cards
-        self._cam_win.add_widget(self._camera_card())
-        self._cam_win.add_widget(self._roi_card())
+        # Populate floating window: left col = Exposure/FPS/Gain, right col = WB/BL/ROI
+        cam_card, wb_bl_card = self._camera_cards_split()
+        self._cam_win.add_widget(cam_card,    col=0)
+        self._cam_win.add_widget(wb_bl_card,  col=1)
+        self._cam_win.add_widget(self._roi_card(), col=1)
         self._cam_win.finalize()
         # Sync sidebar button when popup is closed via X or hide()
         self._cam_win.sig_hidden.connect(
@@ -597,11 +600,17 @@ class LeftControlPanel(QWidget):
             self._btn_cam_controls.setChecked(True)
 
 
-    def _camera_card(self) -> QWidget:
-        card = _Card()
+    def _camera_cards_split(self) -> tuple[QWidget, QWidget]:
+        """Return (left_card, right_card) for the 2-column popup layout.
 
-        # ── Sub-section: Exposure Time ────────────────────────────────────
-        _sub_header(card, "EXPOSURE TIME", icon="⏱", color="#f59e0b")
+        Left  card: Exposure Time · Frame Rate · Sensor Gain
+        Right card: White Balance · Black Level
+        """
+        left  = _Card()
+        right = _Card()
+
+        # ── Sub-section: Exposure Time ────────────────────────────────
+        _sub_header(left, "EXPOSURE TIME", icon="⏱", color="#f59e0b")
 
         # ── Per-channel Exposure (CH1 Color / CH2 NIR1 / CH3 NIR2) ───────────
         # Each source has independent exposure control.
@@ -636,7 +645,7 @@ class LeftControlPanel(QWidget):
             spn.setMinimumWidth(WIDGET_MIN_W)
             hl.addWidget(lbl)
             hl.addWidget(spn, stretch=1)
-            card.add(row)
+            left.add(row)
             self._spn_exposures.append(spn)
 
         # Apply All Exposures + Reset side-by-side
@@ -666,12 +675,12 @@ class LeftControlPanel(QWidget):
         exp_btn_hl.setSpacing(6)
         exp_btn_hl.addWidget(self._btn_apply_exposure, stretch=1)
         exp_btn_hl.addWidget(self._btn_reset_exposure)
-        card.add_layout(exp_btn_hl)
+        left.add_layout(exp_btn_hl)
 
-        _sep(card)
+        _sep(left)
 
         # ── Sub-section: Frame Rate ────────────────────────────────────────
-        _sub_header(card, "FRAME RATE", icon="🎥", color="#22d3ee")
+        _sub_header(left, "FRAME RATE", icon="🎥", color="#22d3ee")
 
         # Frame rate spinbox + Apply button
         self._spn_fps = _spinbox(1, 107, 30, 1)
@@ -685,20 +694,20 @@ class LeftControlPanel(QWidget):
         )
         # Cross-link: when FPS spinbox changes, update exposure max immediately
         self._spn_fps.valueChanged.connect(self._on_fps_spinbox_changed)
-        card.add(_field("Frame Rate", self._spn_fps))
+        left.add(_field("Frame Rate", self._spn_fps))
 
         self._btn_apply_fps = _btn_secondary("Apply FPS")
         self._btn_apply_fps.setToolTip("Send new frame rate to camera")
         self._btn_apply_fps.clicked.connect(self._on_apply_fps)
-        card.add(self._btn_apply_fps)
+        left.add(self._btn_apply_fps)
 
         # Fix initial max — valueChanged fires before signal is connected so call manually
         self._on_fps_spinbox_changed(self._spn_fps.value())
 
-        _sep(card)
+        _sep(left)
 
         # ── Sub-section: Gain ─────────────────────────────────────────────
-        _sub_header(card, "SENSOR GAIN", icon="🔊", color="#a78bfa")
+        _sub_header(left, "SENSOR GAIN", icon="🔊", color="#a78bfa")
 
         # ── Per-channel Gain (CH1 Color / CH2 NIR1 / CH3 NIR2) ───────────────
         # Each source has independent gain control.
@@ -734,7 +743,7 @@ class LeftControlPanel(QWidget):
             spn.setMinimumWidth(WIDGET_MIN_W)
             hl.addWidget(lbl)
             hl.addWidget(spn, stretch=1)
-            card.add(row)
+            left.add(row)
             self._spn_gains.append(spn)
 
         # Apply All Gains + Reset side-by-side
@@ -764,12 +773,14 @@ class LeftControlPanel(QWidget):
         gain_btn_hl.setSpacing(6)
         gain_btn_hl.addWidget(self._btn_apply_gain, stretch=1)
         gain_btn_hl.addWidget(self._btn_reset_gain)
-        card.add_layout(gain_btn_hl)
+        left.add_layout(gain_btn_hl)
 
-        _sep(card)
+        # ══════════════════════════════════════════════════════════════
+        # RIGHT CARD — White Balance · Black Level
+        # ══════════════════════════════════════════════════════════════
 
         # ── Sub-section: White Balance ────────────────────────────────────
-        _sub_header(card, "WHITE BALANCE", icon="☀️", color="#f59e0b")
+        _sub_header(right, "WHITE BALANCE", icon="☀️", color="#f59e0b")
 
         # ── White Balance (Source0 / Color CH1 only) ────────────────────────────
         # WB ratios live on GainSelector=Red/Green/Blue for Source0 (Color CH1) only.
@@ -780,7 +791,7 @@ class LeftControlPanel(QWidget):
             f"color: {TEXT_3}; font-size: 10px; background: {BG_ELEVATED}40; "
             f"border: 1px solid {BORDER}; border-radius: 5px; padding: 3px 6px;"
         )
-        card.add(self._lbl_wb_ratios)
+        right.add(self._lbl_wb_ratios)
 
         # Auto WB button (amber accent)
         self._btn_awb = QPushButton("⚡  Auto WB")
@@ -830,12 +841,12 @@ class LeftControlPanel(QWidget):
         wb_btn_hl.setSpacing(6)
         wb_btn_hl.addWidget(self._btn_awb, stretch=1)
         wb_btn_hl.addWidget(self._btn_revert_wb)
-        card.add_layout(wb_btn_hl)
+        right.add_layout(wb_btn_hl)
 
-        _sep(card)
+        _sep(right)
 
         # ── Sub-section: Black Level ──────────────────────────────────────
-        _sub_header(card, "BLACK LEVEL", icon="🌑", color="#94a3b8")
+        _sub_header(right, "BLACK LEVEL", icon="🌑", color="#94a3b8")
 
         # ── Black Level (per-source hardware pedestal) ─────────────────────
         # GenICam: BlackLevelSelector=All, BlackLevel float (DN)
