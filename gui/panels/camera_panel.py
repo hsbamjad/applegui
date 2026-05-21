@@ -153,6 +153,7 @@ def _btn_danger_style() -> str:
             background-color: {DANGER}; color: white; border: none;
             font-weight: 700; font-size: 12px;
             border-radius: 8px;
+            min-height: 38px; max-height: 38px;
         }}
         QPushButton:hover   {{ background-color: #F87171; }}
         QPushButton:pressed {{ background-color: #DC2626; }}
@@ -1411,6 +1412,7 @@ class LeftControlPanel(QWidget):
             self.sig_load_model.emit(name)
 
     def _refresh_btn(self) -> None:
+        self._btn_connect.setFixedHeight(38)   # lock height BEFORE stylesheet swap to prevent shrink
         if self._connected:
             self._btn_connect.setText("Disconnect")
             self._btn_connect.setStyleSheet(_btn_danger_style())
@@ -1421,11 +1423,12 @@ class LeftControlPanel(QWidget):
                     background-color: {ACCENT}; color: white; border: none;
                     font-weight: 700; font-size: 12px;
                     border-radius: 8px;
+                    min-height: 38px; max-height: 38px;
                 }}
                 QPushButton:hover   {{ background-color: {ACCENT_HV}; }}
                 QPushButton:pressed {{ background-color: {ACCENT_DK}; }}
             """)
-        self._btn_connect.setFixedHeight(38)   # re-enforce after every stylesheet swap
+        self._btn_connect.setFixedHeight(38)   # re-enforce after stylesheet swap
 
     # ── Public API ────────────────────────────────────────────────────────────
 
