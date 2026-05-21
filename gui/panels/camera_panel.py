@@ -478,6 +478,9 @@ class LeftControlPanel(QWidget):
         cam_status_card.add(self._cam_status)
         self._btn_connect = _btn_primary("Connect Camera")
         self._btn_connect.setToolTip("Connect to JAI FSFE-3200T-10GE via 10 GigE")
+        self._btn_connect.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         self._btn_connect.clicked.connect(self._on_connect)
         cam_status_card.add(self._btn_connect)
         vlayout.addWidget(cam_status_card)
@@ -1426,6 +1429,9 @@ class LeftControlPanel(QWidget):
                 QPushButton:pressed {{ background-color: {ACCENT_DK}; }}
             """)
         self._btn_connect.setFixedHeight(38)   # re-enforce after every stylesheet swap
+        self._btn_connect.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
 
     # ── Public API ────────────────────────────────────────────────────────────
 
