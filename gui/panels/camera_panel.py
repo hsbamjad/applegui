@@ -266,7 +266,7 @@ class CameraControlsWindow(QWidget):
         # ── Title bar ───────────────────────────────────────────────
         title_bar = QWidget()
         title_bar.setObjectName("cam_titlebar")
-        title_bar.setFixedHeight(50)
+        title_bar.setFixedHeight(44)
         title_bar.setCursor(Qt.CursorShape.SizeAllCursor)
         title_bar.setStyleSheet(f"""
             QWidget#cam_titlebar {{
@@ -282,29 +282,13 @@ class CameraControlsWindow(QWidget):
         tb_hl.setContentsMargins(16, 0, 12, 0)
         tb_hl.setSpacing(12)
 
-        ic = QLabel("📷")
-        ic.setStyleSheet(
-            f"color: {ACCENT}; font-size: 20px; background: transparent; border: none;"
-        )
-        tb_hl.addWidget(ic)
 
-        txt_col = QVBoxLayout()
-        txt_col.setSpacing(1)
-        txt_col.setContentsMargins(0, 0, 0, 0)
-        ttl = QLabel("Camera Controls")
+        ttl = QLabel("📷  Camera Controls")
         ttl.setStyleSheet(
             f"color: {TEXT_1}; font-size: 14px; font-weight: 700; "
             "background: transparent; border: none; letter-spacing: 0.2px;"
         )
-        sub = QLabel(
-            "⏱ Exposure  ·  🎥 Frame Rate  ·  🔊 Gain  ·  ☀️ White Balance  ·  🌑 Black Level  ·  ▦ ROI"
-        )
-        sub.setStyleSheet(
-            f"color: {TEXT_3}; font-size: 9px; background: transparent; border: none;"
-        )
-        txt_col.addWidget(ttl)
-        txt_col.addWidget(sub)
-        tb_hl.addLayout(txt_col)
+        tb_hl.addWidget(ttl)
         tb_hl.addStretch()
 
 
@@ -584,6 +568,14 @@ class LeftControlPanel(QWidget):
 
     # ── Card builders ─────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _row_sep(card: "_Card") -> None:
+        """A hairline divider between individual control rows inside a card."""
+        f = QFrame()
+        f.setFixedHeight(1)
+        f.setStyleSheet(f"background-color: {BORDER}55; border: none; margin: 0 4px;")
+        card._layout.addWidget(f)
+
     def _on_cam_controls_toggle(self) -> None:
         """Show or hide the floating Camera Controls window."""
         if self._cam_win.isVisible():
@@ -640,7 +632,9 @@ class LeftControlPanel(QWidget):
             hl.addWidget(lbl)
             hl.addWidget(spn, stretch=1)
             left.add(row)
+            self._row_sep(left)
             self._spn_exposures.append(spn)
+
 
         # Apply All Exposures + Reset side-by-side
         self._btn_apply_exposure = _btn_secondary("Apply Exposures")
@@ -669,6 +663,7 @@ class LeftControlPanel(QWidget):
         exp_btn_hl.setSpacing(6)
         exp_btn_hl.addWidget(self._btn_apply_exposure, stretch=1)
         exp_btn_hl.addWidget(self._btn_reset_exposure)
+        self._row_sep(left)
         left.add_layout(exp_btn_hl)
 
 
@@ -689,11 +684,14 @@ class LeftControlPanel(QWidget):
         # Cross-link: when FPS spinbox changes, update exposure max immediately
         self._spn_fps.valueChanged.connect(self._on_fps_spinbox_changed)
         left.add(_field("Frame Rate", self._spn_fps))
+        self._row_sep(left)
+
 
         self._btn_apply_fps = _btn_secondary("Apply FPS")
         self._btn_apply_fps.setToolTip("Send new frame rate to camera")
         self._btn_apply_fps.clicked.connect(self._on_apply_fps)
         left.add(self._btn_apply_fps)
+
 
         # Fix initial max — valueChanged fires before signal is connected so call manually
         self._on_fps_spinbox_changed(self._spn_fps.value())
@@ -738,7 +736,9 @@ class LeftControlPanel(QWidget):
             hl.addWidget(lbl)
             hl.addWidget(spn, stretch=1)
             left.add(row)
+            self._row_sep(left)
             self._spn_gains.append(spn)
+
 
         # Apply All Gains + Reset side-by-side
         self._btn_apply_gain = _btn_secondary("Apply All Gains")
@@ -767,7 +767,9 @@ class LeftControlPanel(QWidget):
         gain_btn_hl.setSpacing(6)
         gain_btn_hl.addWidget(self._btn_apply_gain, stretch=1)
         gain_btn_hl.addWidget(self._btn_reset_gain)
+        self._row_sep(left)
         left.add_layout(gain_btn_hl)
+
 
         # ══════════════════════════════════════════════════════════════
         # RIGHT CARD — White Balance · Black Level
@@ -786,6 +788,8 @@ class LeftControlPanel(QWidget):
             f"border: 1px solid {BORDER}; border-radius: 5px; padding: 3px 6px;"
         )
         right.add(self._lbl_wb_ratios)
+        self._row_sep(right)
+
 
         # Auto WB button (amber accent)
         self._btn_awb = QPushButton("⚡  Auto WB")
@@ -835,6 +839,7 @@ class LeftControlPanel(QWidget):
         wb_btn_hl.setSpacing(6)
         wb_btn_hl.addWidget(self._btn_awb, stretch=1)
         wb_btn_hl.addWidget(self._btn_revert_wb)
+        self._row_sep(right)
         right.add_layout(wb_btn_hl)
 
 
@@ -890,6 +895,7 @@ class LeftControlPanel(QWidget):
             bl_rl.addWidget(ch_label)
             bl_rl.addWidget(spn, stretch=1)
             right.add(bl_row)
+            self._row_sep(right)
 
         # Apply + Reset — use same _btn_secondary style as Exposure/FPS/Gain buttons
         self._btn_apply_bl = _btn_secondary("Apply Black Levels")
@@ -918,6 +924,7 @@ class LeftControlPanel(QWidget):
         bl_btn_hl.setSpacing(6)
         bl_btn_hl.addWidget(self._btn_apply_bl, stretch=1)
         bl_btn_hl.addWidget(self._btn_reset_bl)
+        self._row_sep(right)
         right.add_layout(bl_btn_hl)
 
         return left, right
