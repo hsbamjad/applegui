@@ -484,9 +484,9 @@ class LeftControlPanel(QWidget):
         vlayout.addWidget(cam_status_card)
         vlayout.addSpacing(6)
 
-        # Camera Controls popup toggle button
-        self._btn_cam_controls = QPushButton("📷   Camera Controls")
-        self._btn_cam_controls.setFixedHeight(42)
+        # Camera Controls popup toggle button — identical geometry to Connect Camera
+        self._btn_cam_controls = QPushButton("Camera Controls")
+        self._btn_cam_controls.setFixedHeight(38)
         self._btn_cam_controls.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_cam_controls.setCheckable(True)
         self._btn_cam_controls.setToolTip(
@@ -495,40 +495,24 @@ class LeftControlPanel(QWidget):
         )
         self._btn_cam_controls.setStyleSheet(f"""
             QPushButton {{
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {ACCENT}2A, stop:1 {ACCENT}0D
-                );
-                border: 1px solid {ACCENT}66;
-                border-radius: 10px;
-                text-align: left;
-                padding: 0 16px;
-                font-size: 13px;
+                background-color: {SUCCESS};
+                color: white;
+                border: none;
                 font-weight: 700;
-                color: {TEXT_1};
-                letter-spacing: 0.2px;
+                font-size: 12px;
+                border-radius: 8px;
             }}
-            QPushButton:hover {{
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {ACCENT}44, stop:1 {ACCENT}1A
-                );
-                border-color: {ACCENT}BB;
-            }}
+            QPushButton:hover   {{ background-color: {SUCCESS}CC; }}
             QPushButton:checked {{
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {ACCENT}55, stop:1 {ACCENT}22
-                );
-                border-color: {ACCENT};
+                background-color: {SUCCESS}AA;
+                border: 2px solid {SUCCESS};
                 color: white;
             }}
-            QPushButton:pressed {{
-                background: {ACCENT_DK}44;
-            }}
+            QPushButton:pressed {{ background-color: {SUCCESS}88; }}
         """)
         self._btn_cam_controls.clicked.connect(self._on_cam_controls_toggle)
         vlayout.addWidget(self._btn_cam_controls)
+
         vlayout.addSpacing(4)
 
         vlayout.addWidget(_SectionHeader("Conveyor"))
