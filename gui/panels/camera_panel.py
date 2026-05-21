@@ -474,6 +474,11 @@ class LeftControlPanel(QWidget):
 
         # Status dot + connect button live directly in the sidebar
         cam_status_card = _Card()
+        # Force card to always fill the panel width — prevents it from shrinking
+        # when the button text changes from "Connect Camera" to "Disconnect".
+        cam_status_card.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         self._cam_status = _StatusDot("Disconnected", DANGER)
         cam_status_card.add(self._cam_status)
         self._btn_connect = _btn_primary("Connect Camera")
