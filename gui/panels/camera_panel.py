@@ -119,16 +119,30 @@ def _field(label_text: str, widget: QWidget) -> QWidget:
 def _btn_primary(text: str) -> QPushButton:
     btn = QPushButton(text)
     btn.setFixedHeight(38)          # Must set in Python — CSS min-height alone doesn't constrain VBoxLayout
+    # Single permanent stylesheet — danger state is toggled via the 'danger' dynamic property.
+    # Using a property selector avoids calling setStyleSheet() again (which resets Qt size constraints).
     btn.setStyleSheet(f"""
-        QPushButton {{
+        QPushButton[danger="false"], QPushButton:not([danger]) {{
             background-color: {ACCENT}; color: white; border: none;
             font-weight: 700; font-size: 12px;
             border-radius: 8px;
         }}
-        QPushButton:hover   {{ background-color: {ACCENT_HV}; }}
-        QPushButton:pressed {{ background-color: {ACCENT_DK}; }}
+        QPushButton[danger="false"]:hover, QPushButton:not([danger]):hover {{
+            background-color: {ACCENT_HV};
+        }}
+        QPushButton[danger="false"]:pressed, QPushButton:not([danger]):pressed {{
+            background-color: {ACCENT_DK};
+        }}
+        QPushButton[danger="true"] {{
+            background-color: {DANGER}; color: white; border: none;
+            font-weight: 700; font-size: 12px;
+            border-radius: 8px;
+        }}
+        QPushButton[danger="true"]:hover   {{ background-color: #F87171; }}
+        QPushButton[danger="true"]:pressed {{ background-color: #DC2626; }}
         QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3}; }}
     """)
+    btn.setProperty("danger", "false")
     return btn
 
 
@@ -1412,23 +1426,22 @@ class LeftControlPanel(QWidget):
             self.sig_load_model.emit(name)
 
     def _refresh_btn(self) -> None:
-        self._btn_connect.setFixedHeight(38)   # lock height BEFORE stylesheet swap to prevent shrink
+        """Toggle the connect button between primary and danger styles.
+
+        Uses a dynamic Qt property ('danger') instead of calling setStyleSheet()
+        so that the stylesheet — and therefore the button's computed geometry —
+        never changes.  Only the paint color is updated.
+        """
         if self._connected:
             self._btn_connect.setText("Disconnect")
-            self._btn_connect.setStyleSheet(_btn_danger_style())
+            self._btn_connect.setProperty("danger", "true")
         else:
             self._btn_connect.setText("Connect Camera")
-            self._btn_connect.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {ACCENT}; color: white; border: none;
-                    font-weight: 700; font-size: 12px;
-                    border-radius: 8px;
-                    min-height: 38px; max-height: 38px;
-                }}
-                QPushButton:hover   {{ background-color: {ACCENT_HV}; }}
-                QPushButton:pressed {{ background-color: {ACCENT_DK}; }}
-            """)
-        self._btn_connect.setFixedHeight(38)   # re-enforce after stylesheet swap
+            self._btn_connect.setProperty("danger", "false")
+        # Re-polish so Qt re-evaluates the property selector without touching size
+        self._btn_connect.style().unpolish(self._btn_connect)
+        self._btn_connect.style().polish(self._btn_connect)
+        self._btn_connect.update()
 
     # ── Public API ────────────────────────────────────────────────────────────
 
