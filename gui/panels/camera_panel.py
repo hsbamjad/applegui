@@ -120,27 +120,22 @@ def _btn_primary(text: str) -> QPushButton:
     btn = QPushButton(text)
     btn.setFixedHeight(38)          # Must set in Python — CSS min-height alone doesn't constrain VBoxLayout
     # Single permanent stylesheet — danger state is toggled via the 'danger' dynamic property.
-    # Using a property selector avoids calling setStyleSheet() again (which resets Qt size constraints).
+    # Base QPushButton rule = purple (always applies); [danger="true"] overrides to red.
+    # Avoids calling setStyleSheet() again on state change (which resets Qt size constraints).
     btn.setStyleSheet(f"""
-        QPushButton[danger="false"], QPushButton:not([danger]) {{
+        QPushButton {{
             background-color: {ACCENT}; color: white; border: none;
             font-weight: 700; font-size: 12px;
             border-radius: 8px;
         }}
-        QPushButton[danger="false"]:hover, QPushButton:not([danger]):hover {{
-            background-color: {ACCENT_HV};
-        }}
-        QPushButton[danger="false"]:pressed, QPushButton:not([danger]):pressed {{
-            background-color: {ACCENT_DK};
-        }}
+        QPushButton:hover   {{ background-color: {ACCENT_HV}; }}
+        QPushButton:pressed {{ background-color: {ACCENT_DK}; }}
+        QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3}; }}
         QPushButton[danger="true"] {{
-            background-color: {DANGER}; color: white; border: none;
-            font-weight: 700; font-size: 12px;
-            border-radius: 8px;
+            background-color: {DANGER};
         }}
         QPushButton[danger="true"]:hover   {{ background-color: #F87171; }}
         QPushButton[danger="true"]:pressed {{ background-color: #DC2626; }}
-        QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3}; }}
     """)
     btn.setProperty("danger", "false")
     return btn
