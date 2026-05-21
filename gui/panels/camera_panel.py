@@ -854,7 +854,8 @@ class LeftControlPanel(QWidget):
         # Removing ambient dark-pedestal and thermal noise at hardware level.
 
         # Channel colors match the rest of the panel (CH1=amber, CH2/CH3=cyan)
-        _BL_COLORS  = ["#f59e0b", "#06b6d4", "#06b6d4"]
+        _BL_COLORS  = ["#f59e0b", "#22d3ee", "#a78bfa"]  # amber · cyan · purple — matches Exposure / Gain
+
         _BL_LABELS  = ["CH1 Color", "CH2 NIR1", "CH3 NIR2"]
         _BL_TIPS    = [
             "Color sensor (Source0) black level pedestal (DN).",
