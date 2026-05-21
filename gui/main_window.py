@@ -596,6 +596,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 "White Balance: reverting to pre-calibration ratios…"
             )
+            self._pending_wb_revert = True   # tell readback handler this came from Revert
             self._cam_w.revert_white_balance()
         else:
             self.statusBar().showMessage(
@@ -610,7 +611,9 @@ class MainWindow(QMainWindow):
         Called after AWB calibration completes or Revert finishes.
         Updates the WB ratio display and status bar.
         """
-        self._left.update_white_balance(success, r, g, b)
+        is_revert = getattr(self, "_pending_wb_revert", False)
+        self._pending_wb_revert = False
+        self._left.update_white_balance(success, r, g, b, is_revert=is_revert)
         if success:
             self.statusBar().showMessage(
                 f"White Balance confirmed — R: {r:.4f}  G: {g:.4f}  B: {b:.4f}"

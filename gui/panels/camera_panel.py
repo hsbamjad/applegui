@@ -1092,22 +1092,29 @@ class LeftControlPanel(QWidget):
             if val >= 0:
                 spn.setValue(val)
 
-    def update_white_balance(self, success: bool, r: float, g: float, b: float) -> None:
+    def update_white_balance(
+        self, success: bool, r: float, g: float, b: float, is_revert: bool = False
+    ) -> None:
         """
-        Called by main_window after AWB or manual WB write is confirmed by firmware.
-        Updates the ratio readout label and enables the Revert button.
+        Called by main_window after AWB or Revert is confirmed by firmware.
+        - After AWB success:    show ratios, keep/enable Revert button
+        - After Revert success: show ratios, DISABLE Revert button (nothing left to revert to)
+        - On failure:           show error label, disable Revert button
         """
         if success:
             self._lbl_wb_ratios.setText(f"R: {r:.3f}   G: {g:.3f}   B: {b:.3f}")
             self._lbl_wb_ratios.setStyleSheet(
                 "color: #f59e0b; font-size: 10px; background: transparent;"
             )
-            self._btn_revert_wb.setEnabled(True)
+            # Revert is only meaningful while there is a saved pre-AWB snapshot.
+            # After a successful Revert the snapshot is cleared, so disable the button.
+            self._btn_revert_wb.setEnabled(not is_revert)
         else:
             self._lbl_wb_ratios.setText("R: —   G: —   B: — (failed)")
             self._lbl_wb_ratios.setStyleSheet(
                 f"color: {DANGER}; font-size: 10px; background: transparent;"
             )
+            self._btn_revert_wb.setEnabled(False)
 
     def _on_apply_black_levels(self) -> None:
         """Emit per-channel black levels → main_window._on_black_level_changed."""
