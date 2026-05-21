@@ -1078,7 +1078,6 @@ class LeftControlPanel(QWidget):
         All 3 sources receive the same ROI (co-registered sensors, same FOV).
         """
         card = _Card()
-        card.add(_SectionHeader("ROI — Region of Interest"))
 
         # Readout label — shows current ROI as 'W × H  @ (X, Y)'
         self._lbl_roi = QLabel("Full Frame  —  2048 × 1536 @ (0, 0)")
