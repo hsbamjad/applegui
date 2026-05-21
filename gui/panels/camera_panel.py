@@ -307,13 +307,6 @@ class CameraControlsWindow(QWidget):
         tb_hl.addLayout(txt_col)
         tb_hl.addStretch()
 
-        # Column labels badge
-        col_badge = QLabel("LEFT: Exposure · FPS · Gain      RIGHT: WB · Black Level · ROI")
-        col_badge.setStyleSheet(
-            f"color: {TEXT_3}; font-size: 8px; background: {ACCENT}11; "
-            f"border: 1px solid {ACCENT}22; border-radius: 6px; padding: 2px 8px;"
-        )
-        tb_hl.addWidget(col_badge)
 
         close_btn = QPushButton("✕")
         close_btn.setFixedSize(28, 28)
@@ -394,12 +387,13 @@ class CameraControlsWindow(QWidget):
             self._right_col.addWidget(widget)
 
     def finalize(self) -> None:
-        """Call after all widgets are added. Stretches both columns at bottom and sizes window."""
+        """Call after all widgets are added. Sizes window to fit content without clipping."""
         self._left_col.addStretch()
         self._right_col.addStretch()
+        # adjustSize() computes from layout sizeHints but may change width;
+        # re-apply our fixed width afterward so columns stay at correct proportions.
         self.adjustSize()
-        # Ensure both columns are equal height (the taller one sets the window)
-        self.setFixedHeight(self.sizeHint().height())
+        self.setFixedWidth(self.POPUP_WIDTH)
     # ── Show / position ────────────────────────────────────────────
 
     def show_beside(self, anchor: QWidget) -> None:
@@ -677,7 +671,7 @@ class LeftControlPanel(QWidget):
         exp_btn_hl.addWidget(self._btn_reset_exposure)
         left.add_layout(exp_btn_hl)
 
-        _sep(left)
+
 
         # ── Sub-section: Frame Rate ────────────────────────────────────────
         _sub_header(left, "FRAME RATE", icon="🎥", color="#22d3ee")
@@ -704,7 +698,7 @@ class LeftControlPanel(QWidget):
         # Fix initial max — valueChanged fires before signal is connected so call manually
         self._on_fps_spinbox_changed(self._spn_fps.value())
 
-        _sep(left)
+
 
         # ── Sub-section: Gain ─────────────────────────────────────────────
         _sub_header(left, "SENSOR GAIN", icon="🔊", color="#a78bfa")
@@ -843,7 +837,7 @@ class LeftControlPanel(QWidget):
         wb_btn_hl.addWidget(self._btn_revert_wb)
         right.add_layout(wb_btn_hl)
 
-        _sep(right)
+
 
         # ── Sub-section: Black Level ──────────────────────────────────────
         _sub_header(right, "BLACK LEVEL", icon="🌑", color="#94a3b8")
