@@ -1008,10 +1008,18 @@ class JAICamera:
         try:
             import eBUS as eb
 
-            # 1. Save current ratios as revert target
-            self._saved_wb = self.get_white_balance_ratios()
-            log.info("AWB: saved pre-calibration WB = R=%.4f G=%.4f B=%.4f",
-                     *self._saved_wb)
+            # 1. Save current ratios as revert target — only on the FIRST AWB since
+            #    the last Revert (or since startup).  If _saved_wb is already set it
+            #    means the user ran AWB before without reverting; we must NOT overwrite
+            #    the original snapshot or Revert would only undo back to the previous
+            #    AWB result instead of the true pre-calibration baseline.
+            if self._saved_wb is None:
+                self._saved_wb = self.get_white_balance_ratios()
+                log.info("AWB: saved pre-calibration WB = R=%.4f G=%.4f B=%.4f",
+                         *self._saved_wb)
+            else:
+                log.info("AWB: _saved_wb already set (R=%.4f G=%.4f B=%.4f) — "
+                         "keeping original snapshot for Revert", *self._saved_wb)
 
             nm    = self._device.GetParameters()
             stack = eb.PvGenStateStack(nm)
@@ -1067,6 +1075,7 @@ class JAICamera:
         """
         Restore the WB ratios saved before the last One-Push AWB calibration.
         Returns (success, r, g, b). Fails gracefully if no save point exists.
+        Clears _saved_wb on success so the next AWB snapshots from the restored baseline.
         """
         if self._saved_wb is None:
             log.warning("revert_white_balance: no saved WB target — AWB not yet triggered")
@@ -1074,6 +1083,7 @@ class JAICamera:
         r, g, b = self._saved_wb
         log.info("AWB revert: restoring R=%.4f G=%.4f B=%.4f", r, g, b)
         actual = self.set_white_balance_ratios(r, g, b)
+        self._saved_wb = None   # reset snapshot so next AWB captures from the reverted baseline
         return (True, actual[0], actual[1], actual[2])
 
     # ── Black Level helpers (per-source, hardware pedestal) ────────────────────
