@@ -465,9 +465,11 @@ class LeftControlPanel(QWidget):
         # which would cause VBoxLayout to collapse widgets on top of each other.
         inner = QWidget()
         inner.setStyleSheet(f"background-color: {BG_SURFACE};")
+        inner.setMinimumWidth(PANEL_WIDTH)   # prevents inner from shrinking when button text changes
         vlayout = QVBoxLayout(inner)
         vlayout.setContentsMargins(12, 6, 12, 12)
         vlayout.setSpacing(0)
+
 
         # ── Camera section ─────────────────────────────────────────────────
         vlayout.addWidget(_SectionHeader("Camera"))
