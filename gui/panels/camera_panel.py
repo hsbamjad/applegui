@@ -231,8 +231,9 @@ class CameraControlsWindow(QWidget):
     """
     Frameless floating sub-window — 2-column, no scroll.
     Left column: Exposure · FPS · Gain
-    Right column: WB · Black Level · ROI
+    Right column: White Balance · Black Level
     Drag by title bar. Close button syncs sidebar toggle.
+    ROI lives in the left sidebar (always visible, channels not hidden).
     """
 
     sig_hidden = pyqtSignal()   # emitted when window is closed/hidden
@@ -459,10 +460,11 @@ class LeftControlPanel(QWidget):
         # Build the floating camera controls window first (so cards can be added)
         self._cam_win = CameraControlsWindow(self.window())
         self._build()
-        # Populate floating window: left col = Exposure/FPS/Gain, right col = WB/BL/ROI
+        # Populate floating window: left col = Exposure/FPS/Gain, right col = WB/Black Level
+        # ROI is in the sidebar (always visible — needs channel feeds to be seen).
         cam_card, wb_bl_card = self._camera_cards_split()
         self._cam_win.add_widget(cam_card,   col=0)
-        self._cam_win.add_widget(wb_bl_card, col=1)   # right card now contains WB+BL+ROI
+        self._cam_win.add_widget(wb_bl_card, col=1)
         self._cam_win.finalize()
         # Sync sidebar button when popup is closed via X or hide()
         self._cam_win.sig_hidden.connect(
@@ -502,7 +504,7 @@ class LeftControlPanel(QWidget):
         self._btn_cam_controls.setCheckable(True)
         self._btn_cam_controls.setToolTip(
             "Open Camera Controls panel\n"
-            "Exposure · FPS · Gain · White Balance · Black Level · ROI"
+            "Exposure · FPS · Gain · White Balance · Black Level"
         )
         self._btn_cam_controls.setStyleSheet(f"""
             QPushButton {{
@@ -528,6 +530,11 @@ class LeftControlPanel(QWidget):
         _cam_row.setContentsMargins(10, 0, 10, 0)
         _cam_row.addWidget(self._btn_cam_controls)
         vlayout.addLayout(_cam_row)
+        vlayout.addSpacing(6)
+
+        # ── ROI card — lives in sidebar so channel feeds are always visible ──
+        vlayout.addWidget(_SectionHeader("ROI"))
+        vlayout.addWidget(self._roi_card())
 
 
         vlayout.addWidget(_SectionHeader("Conveyor"))
@@ -785,6 +792,7 @@ class LeftControlPanel(QWidget):
 
         # ══════════════════════════════════════════════════════════════
         # RIGHT CARD — White Balance · Black Level
+        # (ROI has been moved to the left sidebar for channel visibility)
         # ══════════════════════════════════════════════════════════════
 
         # ── Sub-section: White Balance ────────────────────────────────────
@@ -941,90 +949,6 @@ class LeftControlPanel(QWidget):
         right.add_layout(bl_btn_hl)
         self._double_sep(right)
 
-        # ══════════════════════════════════════════════════════════════
-        # ROI — inlined into right card so it aligns with SENSOR GAIN
-        # ══════════════════════════════════════════════════════════════
-        _sub_header(right, "ROI", color="#06b6d4")
-
-        self._lbl_roi = QLabel("Full Frame  —  2048 × 1536 @ (0, 0)")
-        self._lbl_roi.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._lbl_roi.setStyleSheet(
-            "color: #06b6d4; font-size: 10px; font-weight: 600; "
-            "background: transparent; padding: 4px 0;"
-        )
-        right.add(self._lbl_roi)
-        self._row_sep(right)
-
-        ROI_PARAMS = [
-            ("OffsetX", "px",  0, 2032, 16, "Left crop start. Must be multiple of 16."),
-            ("OffsetY", "px",  0, 1528,  8, "Top crop start. Must be multiple of 8."),
-            ("Width",   "px", 16, 2048, 16, "Capture width. Must be multiple of 16."),
-            ("Height",  "px",  8, 1536,  8, "Capture height. Must be multiple of 8."),
-        ]
-        self._spn_roi: dict[str, QSpinBox] = {}
-        for i, (param, unit, lo, hi, step, tip) in enumerate(ROI_PARAMS):
-            row_w = QWidget()
-            row_w.setStyleSheet("background: transparent; border: none;")
-            row_l = QHBoxLayout(row_w)
-            row_l.setContentsMargins(0, 1, 0, 1)
-            row_l.setSpacing(6)
-            lbl = QLabel(param)
-            lbl.setFixedWidth(LABEL_W)
-            lbl.setStyleSheet(
-                f"color: {TEXT_2}; font-size: 11px; "
-                f"font-weight: 600; background: transparent;"
-            )
-            spn = QSpinBox()
-            spn.setRange(lo, hi)
-            spn.setSingleStep(step)
-            spn.setValue(hi if param in ("Width", "Height") else 0)
-            spn.setSuffix(f" {unit}")
-            spn.setToolTip(tip)
-            spn.setMinimumWidth(WIDGET_MIN_W)
-            spn.setStyleSheet(f"""
-                QSpinBox {{
-                    background-color: {BG_ELEVATED}; color: {TEXT_1};
-                    border: 1px solid {BORDER}; border-radius: 5px; padding: 2px 6px;
-                }}
-                QSpinBox:focus {{ border-color: #06b6d4; }}
-            """)
-            spn.valueChanged.connect(self._update_roi_label)
-            self._spn_roi[param] = spn
-            row_l.addWidget(lbl)
-            row_l.addWidget(spn, stretch=1)
-            right.add(row_w)
-            if i < len(ROI_PARAMS) - 1:
-                self._row_sep(right)
-
-        self._btn_apply_roi = _btn_secondary("Apply ROI")
-        self._btn_apply_roi.setToolTip("Apply ROI to all 3 sensors.")
-        self._btn_apply_roi.clicked.connect(self._on_apply_roi)
-
-        self._btn_reset_roi = QPushButton("Full Frame")
-        self._btn_reset_roi.setFixedHeight(34)
-        self._btn_reset_roi.setToolTip("Reset ROI to full 2048×1536 sensor frame.")
-        self._btn_reset_roi.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_ELEVATED}; color: {TEXT_1};
-                border: 1px solid {BORDER}; border-radius: 7px;
-                font-weight: 600; font-size: 11px;
-            }}
-            QPushButton:hover:enabled {{
-                background-color: {WARNING}33; color: {WARNING};
-                border-color: {WARNING}88;
-            }}
-            QPushButton:pressed:enabled {{ background-color: {WARNING}55; }}
-        """)
-        self._btn_reset_roi.clicked.connect(self.sig_roi_reset.emit)
-
-        roi_btn_hl = QHBoxLayout()
-        roi_btn_hl.setContentsMargins(0, 4, 0, 0)
-        roi_btn_hl.setSpacing(6)
-        roi_btn_hl.addWidget(self._btn_apply_roi, stretch=1)
-        roi_btn_hl.addWidget(self._btn_reset_roi)
-        self._row_sep(right)
-        right.add_layout(roi_btn_hl)
-
         return left, right
 
     # ── Camera card slots ─────────────────────────────────────────────────────
@@ -1144,7 +1068,7 @@ class LeftControlPanel(QWidget):
             spn.setValue(val)
             spn.blockSignals(False)
 
-    # ── ROI card ─────────────────────────────────────────────────────────────
+    # ── ROI card (left sidebar) ──────────────────────────────────────────────
 
     def _roi_card(self) -> QWidget:
         """
