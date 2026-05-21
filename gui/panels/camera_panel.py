@@ -514,14 +514,11 @@ class LeftControlPanel(QWidget):
         """)
         self._btn_cam_controls.clicked.connect(self._on_cam_controls_toggle)
 
-        _cam_btn_wrapper = QWidget()
-        _cam_btn_wrapper.setStyleSheet("background: transparent; border: none;")
-        _cam_btn_wl = QHBoxLayout(_cam_btn_wrapper)
-        _cam_btn_wl.setContentsMargins(10, 0, 10, 0)
-        _cam_btn_wl.setSpacing(0)
-        _cam_btn_wl.addWidget(self._btn_cam_controls)
-        vlayout.addWidget(_cam_btn_wrapper)
-
+        # Add with the same 10px side inset as _Card so it matches Connect Camera width
+        _cam_row = QHBoxLayout()
+        _cam_row.setContentsMargins(10, 0, 10, 0)
+        _cam_row.addWidget(self._btn_cam_controls)
+        vlayout.addLayout(_cam_row)
 
 
         vlayout.addWidget(_SectionHeader("Conveyor"))
