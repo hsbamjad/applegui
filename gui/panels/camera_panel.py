@@ -283,7 +283,8 @@ class CameraControlsWindow(QWidget):
         tb_hl.setSpacing(12)
 
 
-        ttl = QLabel("📷  Camera Controls")
+        ttl = QLabel("Camera Controls")
+
         ttl.setStyleSheet(
             f"color: {TEXT_1}; font-size: 14px; font-weight: 700; "
             "background: transparent; border: none; letter-spacing: 0.2px;"
@@ -570,11 +571,20 @@ class LeftControlPanel(QWidget):
 
     @staticmethod
     def _row_sep(card: "_Card") -> None:
-        """A hairline divider between individual control rows inside a card."""
+        """Hairline divider between individual control rows."""
         f = QFrame()
         f.setFixedHeight(1)
         f.setStyleSheet(f"background-color: {BORDER}55; border: none; margin: 0 4px;")
         card._layout.addWidget(f)
+
+    @staticmethod
+    def _double_sep(card: "_Card") -> None:
+        """Two hairlines with a gap — used after Apply buttons to mark section end."""
+        for _ in range(2):
+            f = QFrame()
+            f.setFixedHeight(1)
+            f.setStyleSheet(f"background-color: {BORDER}55; border: none; margin: 0 4px;")
+            card._layout.addWidget(f)
 
     def _on_cam_controls_toggle(self) -> None:
         """Show or hide the floating Camera Controls window."""
@@ -596,7 +606,7 @@ class LeftControlPanel(QWidget):
         right = _Card()
 
         # ── Sub-section: Exposure Time ────────────────────────────────
-        _sub_header(left, "EXPOSURE TIME", icon="⏱", color="#f59e0b")
+        _sub_header(left, "EXPOSURE TIME", color="#f59e0b")
 
         # ── Per-channel Exposure (CH1 Color / CH2 NIR1 / CH3 NIR2) ───────────
         # Each source has independent exposure control.
@@ -606,7 +616,7 @@ class LeftControlPanel(QWidget):
             ("CH3 NIR2",  "#a78bfa"),  # violet
         ]
         self._spn_exposures: list[QSpinBox] = []
-        for ch_label, ch_color in ch_meta:
+        for i, (ch_label, ch_color) in enumerate(ch_meta):
             spn = _spinbox(100, 100_000, 5_000, 500)
             spn.setSuffix(" µs")
             spn.setToolTip(
@@ -632,7 +642,8 @@ class LeftControlPanel(QWidget):
             hl.addWidget(lbl)
             hl.addWidget(spn, stretch=1)
             left.add(row)
-            self._row_sep(left)
+            if i < 2:
+                self._row_sep(left)
             self._spn_exposures.append(spn)
 
 
@@ -663,13 +674,13 @@ class LeftControlPanel(QWidget):
         exp_btn_hl.setSpacing(6)
         exp_btn_hl.addWidget(self._btn_apply_exposure, stretch=1)
         exp_btn_hl.addWidget(self._btn_reset_exposure)
-        self._row_sep(left)
         left.add_layout(exp_btn_hl)
+        self._double_sep(left)
 
 
 
         # ── Sub-section: Frame Rate ────────────────────────────────────────
-        _sub_header(left, "FRAME RATE", icon="🎥", color="#22d3ee")
+        _sub_header(left, "FRAME RATE", color="#22d3ee")
 
         # Frame rate spinbox + Apply button
         self._spn_fps = _spinbox(1, 107, 30, 1)
@@ -684,13 +695,12 @@ class LeftControlPanel(QWidget):
         # Cross-link: when FPS spinbox changes, update exposure max immediately
         self._spn_fps.valueChanged.connect(self._on_fps_spinbox_changed)
         left.add(_field("Frame Rate", self._spn_fps))
-        self._row_sep(left)
-
 
         self._btn_apply_fps = _btn_secondary("Apply FPS")
         self._btn_apply_fps.setToolTip("Send new frame rate to camera")
         self._btn_apply_fps.clicked.connect(self._on_apply_fps)
         left.add(self._btn_apply_fps)
+        self._double_sep(left)
 
 
         # Fix initial max — valueChanged fires before signal is connected so call manually
@@ -699,7 +709,7 @@ class LeftControlPanel(QWidget):
 
 
         # ── Sub-section: Gain ─────────────────────────────────────────────
-        _sub_header(left, "SENSOR GAIN", icon="🔊", color="#a78bfa")
+        _sub_header(left, "SENSOR GAIN", color="#a78bfa")
 
         # ── Per-channel Gain (CH1 Color / CH2 NIR1 / CH3 NIR2) ───────────────
         # Each source has independent gain control.
@@ -710,7 +720,7 @@ class LeftControlPanel(QWidget):
             ("CH3 NIR2",  "#a78bfa"),  # violet — matches channel 3 header
         ]
         self._spn_gains: list[QDoubleSpinBox] = []
-        for ch_label, ch_color in ch_meta:
+        for i, (ch_label, ch_color) in enumerate(ch_meta):
             spn = _dspinbox(1.0, 16.0, 1.0, 0.5, 1)
             spn.setSuffix(" dB")
             spn.setToolTip(
@@ -736,7 +746,8 @@ class LeftControlPanel(QWidget):
             hl.addWidget(lbl)
             hl.addWidget(spn, stretch=1)
             left.add(row)
-            self._row_sep(left)
+            if i < 2:
+                self._row_sep(left)
             self._spn_gains.append(spn)
 
 
@@ -767,8 +778,8 @@ class LeftControlPanel(QWidget):
         gain_btn_hl.setSpacing(6)
         gain_btn_hl.addWidget(self._btn_apply_gain, stretch=1)
         gain_btn_hl.addWidget(self._btn_reset_gain)
-        self._row_sep(left)
         left.add_layout(gain_btn_hl)
+        self._double_sep(left)
 
 
         # ══════════════════════════════════════════════════════════════
@@ -776,7 +787,7 @@ class LeftControlPanel(QWidget):
         # ══════════════════════════════════════════════════════════════
 
         # ── Sub-section: White Balance ────────────────────────────────────
-        _sub_header(right, "WHITE BALANCE", icon="☀️", color="#f59e0b")
+        _sub_header(right, "WHITE BALANCE", color="#f59e0b")
 
         # ── White Balance (Source0 / Color CH1 only) ────────────────────────────
         # WB ratios live on GainSelector=Red/Green/Blue for Source0 (Color CH1) only.
@@ -792,7 +803,7 @@ class LeftControlPanel(QWidget):
 
 
         # Auto WB button (amber accent)
-        self._btn_awb = QPushButton("⚡  Auto WB")
+        self._btn_awb = QPushButton("Auto WB")
         self._btn_awb.setFixedHeight(34)
         self._btn_awb.setToolTip(
             "One-Push Auto White Balance on the Color channel (Source0).\n"
@@ -839,13 +850,13 @@ class LeftControlPanel(QWidget):
         wb_btn_hl.setSpacing(6)
         wb_btn_hl.addWidget(self._btn_awb, stretch=1)
         wb_btn_hl.addWidget(self._btn_revert_wb)
-        self._row_sep(right)
         right.add_layout(wb_btn_hl)
+        self._double_sep(right)
 
 
 
         # ── Sub-section: Black Level ──────────────────────────────────────
-        _sub_header(right, "BLACK LEVEL", icon="🌑", color="#94a3b8")
+        _sub_header(right, "BLACK LEVEL", color="#94a3b8")
 
         # ── Black Level (per-source hardware pedestal) ─────────────────────
         # GenICam: BlackLevelSelector=All, BlackLevel float (DN)
@@ -895,7 +906,8 @@ class LeftControlPanel(QWidget):
             bl_rl.addWidget(ch_label)
             bl_rl.addWidget(spn, stretch=1)
             right.add(bl_row)
-            self._row_sep(right)
+            if ch_idx < 2:
+                self._row_sep(right)
 
         # Apply + Reset — use same _btn_secondary style as Exposure/FPS/Gain buttons
         self._btn_apply_bl = _btn_secondary("Apply Black Levels")
@@ -924,8 +936,8 @@ class LeftControlPanel(QWidget):
         bl_btn_hl.setSpacing(6)
         bl_btn_hl.addWidget(self._btn_apply_bl, stretch=1)
         bl_btn_hl.addWidget(self._btn_reset_bl)
-        self._row_sep(right)
         right.add_layout(bl_btn_hl)
+        self._double_sep(right)
 
         return left, right
 
