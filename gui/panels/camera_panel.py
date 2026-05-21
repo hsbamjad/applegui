@@ -484,7 +484,9 @@ class LeftControlPanel(QWidget):
         vlayout.addWidget(cam_status_card)
         vlayout.addSpacing(6)
 
-        # Camera Controls popup toggle button — identical geometry to Connect Camera
+        # Camera Controls popup toggle button — identical geometry to Connect Camera.
+        # The Connect Camera button lives inside a _Card (10 px h-margins), so we
+        # wrap this button in the same 10 px inset to make them visually identical.
         self._btn_cam_controls = QPushButton("Camera Controls")
         self._btn_cam_controls.setFixedHeight(38)
         self._btn_cam_controls.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -511,9 +513,16 @@ class LeftControlPanel(QWidget):
             QPushButton:pressed {{ background-color: {SUCCESS}88; }}
         """)
         self._btn_cam_controls.clicked.connect(self._on_cam_controls_toggle)
-        vlayout.addWidget(self._btn_cam_controls)
 
-        vlayout.addSpacing(4)
+        _cam_btn_wrapper = QWidget()
+        _cam_btn_wrapper.setStyleSheet("background: transparent; border: none;")
+        _cam_btn_wl = QHBoxLayout(_cam_btn_wrapper)
+        _cam_btn_wl.setContentsMargins(10, 0, 10, 0)
+        _cam_btn_wl.setSpacing(0)
+        _cam_btn_wl.addWidget(self._btn_cam_controls)
+        vlayout.addWidget(_cam_btn_wrapper)
+
+
 
         vlayout.addWidget(_SectionHeader("Conveyor"))
         vlayout.addWidget(self._conveyor_card())
