@@ -895,7 +895,7 @@ class LeftControlPanel(QWidget):
 
             bl_rl.addWidget(ch_label)
             bl_rl.addWidget(spn, stretch=1)
-            card.add(bl_row)
+            right.add(bl_row)
 
         # Apply + Reset — use same _btn_secondary style as Exposure/FPS/Gain buttons
         self._btn_apply_bl = _btn_secondary("Apply Black Levels")
@@ -924,9 +924,9 @@ class LeftControlPanel(QWidget):
         bl_btn_hl.setSpacing(6)
         bl_btn_hl.addWidget(self._btn_apply_bl, stretch=1)
         bl_btn_hl.addWidget(self._btn_reset_bl)
-        card.add_layout(bl_btn_hl)
+        right.add_layout(bl_btn_hl)
 
-        return card
+        return left, right
 
     # ── Camera card slots ─────────────────────────────────────────────────────
 
