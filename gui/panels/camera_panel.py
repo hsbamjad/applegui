@@ -579,7 +579,9 @@ class LeftControlPanel(QWidget):
 
     @staticmethod
     def _double_sep(card: "_Card") -> None:
-        """Two hairlines with a gap — used after Apply buttons to mark section end."""
+        """Two hairlines — used after Apply buttons to mark section end.
+        A small gap is added first so the lines don't touch the button border."""
+        card._layout.addSpacing(7)   # breathing room below the button
         for _ in range(2):
             f = QFrame()
             f.setFixedHeight(1)
