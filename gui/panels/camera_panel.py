@@ -16,9 +16,11 @@ from __future__ import annotations
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QComboBox, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QFrame, QSizePolicy,
+    QCheckBox, QFrame, QSizePolicy, QScrollArea,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import (
+    Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QSize,
+)
 
 from gui.styles import (
     BG_SURFACE, BG_CARD, BG_ELEVATED,
@@ -185,6 +187,271 @@ def _sep(card_layout) -> None:
     card_layout._layout.addWidget(sep)
 
 
+def _sub_header(card: "_Card", text: str, icon: str = "", color: str = TEXT_2) -> None:
+    """
+    Adds a compact section heading inside a _Card, e.g. '⏱  Exposure Time'.
+    Uses a thin left accent stripe for visual hierarchy.
+    """
+    w = QWidget()
+    w.setStyleSheet("background: transparent; border: none;")
+    hl = QHBoxLayout(w)
+    hl.setContentsMargins(0, 6, 0, 2)
+    hl.setSpacing(6)
+
+    # Thin colored marker
+    bar = QFrame()
+    bar.setFixedSize(3, 14)
+    bar.setStyleSheet(f"background-color: {color}; border-radius: 2px; border: none;")
+    hl.addWidget(bar)
+
+    full_text = f"{icon}  {text}" if icon else text
+    lbl = QLabel(full_text)
+    lbl.setStyleSheet(
+        f"color: {color}; font-size: 10px; font-weight: 700; "
+        f"letter-spacing: 1.5px; background: transparent;"
+    )
+    hl.addWidget(lbl)
+    hl.addStretch()
+    card._layout.addWidget(w)
+
+
+# ── Collapsible Panel ─────────────────────────────────────────────────────────
+
+class _CollapsiblePanel(QWidget):
+    """
+    A premium collapsible section widget with animated expand/collapse.
+    
+    Usage::
+        panel = _CollapsiblePanel("Camera Controls", icon="📷")
+        panel.add_widget(my_card)
+        panel.add_widget(my_other_card)
+    """
+
+    def __init__(
+        self,
+        title: str,
+        icon: str = "",
+        subtitle: str = "",
+        accent_color: str = ACCENT,
+        initially_expanded: bool = True,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._expanded = initially_expanded
+        self._accent  = accent_color
+        self.setStyleSheet("background: transparent; border: none;")
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Toggle header button ───────────────────────────────────────────
+        self._header = QPushButton()
+        self._header.setFixedHeight(46)
+        self._header.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._header.setCheckable(True)
+        self._header.setChecked(initially_expanded)
+        self._header.clicked.connect(self._toggle)
+        self._header.setStyleSheet(f"""
+            QPushButton {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {accent_color}26,
+                    stop:1 {accent_color}0A
+                );
+                border: 1px solid {accent_color}55;
+                border-radius: 10px;
+                text-align: left;
+                padding: 0 14px;
+                font-size: 13px;
+                font-weight: 700;
+                color: {TEXT_1};
+                letter-spacing: 0.3px;
+            }}
+            QPushButton:hover {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {accent_color}44,
+                    stop:1 {accent_color}18
+                );
+                border-color: {accent_color}99;
+            }}
+            QPushButton:pressed {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {accent_color}66,
+                    stop:1 {accent_color}22
+                );
+            }}
+        """)
+
+        # Build header label (icon + title + subtitle + chevron)
+        hdr_inner = QWidget()
+        hdr_inner.setStyleSheet("background: transparent; border: none;")
+        hdr_inner.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        hdr_hl = QHBoxLayout(hdr_inner)
+        hdr_hl.setContentsMargins(14, 0, 14, 0)
+        hdr_hl.setSpacing(8)
+
+        if icon:
+            icon_lbl = QLabel(icon)
+            icon_lbl.setStyleSheet(
+                f"color: {accent_color}; font-size: 16px; "
+                "background: transparent; border: none;"
+            )
+            hdr_hl.addWidget(icon_lbl)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(0)
+        text_col.setContentsMargins(0, 0, 0, 0)
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet(
+            f"color: {TEXT_1}; font-size: 13px; font-weight: 700; "
+            "background: transparent; border: none; letter-spacing: 0.3px;"
+        )
+        text_col.addWidget(title_lbl)
+        if subtitle:
+            sub_lbl = QLabel(subtitle)
+            sub_lbl.setStyleSheet(
+                f"color: {TEXT_3}; font-size: 10px; "
+                "background: transparent; border: none;"
+            )
+            text_col.addWidget(sub_lbl)
+        hdr_hl.addLayout(text_col)
+        hdr_hl.addStretch()
+
+        # Animated badge showing item count
+        self._badge = QLabel()
+        self._badge.setFixedHeight(20)
+        self._badge.setStyleSheet(f"""
+            background-color: {accent_color}33;
+            color: {accent_color};
+            border: 1px solid {accent_color}55;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 0 8px;
+        """)
+        self._badge.hide()
+        hdr_hl.addWidget(self._badge)
+
+        # Chevron arrow label
+        self._chevron = QLabel("▾" if initially_expanded else "▸")
+        self._chevron.setStyleSheet(
+            f"color: {accent_color}; font-size: 14px; "
+            "background: transparent; border: none;"
+        )
+        hdr_hl.addWidget(self._chevron)
+
+        # Stack inner widget on top of the button
+        hdr_inner.setParent(self._header)
+        self._header.resizeEvent = lambda e: (
+            hdr_inner.setGeometry(0, 0, self._header.width(), self._header.height())
+        )
+        hdr_inner.setGeometry(0, 0, 290, 46)
+
+        root.addWidget(self._header)
+
+        # ── Content container with top accent bar ─────────────────────────
+        self._content_wrapper = QWidget()
+        self._content_wrapper.setStyleSheet(
+            f"background: transparent; border: none;"
+        )
+        content_vl = QVBoxLayout(self._content_wrapper)
+        content_vl.setContentsMargins(0, 4, 0, 0)
+        content_vl.setSpacing(0)
+
+        # Left accent border bar
+        inner_row = QHBoxLayout()
+        inner_row.setContentsMargins(0, 0, 0, 0)
+        inner_row.setSpacing(0)
+
+        self._accent_bar = QFrame()
+        self._accent_bar.setFixedWidth(3)
+        self._accent_bar.setStyleSheet(
+            f"background: qlineargradient("
+            f"x1:0,y1:0,x2:0,y2:1,"
+            f"stop:0 {accent_color},"
+            f"stop:1 {accent_color}33);"
+            f" border-radius: 2px; border: none;"
+        )
+        inner_row.addWidget(self._accent_bar)
+
+        self._inner = QWidget()
+        self._inner.setStyleSheet("background: transparent; border: none;")
+        self._inner_layout = QVBoxLayout(self._inner)
+        self._inner_layout.setContentsMargins(8, 0, 0, 0)
+        self._inner_layout.setSpacing(6)
+        inner_row.addWidget(self._inner, stretch=1)
+        content_vl.addLayout(inner_row)
+
+        root.addWidget(self._content_wrapper)
+
+        # Initial state
+        if not initially_expanded:
+            self._content_wrapper.setMaximumHeight(0)
+            self._content_wrapper.setVisible(False)
+            self._accent_bar.setVisible(False)
+
+    # ── Public API ─────────────────────────────────────────────────────────
+
+    def add_widget(self, widget: QWidget) -> None:
+        """Add a widget to the collapsible content area."""
+        self._inner_layout.addWidget(widget)
+
+    def set_badge(self, text: str) -> None:
+        """Set badge text (e.g. '6 controls'). Pass empty string to hide."""
+        if text:
+            self._badge.setText(text)
+            self._badge.show()
+        else:
+            self._badge.hide()
+
+    def expand(self) -> None:
+        if not self._expanded:
+            self._toggle()
+
+    def collapse(self) -> None:
+        if self._expanded:
+            self._toggle()
+
+    # ── Toggle logic ───────────────────────────────────────────────────────
+
+    def _toggle(self) -> None:
+        self._expanded = not self._expanded
+        self._chevron.setText("▾" if self._expanded else "▸")
+
+        if self._expanded:
+            # Show then animate
+            self._content_wrapper.setVisible(True)
+            self._accent_bar.setVisible(True)
+            # Compute natural height
+            self._content_wrapper.setMaximumHeight(16777215)
+            target_h = self._content_wrapper.sizeHint().height()
+            self._content_wrapper.setMaximumHeight(0)
+
+            anim = QPropertyAnimation(self._content_wrapper, b"maximumHeight", self)
+            anim.setDuration(280)
+            anim.setStartValue(0)
+            anim.setEndValue(target_h)
+            anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            anim.start()
+            # Keep reference so GC doesn't kill it
+            self._anim = anim
+        else:
+            anim = QPropertyAnimation(self._content_wrapper, b"maximumHeight", self)
+            anim.setDuration(240)
+            anim.setStartValue(self._content_wrapper.height())
+            anim.setEndValue(0)
+            anim.setEasingCurve(QEasingCurve.Type.InCubic)
+            anim.finished.connect(lambda: (
+                self._content_wrapper.setVisible(False),
+                self._accent_bar.setVisible(False),
+            ))
+            anim.start()
+            self._anim = anim
+
+
 # ── Left Control Panel ────────────────────────────────────────────────────────
 
 class LeftControlPanel(QWidget):
@@ -214,8 +481,6 @@ class LeftControlPanel(QWidget):
         self._build()
 
     def _build(self) -> None:
-        from PyQt6.QtWidgets import QScrollArea
-
         # ── Scrollable inner container ─────────────────────────────────────────
         # Prevents items from being compressed when window height is small,
         # which would cause VBoxLayout to collapse widgets on top of each other.
@@ -225,9 +490,22 @@ class LeftControlPanel(QWidget):
         vlayout.setContentsMargins(12, 6, 12, 12)
         vlayout.setSpacing(0)
 
-        vlayout.addWidget(_SectionHeader("Camera"))
-        vlayout.addWidget(self._camera_card())
-        vlayout.addWidget(self._roi_card())
+        # ── Camera Controls — collapsible submenu ─────────────────────────
+        cam_panel = _CollapsiblePanel(
+            title="Camera Controls",
+            icon="📷",
+            subtitle="Exposure · FPS · Gain · WB · Black Level · ROI",
+            accent_color=ACCENT,
+            initially_expanded=False,
+        )
+        cam_panel.set_badge("6 sections")
+        cam_panel.add_widget(self._camera_card())
+        cam_panel.add_widget(self._roi_card())
+        self._cam_collapsible = cam_panel
+
+        vlayout.addSpacing(6)
+        vlayout.addWidget(cam_panel)
+        vlayout.addSpacing(8)
 
         vlayout.addWidget(_SectionHeader("Conveyor"))
         vlayout.addWidget(self._conveyor_card())
@@ -279,6 +557,9 @@ class LeftControlPanel(QWidget):
         card.add(self._btn_connect)
 
         _sep(card)
+
+        # ── Sub-section: Exposure Time ────────────────────────────────────
+        _sub_header(card, "EXPOSURE TIME", icon="⏱", color="#f59e0b")
 
         # ── Per-channel Exposure (CH1 Color / CH2 NIR1 / CH3 NIR2) ───────────
         # Each source has independent exposure control.
@@ -347,6 +628,9 @@ class LeftControlPanel(QWidget):
 
         _sep(card)
 
+        # ── Sub-section: Frame Rate ────────────────────────────────────────
+        _sub_header(card, "FRAME RATE", icon="🎥", color="#22d3ee")
+
         # Frame rate spinbox + Apply button
         self._spn_fps = _spinbox(1, 107, 30, 1)
         self._spn_fps.setSuffix(" FPS")
@@ -370,6 +654,9 @@ class LeftControlPanel(QWidget):
         self._on_fps_spinbox_changed(self._spn_fps.value())
 
         _sep(card)
+
+        # ── Sub-section: Gain ─────────────────────────────────────────────
+        _sub_header(card, "SENSOR GAIN", icon="🔊", color="#a78bfa")
 
         # ── Per-channel Gain (CH1 Color / CH2 NIR1 / CH3 NIR2) ───────────────
         # Each source has independent gain control.
@@ -439,26 +726,19 @@ class LeftControlPanel(QWidget):
 
         _sep(card)
 
+        # ── Sub-section: White Balance ────────────────────────────────────
+        _sub_header(card, "WHITE BALANCE", icon="☀️", color="#f59e0b")
+
         # ── White Balance (Source0 / Color CH1 only) ────────────────────────────
         # WB ratios live on GainSelector=Red/Green/Blue for Source0 (Color CH1) only.
         # NIR channels have no Bayer pattern and no WB concept.
-        wb_hdr = QWidget()
-        wb_hdr.setStyleSheet("background: transparent; border: none;")
-        wb_hdr_hl = QHBoxLayout(wb_hdr)
-        wb_hdr_hl.setContentsMargins(0, 2, 0, 2)
-        wb_hdr_hl.setSpacing(6)
-        wb_ch_lbl = QLabel("● White Balance")
-        wb_ch_lbl.setStyleSheet(
-            "color: #f59e0b; font-size: 11px; font-weight: 700; background: transparent;"
-        )
-        wb_hdr_hl.addWidget(wb_ch_lbl)
-        wb_hdr_hl.addStretch()
         self._lbl_wb_ratios = QLabel("R: —   G: —   B: —")
+        self._lbl_wb_ratios.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._lbl_wb_ratios.setStyleSheet(
-            f"color: {TEXT_3}; font-size: 10px; background: transparent;"
+            f"color: {TEXT_3}; font-size: 10px; background: {BG_ELEVATED}40; "
+            f"border: 1px solid {BORDER}; border-radius: 5px; padding: 3px 6px;"
         )
-        wb_hdr_hl.addWidget(self._lbl_wb_ratios)
-        card.add(wb_hdr)
+        card.add(self._lbl_wb_ratios)
 
         # Auto WB button (amber accent)
         self._btn_awb = QPushButton("⚡  Auto WB")
@@ -512,24 +792,12 @@ class LeftControlPanel(QWidget):
 
         _sep(card)
 
-        # ── Black Level (per-source hardware pedestal) ─────────────────────────────────
+        # ── Sub-section: Black Level ──────────────────────────────────────
+        _sub_header(card, "BLACK LEVEL", icon="🌑", color="#94a3b8")
+
+        # ── Black Level (per-source hardware pedestal) ─────────────────────
         # GenICam: BlackLevelSelector=All, BlackLevel float (DN)
         # Removing ambient dark-pedestal and thermal noise at hardware level.
-        bl_hdr = QWidget()
-        bl_hdr.setStyleSheet("background: transparent; border: none;")
-        bl_hdr_hl = QHBoxLayout(bl_hdr)
-        bl_hdr_hl.setContentsMargins(0, 2, 0, 2)
-        bl_hdr_hl.setSpacing(0)
-        bl_ch_lbl = QLabel("● Black Level")
-        bl_ch_lbl.setStyleSheet(
-            "color: #94a3b8; font-size: 11px; font-weight: 700; background: transparent;"
-        )
-        bl_hdr_hl.addWidget(bl_ch_lbl)
-        bl_hdr_hl.addStretch()
-        bl_unit_lbl = QLabel("DN")
-        bl_unit_lbl.setStyleSheet(f"color: {TEXT_3}; font-size: 10px; background: transparent;")
-        bl_hdr_hl.addWidget(bl_unit_lbl)
-        card.add(bl_hdr)
 
         # Channel colors match the rest of the panel (CH1=amber, CH2/CH3=cyan)
         _BL_COLORS  = ["#f59e0b", "#06b6d4", "#06b6d4"]
