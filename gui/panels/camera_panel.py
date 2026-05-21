@@ -1092,17 +1092,30 @@ class LeftControlPanel(QWidget):
             if val >= 0:
                 spn.setValue(val)
 
-    def update_white_balance(self, success: bool, r: float, g: float, b: float) -> None:
+    def update_white_balance(
+        self,
+        success: bool,
+        r: float,
+        g: float,
+        b: float,
+        *,
+        revert_done: bool = False,
+    ) -> None:
         """
-        Called by main_window after AWB or manual WB write is confirmed by firmware.
-        Updates the ratio readout label and enables the Revert button.
+        Called by main_window after AWB or Revert is confirmed by firmware.
+        Updates the ratio readout label.
+
+        If revert_done=True the snapshot has been consumed; disable Revert so
+        the user cannot revert again until a fresh AWB run saves a new baseline.
+        If revert_done=False (normal AWB), enable Revert so the user can undo.
         """
         if success:
             self._lbl_wb_ratios.setText(f"R: {r:.3f}   G: {g:.3f}   B: {b:.3f}")
             self._lbl_wb_ratios.setStyleSheet(
                 "color: #f59e0b; font-size: 10px; background: transparent;"
             )
-            self._btn_revert_wb.setEnabled(True)
+            # Enable Revert after AWB; disable it after a Revert (snapshot consumed)
+            self._btn_revert_wb.setEnabled(not revert_done)
         else:
             self._lbl_wb_ratios.setText("R: —   G: —   B: — (failed)")
             self._lbl_wb_ratios.setStyleSheet(

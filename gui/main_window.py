@@ -233,7 +233,8 @@ class MainWindow(QMainWindow):
         self._mode   = self._cfg.get("camera", {}).get("mode", "mock")
         self._cam_w:  CameraWorker | None        = None
         self._inf_w:  MockInferenceWorker | None = None
-        self._total   = 0
+        self._total        = 0
+        self._wb_reverting = False   # True while a revert_white_balance() call is in flight
 
         self._setup_window()
         self._build_ui()
@@ -596,6 +597,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 "White Balance: reverting to pre-calibration ratios…"
             )
+            self._wb_reverting = True   # flag so _on_wb_readback disables Revert button
             self._cam_w.revert_white_balance()
         else:
             self.statusBar().showMessage(
@@ -609,8 +611,12 @@ class MainWindow(QMainWindow):
         """
         Called after AWB calibration completes or Revert finishes.
         Updates the WB ratio display and status bar.
+        When the readback follows a Revert, the Revert button is disabled again
+        because _saved_wb has been cleared in camera_interface — no snapshot remains.
         """
-        self._left.update_white_balance(success, r, g, b)
+        was_revert = self._wb_reverting
+        self._wb_reverting = False   # reset flag for next operation
+        self._left.update_white_balance(success, r, g, b, revert_done=was_revert)
         if success:
             self.statusBar().showMessage(
                 f"White Balance confirmed — R: {r:.4f}  G: {g:.4f}  B: {b:.4f}"

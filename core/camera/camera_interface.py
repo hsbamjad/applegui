@@ -1008,8 +1008,11 @@ class JAICamera:
         try:
             import eBUS as eb
 
-            # 1. Save current ratios as revert target
-            self._saved_wb = self.get_white_balance_ratios()
+            # 1. Save current ratios as revert target — only on the FIRST AWB run.
+            # Subsequent AWB clicks must NOT overwrite this snapshot; Revert should
+            # always return to the state before *any* AWB was applied this session.
+            if self._saved_wb is None:
+                self._saved_wb = self.get_white_balance_ratios()
             log.info("AWB: saved pre-calibration WB = R=%.4f G=%.4f B=%.4f",
                      *self._saved_wb)
 
@@ -1066,6 +1069,8 @@ class JAICamera:
     def revert_white_balance(self) -> tuple:
         """
         Restore the WB ratios saved before the last One-Push AWB calibration.
+        Clears _saved_wb after restoring so the next AWB/Revert cycle starts
+        fresh from the restored state.
         Returns (success, r, g, b). Fails gracefully if no save point exists.
         """
         if self._saved_wb is None:
@@ -1074,6 +1079,9 @@ class JAICamera:
         r, g, b = self._saved_wb
         log.info("AWB revert: restoring R=%.4f G=%.4f B=%.4f", r, g, b)
         actual = self.set_white_balance_ratios(r, g, b)
+        # Clear the save-point so the next AWB run captures the post-revert state
+        # as its new baseline, keeping Revert semantics consistent across cycles.
+        self._saved_wb = None
         return (True, actual[0], actual[1], actual[2])
 
     # ── Black Level helpers (per-source, hardware pedestal) ────────────────────
