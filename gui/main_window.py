@@ -75,19 +75,13 @@ class HeaderBar(QWidget):
         logo.setStyleSheet(f"color: {ACCENT}; background: transparent; border: none;")
         logo.setFixedWidth(30)
 
-        title = QLabel("Apple Sorting  GUI")
+        title = QLabel("Multispectral Vision System")
         title.setFont(QFont("Segoe UI Variable", 14, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {TEXT_1}; background: transparent; border: none;")
-
-        sub = QLabel("  Multispectral Vision System")
-        sub.setStyleSheet(
-            f"color: {TEXT_3}; font-size: 11px; background: transparent; border: none;"
-        )
 
         layout.addWidget(logo)
         layout.addSpacing(10)
         layout.addWidget(title)
-        layout.addWidget(sub)
         layout.addStretch()
 
         # Mode badge — subtle pill
@@ -249,7 +243,7 @@ class MainWindow(QMainWindow):
     # ── Setup ─────────────────────────────────────────────────────────────────
 
     def _setup_window(self) -> None:
-        self.setWindowTitle("Apple Sorting GUI  —  MSU ASABE AIM26")
+        self.setWindowTitle("Infield Apple Sorting System")
         self.setMinimumSize(1360, 760)
         self.resize(1560, 920)
         self.setStyleSheet(APP_STYLESHEET)

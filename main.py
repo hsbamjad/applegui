@@ -1,6 +1,6 @@
 """
-Apple Sorting GUI — Entry Point
-================================
+Infield Apple Sorting System — Entry Point
+==========================================
 Michigan State University | ASABE AIM26 | 2026
 
 Usage:
@@ -25,9 +25,9 @@ except ImportError:
 
 
 def main() -> None:
-    """Launch the Apple Sorting GUI application."""
+    """Launch the Infield Apple Sorting System."""
     app = QApplication(sys.argv)
-    app.setApplicationName("Apple Sorting GUI")
+    app.setApplicationName("Infield Apple Sorting System")
     app.setOrganizationName("MSU")
 
     window = MainWindow()
