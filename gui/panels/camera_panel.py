@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QCheckBox, QFrame, QSizePolicy, QScrollArea,
 )
 from PyQt6.QtCore import (
-    Qt, pyqtSignal, QPropertyAnimation, QEasingCurve, QSize,
+    Qt, pyqtSignal, QPoint, QSize,
 )
 
 from gui.styles import (
@@ -215,241 +215,229 @@ def _sub_header(card: "_Card", text: str, icon: str = "", color: str = TEXT_2) -
     card._layout.addWidget(w)
 
 
-# ── Collapsible Panel ─────────────────────────────────────────────────────────
+# ── Camera Controls Floating Window ────────────────────────────────────────────
 
-class _CollapsiblePanel(QWidget):
+class CameraControlsWindow(QWidget):
     """
-    A premium collapsible section widget with animated expand/collapse.
-    
-    Usage::
-        panel = _CollapsiblePanel("Camera Controls", icon="📷")
-        panel.add_widget(my_card)
-        panel.add_widget(my_other_card)
+    Frameless floating sub-window that holds all camera control widgets.
+    Appears to the right of the left sidebar when the Camera Controls button
+    is clicked. Supports dragging by the title bar and has a close button.
     """
 
-    def __init__(
-        self,
-        title: str,
-        icon: str = "",
-        subtitle: str = "",
-        accent_color: str = ACCENT,
-        initially_expanded: bool = True,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._expanded = initially_expanded
-        self._accent  = accent_color
-        self.setStyleSheet("background: transparent; border: none;")
+    sig_hidden = pyqtSignal()   # emitted when window is closed/hidden
 
+    POPUP_WIDTH  = 310
+    POPUP_TITLE  = "Camera Controls"
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(
+            parent,
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint,
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedWidth(self.POPUP_WIDTH)
+        self._drag_pos: QPoint | None = None
+        self._build_shell()
+
+    # ── Shell (title bar + scroll area) ─────────────────────────────────
+
+    def _build_shell(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ── Toggle header button ───────────────────────────────────────────
-        self._header = QPushButton()
-        self._header.setFixedHeight(46)
-        self._header.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._header.setCheckable(True)
-        self._header.setChecked(initially_expanded)
-        self._header.clicked.connect(self._toggle)
-        self._header.setStyleSheet(f"""
-            QPushButton {{
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {accent_color}26,
-                    stop:1 {accent_color}0A
-                );
-                border: 1px solid {accent_color}55;
-                border-radius: 10px;
-                text-align: left;
-                padding: 0 14px;
-                font-size: 13px;
-                font-weight: 700;
-                color: {TEXT_1};
-                letter-spacing: 0.3px;
-            }}
-            QPushButton:hover {{
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {accent_color}44,
-                    stop:1 {accent_color}18
-                );
-                border-color: {accent_color}99;
-            }}
-            QPushButton:pressed {{
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {accent_color}66,
-                    stop:1 {accent_color}22
-                );
+        # Outer container — the visible rounded panel
+        outer = QWidget()
+        outer.setObjectName("cam_outer")
+        outer.setStyleSheet(f"""
+            QWidget#cam_outer {{
+                background-color: {BG_SURFACE};
+                border: 1px solid {ACCENT}55;
+                border-radius: 12px;
             }}
         """)
+        outer_vl = QVBoxLayout(outer)
+        outer_vl.setContentsMargins(0, 0, 0, 0)
+        outer_vl.setSpacing(0)
 
-        # Build header label (icon + title + subtitle + chevron)
-        hdr_inner = QWidget()
-        hdr_inner.setStyleSheet("background: transparent; border: none;")
-        hdr_inner.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        hdr_hl = QHBoxLayout(hdr_inner)
-        hdr_hl.setContentsMargins(14, 0, 14, 0)
-        hdr_hl.setSpacing(8)
-
-        if icon:
-            icon_lbl = QLabel(icon)
-            icon_lbl.setStyleSheet(
-                f"color: {accent_color}; font-size: 16px; "
-                "background: transparent; border: none;"
-            )
-            hdr_hl.addWidget(icon_lbl)
-
-        text_col = QVBoxLayout()
-        text_col.setSpacing(0)
-        text_col.setContentsMargins(0, 0, 0, 0)
-        title_lbl = QLabel(title)
-        title_lbl.setStyleSheet(
-            f"color: {TEXT_1}; font-size: 13px; font-weight: 700; "
-            "background: transparent; border: none; letter-spacing: 0.3px;"
-        )
-        text_col.addWidget(title_lbl)
-        if subtitle:
-            sub_lbl = QLabel(subtitle)
-            sub_lbl.setStyleSheet(
-                f"color: {TEXT_3}; font-size: 10px; "
-                "background: transparent; border: none;"
-            )
-            text_col.addWidget(sub_lbl)
-        hdr_hl.addLayout(text_col)
-        hdr_hl.addStretch()
-
-        # Animated badge showing item count
-        self._badge = QLabel()
-        self._badge.setFixedHeight(20)
-        self._badge.setStyleSheet(f"""
-            background-color: {accent_color}33;
-            color: {accent_color};
-            border: 1px solid {accent_color}55;
-            border-radius: 10px;
-            font-size: 10px;
-            font-weight: 700;
-            padding: 0 8px;
+        # ── Title bar ──────────────────────────────────────────────────
+        title_bar = QWidget()
+        title_bar.setObjectName("cam_titlebar")
+        title_bar.setFixedHeight(48)
+        title_bar.setCursor(Qt.CursorShape.SizeAllCursor)
+        title_bar.setStyleSheet(f"""
+            QWidget#cam_titlebar {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {ACCENT}33, stop:1 {ACCENT}0A
+                );
+                border-radius: 12px 12px 0 0;
+                border-bottom: 1px solid {ACCENT}33;
+            }}
         """)
-        self._badge.hide()
-        hdr_hl.addWidget(self._badge)
+        tb_hl = QHBoxLayout(title_bar)
+        tb_hl.setContentsMargins(14, 0, 10, 0)
+        tb_hl.setSpacing(10)
 
-        # Chevron arrow label
-        self._chevron = QLabel("▾" if initially_expanded else "▸")
-        self._chevron.setStyleSheet(
-            f"color: {accent_color}; font-size: 14px; "
+        # Camera icon
+        ic = QLabel("📷")
+        ic.setStyleSheet(
+            f"color: {ACCENT}; font-size: 18px; "
             "background: transparent; border: none;"
         )
-        hdr_hl.addWidget(self._chevron)
+        tb_hl.addWidget(ic)
 
-        # Stack inner widget on top of the button
-        hdr_inner.setParent(self._header)
-        self._header.resizeEvent = lambda e: (
-            hdr_inner.setGeometry(0, 0, self._header.width(), self._header.height())
+        # Title + subtitle stacked
+        txt_col = QVBoxLayout()
+        txt_col.setSpacing(1)
+        txt_col.setContentsMargins(0, 0, 0, 0)
+        ttl = QLabel("Camera Controls")
+        ttl.setStyleSheet(
+            f"color: {TEXT_1}; font-size: 13px; font-weight: 700; "
+            "background: transparent; border: none;"
         )
-        hdr_inner.setGeometry(0, 0, 290, 46)
+        sub = QLabel("Exposure · FPS · Gain · WB · Black Level · ROI")
+        sub.setStyleSheet(
+            f"color: {TEXT_3}; font-size: 9px; "
+            "background: transparent; border: none;"
+        )
+        txt_col.addWidget(ttl)
+        txt_col.addWidget(sub)
+        tb_hl.addLayout(txt_col)
+        tb_hl.addStretch()
 
-        root.addWidget(self._header)
+        # Close button
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(28, 28)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_ELEVATED};
+                color: {TEXT_2};
+                border: 1px solid {BORDER};
+                border-radius: 14px;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0;
+            }}
+            QPushButton:hover {{
+                background-color: {DANGER};
+                color: white;
+                border-color: {DANGER};
+            }}
+            QPushButton:pressed {{
+                background-color: #DC2626;
+            }}
+        """)
+        close_btn.clicked.connect(self.hide)
+        tb_hl.addWidget(close_btn)
 
-        # ── Content container with top accent bar ─────────────────────────
-        self._content_wrapper = QWidget()
-        self._content_wrapper.setStyleSheet(
+        # Make title bar draggable
+        title_bar.mousePressEvent   = self._tb_mouse_press
+        title_bar.mouseMoveEvent    = self._tb_mouse_move
+        title_bar.mouseReleaseEvent = self._tb_mouse_release
+
+        outer_vl.addWidget(title_bar)
+
+        # ── Thin accent divider ───────────────────────────────────────
+        div = QFrame()
+        div.setFixedHeight(2)
+        div.setStyleSheet(
+            f"background: qlineargradient("
+            f"x1:0,y1:0,x2:1,y2:0,"
+            f"stop:0 {ACCENT},stop:0.5 {ACCENT}88,stop:1 transparent);"
+            f" border: none;"
+        )
+        outer_vl.addWidget(div)
+
+        # ── Scrollable content area ───────────────────────────────────
+        self._content_widget = QWidget()
+        self._content_widget.setStyleSheet(
             f"background: transparent; border: none;"
         )
-        content_vl = QVBoxLayout(self._content_wrapper)
-        content_vl.setContentsMargins(0, 4, 0, 0)
-        content_vl.setSpacing(0)
+        self._content_layout = QVBoxLayout(self._content_widget)
+        self._content_layout.setContentsMargins(10, 8, 10, 12)
+        self._content_layout.setSpacing(8)
 
-        # Left accent border bar
-        inner_row = QHBoxLayout()
-        inner_row.setContentsMargins(0, 0, 0, 0)
-        inner_row.setSpacing(0)
+        scroll = QScrollArea()
+        scroll.setWidget(self._content_widget)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setStyleSheet(f"""
+            QScrollArea {{
+                border: none;
+                background: transparent;
+                border-radius: 0 0 12px 12px;
+            }}
+            QScrollBar:vertical {{
+                background: transparent; width: 5px; margin: 4px 0;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {BORDER}; border-radius: 3px; min-height: 20px;
+            }}
+            QScrollBar::handle:vertical:hover {{ background: {ACCENT}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+        """)
+        outer_vl.addWidget(scroll, stretch=1)
 
-        self._accent_bar = QFrame()
-        self._accent_bar.setFixedWidth(3)
-        self._accent_bar.setStyleSheet(
-            f"background: qlineargradient("
-            f"x1:0,y1:0,x2:0,y2:1,"
-            f"stop:0 {accent_color},"
-            f"stop:1 {accent_color}33);"
-            f" border-radius: 2px; border: none;"
-        )
-        inner_row.addWidget(self._accent_bar)
+        root.addWidget(outer)
 
-        self._inner = QWidget()
-        self._inner.setStyleSheet("background: transparent; border: none;")
-        self._inner_layout = QVBoxLayout(self._inner)
-        self._inner_layout.setContentsMargins(8, 0, 0, 0)
-        self._inner_layout.setSpacing(6)
-        inner_row.addWidget(self._inner, stretch=1)
-        content_vl.addLayout(inner_row)
-
-        root.addWidget(self._content_wrapper)
-
-        # Initial state
-        if not initially_expanded:
-            self._content_wrapper.setMaximumHeight(0)
-            self._content_wrapper.setVisible(False)
-            self._accent_bar.setVisible(False)
-
-    # ── Public API ─────────────────────────────────────────────────────────
+    # ── Content population (called by LeftControlPanel) ────────────────
 
     def add_widget(self, widget: QWidget) -> None:
-        """Add a widget to the collapsible content area."""
-        self._inner_layout.addWidget(widget)
+        self._content_layout.addWidget(widget)
 
-    def set_badge(self, text: str) -> None:
-        """Set badge text (e.g. '6 controls'). Pass empty string to hide."""
-        if text:
-            self._badge.setText(text)
-            self._badge.show()
-        else:
-            self._badge.hide()
+    def finalize(self) -> None:
+        """Call after all widgets are added to set a sensible max height."""
+        self._content_widget.adjustSize()
+        # Cap at 85% of screen height
+        from PyQt6.QtWidgets import QApplication
+        screen_h = QApplication.primaryScreen().availableGeometry().height()
+        self.setMaximumHeight(int(screen_h * 0.85))
+        self.adjustSize()
 
-    def expand(self) -> None:
-        if not self._expanded:
-            self._toggle()
+    # ── Show / position ──────────────────────────────────────────────
 
-    def collapse(self) -> None:
-        if self._expanded:
-            self._toggle()
+    def show_beside(self, anchor: QWidget) -> None:
+        """
+        Position the window to the right of `anchor` widget,
+        vertically aligned with it, and show it.
+        """
+        global_pos = anchor.mapToGlobal(QPoint(0, 0))
+        x = global_pos.x() + anchor.width() + 6   # 6 px gap
+        y = global_pos.y()
 
-    # ── Toggle logic ───────────────────────────────────────────────────────
+        # Keep on screen
+        from PyQt6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen().availableGeometry()
+        if x + self.width() > screen.right():
+            x = global_pos.x() - self.width() - 6
+        y = max(screen.top(), min(y, screen.bottom() - self.height()))
 
-    def _toggle(self) -> None:
-        self._expanded = not self._expanded
-        self._chevron.setText("▾" if self._expanded else "▸")
+        self.move(x, y)
+        self.show()
+        self.raise_()
 
-        if self._expanded:
-            # Show then animate
-            self._content_wrapper.setVisible(True)
-            self._accent_bar.setVisible(True)
-            # Compute natural height
-            self._content_wrapper.setMaximumHeight(16777215)
-            target_h = self._content_wrapper.sizeHint().height()
-            self._content_wrapper.setMaximumHeight(0)
+    # ── Drag support ─────────────────────────────────────────────────
 
-            anim = QPropertyAnimation(self._content_wrapper, b"maximumHeight", self)
-            anim.setDuration(280)
-            anim.setStartValue(0)
-            anim.setEndValue(target_h)
-            anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-            anim.start()
-            # Keep reference so GC doesn't kill it
-            self._anim = anim
-        else:
-            anim = QPropertyAnimation(self._content_wrapper, b"maximumHeight", self)
-            anim.setDuration(240)
-            anim.setStartValue(self._content_wrapper.height())
-            anim.setEndValue(0)
-            anim.setEasingCurve(QEasingCurve.Type.InCubic)
-            anim.finished.connect(lambda: (
-                self._content_wrapper.setVisible(False),
-                self._accent_bar.setVisible(False),
-            ))
-            anim.start()
-            self._anim = anim
+    def _tb_mouse_press(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+
+    def _tb_mouse_move(self, event) -> None:
+        if self._drag_pos is not None and event.buttons() == Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+
+    def _tb_mouse_release(self, event) -> None:
+        self._drag_pos = None
+
+    def hideEvent(self, event) -> None:
+        """Emit sig_hidden so sidebar toggle button can sync its checked state."""
+        super().hideEvent(event)
+        self.sig_hidden.emit()
 
 
 # ── Left Control Panel ────────────────────────────────────────────────────────
@@ -478,7 +466,17 @@ class LeftControlPanel(QWidget):
         self.setFixedWidth(PANEL_WIDTH)
         self.setStyleSheet(f"background-color: {BG_SURFACE};")
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        # Build the floating camera controls window first (so cards can be added)
+        self._cam_win = CameraControlsWindow(self.window())
         self._build()
+        # Populate the floating window with camera control cards
+        self._cam_win.add_widget(self._camera_card())
+        self._cam_win.add_widget(self._roi_card())
+        self._cam_win.finalize()
+        # Sync sidebar button when popup is closed via X or hide()
+        self._cam_win.sig_hidden.connect(
+            lambda: self._btn_cam_controls.setChecked(False)
+        )
 
     def _build(self) -> None:
         # ── Scrollable inner container ─────────────────────────────────────────
@@ -490,22 +488,66 @@ class LeftControlPanel(QWidget):
         vlayout.setContentsMargins(12, 6, 12, 12)
         vlayout.setSpacing(0)
 
-        # ── Camera Controls — collapsible submenu ─────────────────────────
-        cam_panel = _CollapsiblePanel(
-            title="Camera Controls",
-            icon="📷",
-            subtitle="Exposure · FPS · Gain · WB · Black Level · ROI",
-            accent_color=ACCENT,
-            initially_expanded=False,
-        )
-        cam_panel.set_badge("6 sections")
-        cam_panel.add_widget(self._camera_card())
-        cam_panel.add_widget(self._roi_card())
-        self._cam_collapsible = cam_panel
+        # ── Camera section ─────────────────────────────────────────────────
+        vlayout.addWidget(_SectionHeader("Camera"))
 
+        # Status dot + connect button live directly in the sidebar
+        cam_status_card = _Card()
+        self._cam_status = _StatusDot("Disconnected", DANGER)
+        cam_status_card.add(self._cam_status)
+        self._btn_connect = _btn_primary("Connect Camera")
+        self._btn_connect.setToolTip("Connect to JAI FSFE-3200T-10GE via 10 GigE")
+        self._btn_connect.clicked.connect(self._on_connect)
+        cam_status_card.add(self._btn_connect)
+        vlayout.addWidget(cam_status_card)
         vlayout.addSpacing(6)
-        vlayout.addWidget(cam_panel)
-        vlayout.addSpacing(8)
+
+        # Camera Controls popup toggle button
+        self._btn_cam_controls = QPushButton("📷   Camera Controls")
+        self._btn_cam_controls.setFixedHeight(42)
+        self._btn_cam_controls.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_cam_controls.setCheckable(True)
+        self._btn_cam_controls.setToolTip(
+            "Open Camera Controls panel\n"
+            "Exposure · FPS · Gain · White Balance · Black Level · ROI"
+        )
+        self._btn_cam_controls.setStyleSheet(f"""
+            QPushButton {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {ACCENT}2A, stop:1 {ACCENT}0D
+                );
+                border: 1px solid {ACCENT}66;
+                border-radius: 10px;
+                text-align: left;
+                padding: 0 16px;
+                font-size: 13px;
+                font-weight: 700;
+                color: {TEXT_1};
+                letter-spacing: 0.2px;
+            }}
+            QPushButton:hover {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {ACCENT}44, stop:1 {ACCENT}1A
+                );
+                border-color: {ACCENT}BB;
+            }}
+            QPushButton:checked {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {ACCENT}55, stop:1 {ACCENT}22
+                );
+                border-color: {ACCENT};
+                color: white;
+            }}
+            QPushButton:pressed {{
+                background: {ACCENT_DK}44;
+            }}
+        """)
+        self._btn_cam_controls.clicked.connect(self._on_cam_controls_toggle)
+        vlayout.addWidget(self._btn_cam_controls)
+        vlayout.addSpacing(4)
 
         vlayout.addWidget(_SectionHeader("Conveyor"))
         vlayout.addWidget(self._conveyor_card())
@@ -545,18 +587,18 @@ class LeftControlPanel(QWidget):
 
     # ── Card builders ─────────────────────────────────────────────────────────
 
+    def _on_cam_controls_toggle(self) -> None:
+        """Show or hide the floating Camera Controls window."""
+        if self._cam_win.isVisible():
+            self._cam_win.hide()
+            self._btn_cam_controls.setChecked(False)
+        else:
+            self._cam_win.show_beside(self)
+            self._btn_cam_controls.setChecked(True)
+
+
     def _camera_card(self) -> QWidget:
         card = _Card()
-
-        self._cam_status = _StatusDot("Disconnected", DANGER)
-        card.add(self._cam_status)
-
-        self._btn_connect = _btn_primary("Connect Camera")
-        self._btn_connect.setToolTip("Connect to JAI FSFE-3200T-10GE via 10 GigE")
-        self._btn_connect.clicked.connect(self._on_connect)
-        card.add(self._btn_connect)
-
-        _sep(card)
 
         # ── Sub-section: Exposure Time ────────────────────────────────────
         _sub_header(card, "EXPOSURE TIME", icon="⏱", color="#f59e0b")
