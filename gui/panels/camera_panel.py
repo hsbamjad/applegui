@@ -255,7 +255,7 @@ class CameraControlsWindow(QWidget):
         outer.setStyleSheet(f"""
             QWidget#cam_outer {{
                 background-color: {BG_SURFACE};
-                border: 1px solid {ACCENT}55;
+                border: 1px solid {SUCCESS}55;
                 border-radius: 12px;
             }}
         """)
@@ -272,10 +272,10 @@ class CameraControlsWindow(QWidget):
             QWidget#cam_titlebar {{
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {ACCENT}33, stop:1 {ACCENT}08
+                    stop:0 {SUCCESS}55, stop:1 {SUCCESS}22
                 );
                 border-radius: 12px 12px 0 0;
-                border-bottom: 1px solid {ACCENT}33;
+                border-bottom: 1px solid {SUCCESS}66;
             }}
         """)
         tb_hl = QHBoxLayout(title_bar)
@@ -321,7 +321,7 @@ class CameraControlsWindow(QWidget):
         div.setStyleSheet(
             f"background: qlineargradient("
             f"x1:0,y1:0,x2:1,y2:0,"
-            f"stop:0 {ACCENT},stop:0.6 {ACCENT}88,stop:1 transparent);"
+            f"stop:0 {SUCCESS},stop:0.6 {SUCCESS}88,stop:1 transparent);"
             f" border: none;"
         )
         outer_vl.addWidget(div)
