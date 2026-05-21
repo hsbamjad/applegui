@@ -465,29 +465,19 @@ class LeftControlPanel(QWidget):
         # which would cause VBoxLayout to collapse widgets on top of each other.
         inner = QWidget()
         inner.setStyleSheet(f"background-color: {BG_SURFACE};")
-        inner.setMinimumWidth(PANEL_WIDTH)   # prevents inner from shrinking when button text changes
         vlayout = QVBoxLayout(inner)
         vlayout.setContentsMargins(12, 6, 12, 12)
         vlayout.setSpacing(0)
-
 
         # ── Camera section ─────────────────────────────────────────────────
         vlayout.addWidget(_SectionHeader("Camera"))
 
         # Status dot + connect button live directly in the sidebar
         cam_status_card = _Card()
-        # Force card to always fill the panel width — prevents it from shrinking
-        # when the button text changes from "Connect Camera" to "Disconnect".
-        cam_status_card.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
         self._cam_status = _StatusDot("Disconnected", DANGER)
         cam_status_card.add(self._cam_status)
         self._btn_connect = _btn_primary("Connect Camera")
         self._btn_connect.setToolTip("Connect to JAI FSFE-3200T-10GE via 10 GigE")
-        self._btn_connect.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
         self._btn_connect.clicked.connect(self._on_connect)
         cam_status_card.add(self._btn_connect)
         vlayout.addWidget(cam_status_card)
@@ -1436,9 +1426,6 @@ class LeftControlPanel(QWidget):
                 QPushButton:pressed {{ background-color: {ACCENT_DK}; }}
             """)
         self._btn_connect.setFixedHeight(38)   # re-enforce after every stylesheet swap
-        self._btn_connect.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
 
     # ── Public API ────────────────────────────────────────────────────────────
 
