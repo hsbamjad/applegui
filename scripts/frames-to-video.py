@@ -3,6 +3,7 @@ import os
 import re
 import argparse
 import sys
+import csv
 
 def create_video_from_frames(input_folder, output_filename, fps=60, lossless=False):
     """
@@ -70,6 +71,15 @@ def create_video_from_frames(input_folder, output_filename, fps=60, lossless=Fal
 
     out.release()
     print(f"Success! Video saved as: {output_filename}")
+
+    # Write sequence log CSV
+    csv_path = os.path.splitext(output_filename)[0] + "_sequence.csv"
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["frame_index", "filename"])
+        for idx, name in enumerate(images, start=1):
+            writer.writerow([idx, name])
+    print(f"Sequence log saved as: {csv_path}")
 
 def main():
     parser = argparse.ArgumentParser(description="Convert a folder of image frames into a video.")
