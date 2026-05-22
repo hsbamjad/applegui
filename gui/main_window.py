@@ -44,6 +44,7 @@ from gui.widgets.image_display import MultiChannelDisplay
 from gui.workers.camera_worker import CameraWorker
 from gui.workers.video_worker  import VideoWorker
 from gui.workers.inference_worker import MockInferenceWorker, RealInferenceWorker
+from gui.workers.tracker import ConveyorTracker
 
 log = logging.getLogger(__name__)
 
@@ -239,6 +240,7 @@ class MainWindow(QMainWindow):
         self._cam_w:   CameraWorker | VideoWorker | None = None
         self._inf_w:   MockInferenceWorker | None        = None
         self._infer_w: RealInferenceWorker | None        = None
+        self._tracker: ConveyorTracker | None            = None
         self._infer_fps: float = 0.0
         self._total        = 0
         self._wb_reverting = False   # True while a revert_white_balance() call is in flight
@@ -387,6 +389,14 @@ class MainWindow(QMainWindow):
         self._cam_w.sig_status.connect(self._on_cam_status)
         self._cam_w.start()
 
+        # ── Conveyor tracker ───────────────────────────────────────
+        inf_tracking = self._cfg.get("inference", {}).get("tracking", {})
+        self._tracker = ConveyorTracker(
+            n_lanes                     = self._cfg.get("conveyor", {}).get("lanes", 3),
+            frame_fps                   = self._cfg.get("display", {}).get("fps_limit", 30),
+            exit_x_fraction             = inf_tracking.get("grade_line_x", 0.85),
+        )
+
         # ── Inference worker ───────────────────────────────────────
         speed = self._left.conveyor_speed
         self._inf_w = MockInferenceWorker(apples_per_sec=speed)
@@ -407,6 +417,8 @@ class MainWindow(QMainWindow):
         if self._infer_w:
             self._infer_w.stop()
             self._infer_w = None
+        if self._tracker:
+            self._tracker.reset()
         if self._inf_w:
             self._inf_w.stop()
             self._inf_w = None
@@ -505,9 +517,68 @@ class MainWindow(QMainWindow):
         self._infer_w.start()
 
     @pyqtSlot(object, object)
-    def _on_inference_result(self, annotated_frame, detections) -> None:
-        """Receives annotated frame from RealInferenceWorker, updates CH1 display."""
-        self._center.channel_display.update_channel_frame(0, annotated_frame, self._infer_fps)
+    def _on_inference_result(self, raw_frame, detections) -> None:
+        """Track raw detections, annotate frame, update CH1 display."""
+        if self._tracker is None:
+            return
+
+        tracked, exited = self._tracker.update(detections, raw_frame.shape)
+
+        # Log exited tracks (Phase 2 will commit grades here)
+        for t in exited:
+            log.info(
+                "Track %d exited  lane=%d  class=%d  conf=%.2f",
+                t.global_id, t.lane, t.class_id, t.confidence,
+            )
+
+        annotated = self._annotate_tracked(raw_frame, tracked)
+        self._center.channel_display.update_channel_frame(0, annotated, self._infer_fps)
+
+    @staticmethod
+    def _annotate_tracked(frame, tracked) -> np.ndarray:
+        """
+        Draw bounding boxes, class labels, track IDs and lane badges
+        on the frame after ByteTrack assigns IDs.
+        """
+        import cv2
+        import numpy as np
+
+        # Class colours (BGR): Fresh=green, Processing=amber, Cull=red
+        CLASS_COLORS = [
+            (52, 211, 153),
+            (251, 191, 36),
+            (248, 113, 113),
+        ]
+        CLASS_NAMES = ["Fresh", "Processing", "Cull"]
+
+        out = frame.copy()
+
+        if tracked is None or len(tracked) == 0:
+            return out
+
+        for i in range(len(tracked)):
+            box    = tracked.xyxy[i].astype(int)
+            cls    = int(tracked.class_id[i])   if tracked.class_id   is not None else 0
+            conf   = float(tracked.confidence[i]) if tracked.confidence is not None else 0.0
+            tid    = int(tracked.tracker_id[i])  if tracked.tracker_id is not None else -1
+            lane   = int(tracked.data["lane"][i]) if "lane" in tracked.data else 0
+            color  = CLASS_COLORS[cls % len(CLASS_COLORS)]
+            name   = CLASS_NAMES[cls] if cls < len(CLASS_NAMES) else str(cls)
+
+            # Bounding box
+            cv2.rectangle(out, (box[0], box[1]), (box[2], box[3]), color, 2)
+
+            # Label: "Fresh 0.94  #12003  L2"
+            label = f"{name} {conf:.2f}  #{tid}  L{lane}"
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(out,
+                          (box[0], box[1] - th - 6),
+                          (box[0] + tw + 4, box[1]), color, -1)
+            cv2.putText(out, label,
+                        (box[0] + 2, box[1] - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+
+        return out
 
     @pyqtSlot(float)
     def _on_inference_fps(self, fps: float) -> None:

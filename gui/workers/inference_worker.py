@@ -105,7 +105,7 @@ class RealInferenceWorker(QThread):
       sig_status(str, bool) -- status messages and errors
     """
 
-    sig_result = pyqtSignal(object, object)   # annotated_frame, sv.Detections
+    sig_result = pyqtSignal(object, object)   # raw_frame (numpy BGR), sv.Detections
     sig_fps    = pyqtSignal(float)
     sig_status = pyqtSignal(str, bool)        # message, is_error
 
@@ -226,25 +226,8 @@ class RealInferenceWorker(QThread):
             # Convert to supervision Detections
             detections = sv.Detections.from_ultralytics(results[0])
 
-            # Annotate frame
-            annotated = frame.copy()
-            for i in range(len(detections)):
-                box   = detections.xyxy[i].astype(int)
-                cls   = int(detections.class_id[i]) if detections.class_id is not None else 0
-                conf  = float(detections.confidence[i]) if detections.confidence is not None else 0.0
-                label = f"{class_names.get(cls, str(cls))} {conf:.2f}"
-                color = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
-
-                cv2.rectangle(annotated, (box[0], box[1]), (box[2], box[3]), color, 2)
-                (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
-                cv2.rectangle(annotated,
-                              (box[0], box[1] - th - 6),
-                              (box[0] + tw + 4, box[1]), color, -1)
-                cv2.putText(annotated, label,
-                            (box[0] + 2, box[1] - 4),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 1, cv2.LINE_AA)
-
-            self.sig_result.emit(annotated, detections)
+            # Emit raw frame + detections (annotation happens after tracking in main thread)
+            self.sig_result.emit(frame, detections)
 
             # Compute and report FPS every second
             frame_count += 1
