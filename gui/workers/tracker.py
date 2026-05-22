@@ -121,6 +121,15 @@ class ConveyorTracker:
         """Update FPS parameter. Takes effect on next tracker reset."""
         self._fps = fps
 
+    def set_conveyor_speed(self, apples_per_sec: int) -> None:
+        """
+        Receive updated conveyor speed from the GUI.
+        Stored for future use (e.g. computing expected px/frame displacement
+        for velocity-initialised Kalman seeds in a custom tracker).
+        ByteTrack does not use this directly — it is IoU-based.
+        """
+        self._conveyor_speed_aps = apples_per_sec
+
     def reset(self) -> None:
         """Reset all lane trackers (call between sessions/videos)."""
         for t in self._trackers:

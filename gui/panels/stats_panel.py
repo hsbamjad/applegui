@@ -289,10 +289,10 @@ class MetricsCard(QWidget):
 
         self._speed      = MetricItem("THROUGHPUT",     "-- apple/min",  SUCCESS)
         self._total      = MetricItem("TOTAL GRADED",   "0",             TEXT_1)
-        self._accuracy   = MetricItem("SORT ACCURACY",  "--  %",         ACCENT)
+        self._infer_fps  = MetricItem("INFER FPS",      "-- FPS",        ACCENT)
         self._session    = MetricItem("SESSION TIME",   "00:00:00",      TEXT_2)
 
-        for m in [self._speed, self._total, self._accuracy, self._session]:
+        for m in [self._speed, self._total, self._infer_fps, self._session]:
             layout.addWidget(m)
             sep = QFrame()
             sep.setFrameShape(QFrame.Shape.HLine)
@@ -325,19 +325,19 @@ class MetricsCard(QWidget):
         self._total_n = 0
         self._speed.set_value("-- apple/min")
         self._total.set_value("0")
-        self._accuracy.set_value("--  %")
+        self._infer_fps.set_value("-- FPS")
         self._session.set_value("00:00:00")
 
     def record_grade(self, apples_per_sec_lanes: int) -> None:
         """Called each time a new grade is recorded."""
         self._total_n += 1
         self._total.set_value(str(self._total_n))
-        # Throughput = apples/s × lanes × 60 s/min
         thr = apples_per_sec_lanes * 60
         self._speed.set_value(f"{thr} apple/min")
 
-    def set_accuracy(self, pct: float) -> None:
-        self._accuracy.set_value(f"{pct:.1f} %")
+    def set_infer_fps(self, fps: float) -> None:
+        """Update the INFER FPS metric from RealInferenceWorker throughput."""
+        self._infer_fps.set_value(f"{fps:.1f} FPS")
 
 
 # ── Right Stats Panel ─────────────────────────────────────────────────────────

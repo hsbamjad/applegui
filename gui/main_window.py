@@ -242,6 +242,7 @@ class MainWindow(QMainWindow):
         self._infer_w: RealInferenceWorker | None        = None
         self._tracker: ConveyorTracker | None            = None
         self._infer_fps: float = 0.0
+        self._loading_model_name: str = ""
         self._total        = 0
         self._wb_reverting = False   # True while a revert_white_balance() call is in flight
 
@@ -488,7 +489,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def _on_load_model(self, name: str) -> None:
-        if not name:
+        if not name or "No model" in name:
             return
 
         # Stop any existing inference worker
@@ -502,7 +503,9 @@ class MainWindow(QMainWindow):
         model_path = str(models_dir / name)
 
         self._right.status_group.set_status("AI Model", "warning", f"Loading {name}...")
+        self._left.set_model_loading(True)   # disable button + combo while GPU loads
         self.statusBar().showMessage(f"Loading model: {name}")
+        self._loading_model_name = name      # remember for set_model_loaded callback
 
         self._infer_w = RealInferenceWorker(
             model_path     = model_path,
@@ -583,6 +586,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot(float)
     def _on_inference_fps(self, fps: float) -> None:
         self._infer_fps = fps
+        self._right.metrics_group.set_infer_fps(fps)
         self.statusBar().showMessage(f"Inference: {fps:.1f} FPS")
 
     @pyqtSlot(str, bool)
@@ -590,6 +594,14 @@ class MainWindow(QMainWindow):
         state = "offline" if is_error else "online"
         self._right.status_group.set_status("AI Model", state, msg)
         self.statusBar().showMessage(msg)
+        if is_error:
+            # Re-enable loader so user can try another model
+            self._left.set_model_loading(False)
+        elif "Model loaded" in msg:
+            # Model is in GPU memory and running — update left panel
+            name = getattr(self, "_loading_model_name", "")
+            self._left.set_model_loaded(name)
+            self._left.set_model_loading(False)
 
     @pyqtSlot(bool)
     def _on_sorter_toggle(self, enabled: bool) -> None:
@@ -611,10 +623,12 @@ class MainWindow(QMainWindow):
     def _on_speed_changed(self, speed: int) -> None:
         if self._inf_w:
             self._inf_w.set_speed(speed)
-            self.statusBar().showMessage(
-                f"Speed updated: {speed} apple/s/lane  "
-                f"({speed * 3 * 60} apple/min total)"
-            )
+        if self._tracker:
+            self._tracker.set_conveyor_speed(speed)
+        self.statusBar().showMessage(
+            f"Speed updated: {speed} apple/s/lane  "
+            f"({speed * 3 * 60} apple/min total)"
+        )
 
     @pyqtSlot(int, int, int)
     def _on_exposure_changed(self, ch1_us: int, ch2_us: int, ch3_us: int) -> None:

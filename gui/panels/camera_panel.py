@@ -1391,6 +1391,15 @@ class LeftControlPanel(QWidget):
             f"color: {ACCENT}; font-size: 10px; background: transparent;"
         )
 
+    def set_model_loading(self, loading: bool) -> None:
+        """Disable / re-enable model loader controls during GPU load."""
+        self._btn_load.setEnabled(not loading)
+        self._combo_model.setEnabled(not loading)
+        if loading:
+            self._btn_load.setText("Loading…")
+        else:
+            self._btn_load.setText("Load Model")
+
     def populate_models(self, names: list[str]) -> None:
         self._combo_model.clear()
         if names:
