@@ -16,6 +16,17 @@ camera:
     resolution: [2048, 1536]   # Match JAI Sony IMX252 native res
     replay_folder: null         # Path to real captured frames, or null for synthetic
 
+  # Video simulation mode — replaces live camera with pre-recorded video files.
+  # Set enabled: true and update the three video paths to run without hardware.
+  simulation:
+    enabled: false
+    loop: true          # Loop videos when end is reached
+    fps: 30             # Playback frame rate
+    videos:
+      ch1: "D:/HA/apple_gui/videos/Source0/G1/G1.mp4"
+      ch2: "D:/HA/apple_gui/videos/Source1/G1/G1.avi"
+      ch3: "D:/HA/apple_gui/videos/Source2/G1/G1.avi"
+
   jai:
     # Confirmed hardware (Shuttle PC) — from camera_probe_jai.py output
     ip:          "169.254.100.252"   # Update if DHCP changes

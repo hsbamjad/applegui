@@ -42,6 +42,7 @@ from gui.panels.camera_panel import LeftControlPanel
 from gui.panels.stats_panel  import RightStatsPanel
 from gui.widgets.image_display import MultiChannelDisplay
 from gui.workers.camera_worker import CameraWorker
+from gui.workers.video_worker  import VideoWorker
 from gui.workers.inference_worker import MockInferenceWorker
 
 log = logging.getLogger(__name__)
@@ -107,6 +108,8 @@ class HeaderBar(QWidget):
         """Update badge at runtime to reflect actual camera mode."""
         if mode == "jai":
             bg, bdr, tc, txt = "#0D2218", "#1A4832", SUCCESS, "JAI  LIVE"
+        elif mode == "simulation":
+            bg, bdr, tc, txt = "#1F1A00", "#4A3C00", "#FBBF24", "VIDEO  SIM"
         else:
             bg, bdr, tc, txt = "#1C2240", "#2E3D68", "#6A7899", "MOCK MODE"
         self._badge.setText(f"  {txt}  ")
@@ -231,8 +234,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._cfg    = _load_config()
         self._mode   = self._cfg.get("camera", {}).get("mode", "mock")
-        self._cam_w:  CameraWorker | None        = None
-        self._inf_w:  MockInferenceWorker | None = None
+        self._sim_cfg = self._cfg.get("camera", {}).get("simulation", {})
+        self._is_sim  = self._sim_cfg.get("enabled", False)
+        self._cam_w:  CameraWorker | VideoWorker | None = None
+        self._inf_w:  MockInferenceWorker | None        = None
         self._total        = 0
         self._wb_reverting = False   # True while a revert_white_balance() call is in flight
 
@@ -348,21 +353,36 @@ class MainWindow(QMainWindow):
         sg.set_status("Camera", "warning", "Connecting…")
         self.statusBar().showMessage("Starting camera pipeline…")
 
-        # ── Camera worker ──────────────────────────────────────────
+        # ── Camera / Video worker ──────────────────────────────────
         display_fps = self._cfg.get("display", {}).get("fps_limit", 24)
-        self._cam_w = CameraWorker(
-            config      = self._cfg.get("camera", {}),
-            display_fps = display_fps,
-        )
+
+        if self._is_sim:
+            sim_vids = self._sim_cfg.get("videos", {})
+            sim_fps  = self._sim_cfg.get("fps", 30)
+            sim_loop = self._sim_cfg.get("loop", True)
+            self._cam_w = VideoWorker(
+                path_ch1 = sim_vids.get("ch1", ""),
+                path_ch2 = sim_vids.get("ch2", ""),
+                path_ch3 = sim_vids.get("ch3", ""),
+                fps      = sim_fps,
+                loop     = sim_loop,
+            )
+            self._header.set_mode("simulation")
+        else:
+            self._cam_w = CameraWorker(
+                config      = self._cfg.get("camera", {}),
+                display_fps = display_fps,
+            )
+            self._cam_w.sig_exposure_readback.connect(self._on_exposure_readback)
+            self._cam_w.sig_gains_readback.connect(self._on_gains_readback)
+            self._cam_w.sig_cam_fps.connect(self._on_cam_fps)
+            self._cam_w.sig_block_ids.connect(self._on_block_ids)
+            self._cam_w.sig_wb_readback.connect(self._on_wb_readback)
+            self._cam_w.sig_black_level_readback.connect(self._on_black_level_readback)
+            self._cam_w.sig_roi_readback.connect(self._on_roi_readback)
+
         self._cam_w.sig_frame.connect(self._on_frame)
         self._cam_w.sig_status.connect(self._on_cam_status)
-        self._cam_w.sig_exposure_readback.connect(self._on_exposure_readback)
-        self._cam_w.sig_gains_readback.connect(self._on_gains_readback)
-        self._cam_w.sig_cam_fps.connect(self._on_cam_fps)
-        self._cam_w.sig_block_ids.connect(self._on_block_ids)
-        self._cam_w.sig_wb_readback.connect(self._on_wb_readback)
-        self._cam_w.sig_black_level_readback.connect(self._on_black_level_readback)
-        self._cam_w.sig_roi_readback.connect(self._on_roi_readback)
         self._cam_w.start()
 
         # ── Inference worker ───────────────────────────────────────
@@ -480,6 +500,8 @@ class MainWindow(QMainWindow):
     @pyqtSlot(int, int, int)
     def _on_exposure_changed(self, ch1_us: int, ch2_us: int, ch3_us: int) -> None:
         """Forward independent per-channel exposure changes to camera while streaming."""
+        if self._is_sim:
+            return  # no hardware to update in simulation mode
         running = self._cam_w is not None and self._cam_w.isRunning()
         if running:
             self._cam_w.set_exposures(ch1_us, ch2_us, ch3_us)
@@ -491,20 +513,16 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(float)
     def _on_fps_changed(self, fps: float) -> None:
-        """
-        Set camera hardware acquisition FPS. Does NOT change display render rate.
-        Firmware will silently clamp ExposureTime if current value exceeds
-        1,000,000/fps. CameraWorker reads back actual ExposureTime and emits
-        sig_exposure_readback to sync the GUI spinbox.
-        """
         running = self._cam_w is not None and self._cam_w.isRunning()
-        if running:
+        if running and isinstance(self._cam_w, CameraWorker):
             self._cam_w.set_fps(fps)
             max_exp = int(1_000_000 / max(fps, 1))
             self.statusBar().showMessage(
-                f"Camera hardware FPS set: {fps:.0f} FPS  —  "
+                f"Camera hardware FPS set: {fps:.0f} FPS  "
                 f"max exposure: {max_exp:,} µs"
             )
+        elif self._is_sim:
+            self.statusBar().showMessage("FPS: not applicable in video simulation mode")
         else:
             self.statusBar().showMessage("Frame rate: camera not connected — connect first")
 
