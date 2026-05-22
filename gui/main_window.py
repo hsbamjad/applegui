@@ -43,7 +43,7 @@ from gui.panels.stats_panel  import RightStatsPanel
 from gui.widgets.image_display import MultiChannelDisplay
 from gui.workers.camera_worker import CameraWorker
 from gui.workers.video_worker  import VideoWorker
-from gui.workers.inference_worker import MockInferenceWorker
+from gui.workers.inference_worker import MockInferenceWorker, RealInferenceWorker
 
 log = logging.getLogger(__name__)
 
@@ -236,8 +236,10 @@ class MainWindow(QMainWindow):
         self._mode   = self._cfg.get("camera", {}).get("mode", "mock")
         self._sim_cfg = self._cfg.get("camera", {}).get("simulation", {})
         self._is_sim  = self._sim_cfg.get("enabled", False)
-        self._cam_w:  CameraWorker | VideoWorker | None = None
-        self._inf_w:  MockInferenceWorker | None        = None
+        self._cam_w:   CameraWorker | VideoWorker | None = None
+        self._inf_w:   MockInferenceWorker | None        = None
+        self._infer_w: RealInferenceWorker | None        = None
+        self._infer_fps: float = 0.0
         self._total        = 0
         self._wb_reverting = False   # True while a revert_white_balance() call is in flight
 
@@ -402,6 +404,9 @@ class MainWindow(QMainWindow):
         )
 
     def _stop_pipeline(self) -> None:
+        if self._infer_w:
+            self._infer_w.stop()
+            self._infer_w = None
         if self._inf_w:
             self._inf_w.stop()
             self._inf_w = None
@@ -425,6 +430,9 @@ class MainWindow(QMainWindow):
     @pyqtSlot(object, object, object, float)
     def _on_frame(self, ch1, ch2, ch3, fps: float) -> None:
         self._center.channel_display.update_frames(ch1, ch2, ch3, fps)
+        # Feed frames to inference worker if running
+        if self._infer_w is not None and self._infer_w.isRunning():
+            self._infer_w.enqueue(ch1, ch2, ch3)
 
     @pyqtSlot(str, bool)
     def _on_cam_status(self, msg: str, is_error: bool) -> None:
@@ -468,9 +476,49 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def _on_load_model(self, name: str) -> None:
-        self._right.status_group.set_status("AI Model", "warning", "Loading…")
+        if not name:
+            return
+
+        # Stop any existing inference worker
+        if self._infer_w is not None:
+            self._infer_w.stop()
+            self._infer_w = None
+
+        from pathlib import Path
+        inf_cfg    = self._cfg.get("inference", {})
+        models_dir = Path(inf_cfg.get("model_dir", "models/"))
+        model_path = str(models_dir / name)
+
+        self._right.status_group.set_status("AI Model", "warning", f"Loading {name}...")
         self.statusBar().showMessage(f"Loading model: {name}")
-        # TODO Phase 4: InferenceWorker with real YOLO model
+
+        self._infer_w = RealInferenceWorker(
+            model_path     = model_path,
+            conf_threshold = inf_cfg.get("confidence_threshold", 0.5),
+            iou_threshold  = inf_cfg.get("iou_threshold", 0.45),
+            device         = inf_cfg.get("device", "cuda"),
+            input_channel  = 0,   # CH1 Color
+        )
+        self._infer_w.sig_result.connect(self._on_inference_result)
+        self._infer_w.sig_fps.connect(self._on_inference_fps)
+        self._infer_w.sig_status.connect(self._on_inference_status)
+        self._infer_w.start()
+
+    @pyqtSlot(object, object)
+    def _on_inference_result(self, annotated_frame, detections) -> None:
+        """Receives annotated frame from RealInferenceWorker, updates CH1 display."""
+        self._center.channel_display.update_channel_frame(0, annotated_frame, self._infer_fps)
+
+    @pyqtSlot(float)
+    def _on_inference_fps(self, fps: float) -> None:
+        self._infer_fps = fps
+        self.statusBar().showMessage(f"Inference: {fps:.1f} FPS")
+
+    @pyqtSlot(str, bool)
+    def _on_inference_status(self, msg: str, is_error: bool) -> None:
+        state = "offline" if is_error else "online"
+        self._right.status_group.set_status("AI Model", state, msg)
+        self.statusBar().showMessage(msg)
 
     @pyqtSlot(bool)
     def _on_sorter_toggle(self, enabled: bool) -> None:

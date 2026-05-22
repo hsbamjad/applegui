@@ -408,6 +408,13 @@ class MultiChannelDisplay(QWidget):
         for panel, frame in zip(self._panels, [ch1, ch2, ch3]):
             panel.update_frame(frame, fps)
 
+    def update_channel_frame(
+        self, channel_idx: int, frame: np.ndarray, fps: float = 0.0
+    ) -> None:
+        """Update a single channel panel with an annotated frame (e.g. from inference)."""
+        if 0 <= channel_idx < len(self._panels):
+            self._panels[channel_idx].update_frame(frame, fps)
+
     def reset_all(self) -> None:
         for panel in self._panels:
             panel.reset()
