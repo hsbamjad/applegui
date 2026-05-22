@@ -512,7 +512,7 @@ class MainWindow(QMainWindow):
             conf_threshold = inf_cfg.get("confidence_threshold", 0.5),
             iou_threshold  = inf_cfg.get("iou_threshold", 0.45),
             device         = inf_cfg.get("device", "cuda"),
-            input_channel  = 0,   # CH1 Color
+            input_mode     = inf_cfg.get("input_mode", "RB-nir1"),
         )
         self._infer_w.sig_result.connect(self._on_inference_result)
         self._infer_w.sig_fps.connect(self._on_inference_fps)

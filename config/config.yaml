@@ -128,10 +128,12 @@ sorter:
 # ══════════════════════════════════════════════════════════════
 inference:
   model_dir: "models/"
-  default_model: null              # Filename of model to auto-load on startup
+  default_model: "best.pt"         # Auto-load on startup
   device: "cuda"                   # "cuda" | "cpu"
   confidence_threshold: 0.5
   iou_threshold: 0.45              # NMS IoU threshold
+  input_mode: "RB-nir1"           # Band combo model was trained on
+                                   # Options: RB-nir1 | RG-nir1 | R-nir1-nir2 | RGB | CH1
 
   # Multi-view weighted voting (apple tracked across multiple frames)
   tracking:
