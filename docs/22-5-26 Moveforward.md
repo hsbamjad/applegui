@@ -9,13 +9,13 @@
 
 ```mermaid
 flowchart TD
-    CAM["JAI FS-3200T Camera\n3-Channel · 10GigE · up to 107 FPS"]
+    CAM["JAI FS-3200T Camera\n3-Channel Multispectral · 30/60 FPS"]
     GUI["Operator GUI\nCamera Controls · ROI · Conveyor · Logging"]
     QUEUE["Frame Queue\nThread-safe buffer"]
-    INFER["YOLO Inference Worker\nTensorRT Engine · GPU · Segmentation"]
-    TRACK["Multi-Object Tracker\nKalman Filter + Hungarian Algorithm\nConveyor-speed-aware · Per-lane · Left to Right"]
-    AGG["Grade Aggregator\nCollect per-frame predictions per apple ID\nCommit final grade on apple exit"]
-    LOG["Result Logger\nPer-apple: ID · Lane · Grade · Timestamp · Confidence"]
+    INFER["YOLO Inference Worker\nGPU-accelerated · Segmentation"]
+    TRACK["Multi-Object Tracker\nByteTrack · Conveyor-speed-aware\nPer-lane · Left to Right"]
+    AGG["Grade Aggregator\nPer apple ID · Majority vote\nFinal grade on apple exit"]
+    LOG["Result Logger\nPer-apple: ID · Lane · Grade · Timestamp"]
     TIMER["Sorter Timer\nDelay = Distance / Speed"]
     SORTER["Sorter Gate\nLane 1 / 2 / 3 · Hardware Trigger"]
 
