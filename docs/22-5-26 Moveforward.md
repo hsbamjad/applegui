@@ -72,9 +72,54 @@ The full operator interface is built and functional. A researcher can connect to
 - All 3 channels verified sharp and well-exposed on real apples
 
 ### Existing: Offline Test Script (`model_test.py`)
-A standalone prototype validating YOLO detection and custom tracking on saved image sequences. Confirmed that detections are accurate and that the Kalman + Hungarian tracker maintains consistent apple IDs across frames with a left-to-right directional constraint matching the conveyor.
+A standalone prototype provided by a colleague, used to validate that YOLO detections work and that a basic tracker can maintain apple IDs on saved image sequences. Its purpose was to answer: does the model detect apples? That question is now answered.
 
-> **Limitation:** This script is an offline demo. It has no live camera input, no grade aggregation, no sorter trigger, and no result logging. It answers "does this work in principle?" not "is this ready to deploy?"
+**What the script contributes vs. what it cannot:**
+
+| Component | Reuse Value | Reason |
+|---|---|---|
+| YOLO `.engine` model | High | The trained model is fully independent of the script |
+| Directional constraint concept | Medium | Left-to-right entry/exit logic is correct in principle |
+| Custom Kalman + Hungarian tracker | Low | Hand-written, zero velocity init, no grade history, no lane awareness, untested at real conveyor speed |
+| Grade aggregation | None | Does not exist in the script |
+| Threading / pipeline | None | Single-threaded, offline only |
+| Qt integration | None | Uses a raw OpenCV window, not connected to the GUI |
+
+> The script served its purpose as a proof of concept. The production pipeline will be built clean, keeping the trained model and the directional logic concept, but replacing the tracker and building all missing layers from scratch with the right tools.
+
+---
+
+## Technology Decisions
+
+Before starting the production pipeline, the following architectural decisions were made:
+
+### Tracker: supervision + ByteTrack (replacing custom Kalman + Hungarian)
+
+The custom tracker in the test script is a manual reimplementation of the SORT algorithm. It has known weaknesses: zero velocity initialization, hardcoded pixel thresholds, no handling of partial occlusions, and no two-pass association. On a real conveyor with apples in close proximity, these weaknesses cause ID swaps and lost tracks.
+
+**ByteTrack** is a production-grade tracker specifically designed for dense, fast-moving object scenarios. It uses a two-pass association strategy: high-confidence detections are matched first, then low-confidence detections are matched against unmatched tracks in a second pass. This catches apples that are partially occluded or at frame edges, which are exactly the failure cases on a conveyor belt.
+
+The **supervision** library (Roboflow) wraps ByteTrack and integrates directly with ultralytics YOLO output:
+
+```python
+import supervision as sv
+tracker = sv.ByteTracker()
+detections = sv.Detections.from_ultralytics(yolo_result)
+tracked = tracker.update_with_detections(detections)
+```
+
+This replaces approximately 150 lines of fragile custom tracker code with 4 lines backed by a battle-tested implementation.
+
+### Inference: ultralytics YOLO + TensorRT (unchanged)
+The existing `.engine` model is already the correct approach. TensorRT-compiled inference on GPU is the right choice for 60 FPS real-time throughput. No change here.
+
+### Pipeline threading: QThread within existing PyQt6 GUI
+Inference and tracking will run on a dedicated `QThread`. The Qt signal/slot system will carry results back to the main UI thread safely. This integrates cleanly with the existing GUI without requiring a separate process or framework.
+
+### What was considered and ruled out
+- **NVIDIA DeepStream:** Enterprise-grade pipeline SDK. Ruled out because it is Linux/Jetson-biased, does not integrate with the JAI eBUS SDK easily, and is overkill for a 3-lane fixed-camera system
+- **Rebuilding the custom tracker:** Already know its limitations. Rebuilding it would reproduce the same problems at the cost of additional tuning time
+- **Keeping model_test.py as the base:** The script is single-threaded, offline, and missing three of the five required pipeline layers. It is not a viable base for extension
 
 ---
 
@@ -108,16 +153,15 @@ The system can see and stream apples. It cannot yet grade or sort them.
 - **AI Model loader** (UI placeholder exists): wire the model path selector and Load button to actually instantiate the YOLO TensorRT engine and pass it to the inference worker
 - **Conveyor speed and Camera-to-Gate distance** (UI placeholder exists): wire these values into the tracker velocity initialization and sorter delay calculation
 
-**Key tasks: Conveyor-Speed-Aware Tracker**
+**Key tasks: Tracker (ByteTrack via supervision)**
 
-This is a critical part of Phase 1 that is missing from the current test script. The existing tracker initializes every apple with zero velocity and lets the Kalman filter figure it out over several frames. On a live conveyor this causes problems: the first few frames per apple will have poor predictions, leading to ID swaps or missed matches especially when apples are close together.
+The custom tracker from the test script is replaced entirely with ByteTrack, integrated through the supervision library. ByteTrack is a two-pass tracker: it first matches high-confidence detections to existing tracks, then makes a second pass to recover partially occluded or low-confidence detections that would otherwise be lost. This directly addresses the failure mode of apples in close proximity on the conveyor.
 
-The fix is to use the conveyor speed (already stored in the GUI) to initialize the tracker properly:
+The conveyor-specific logic from the test script that is worth keeping is reimplemented on top of ByteTrack:
 
-- **Velocity initialization:** Convert conveyor speed (cm/s) to pixels/frame using the known camera height and FPS. Feed this as the initial `vx` into the Kalman filter instead of zero. The tracker immediately knows which direction and how fast each apple is moving
-- **Dynamic max_speed threshold:** Instead of a hardcoded pixel limit, compute the maximum allowed frame-to-frame displacement from conveyor speed. This prevents false matches and ghost tracks at higher belt speeds
-- **Per-lane spatial constraints:** Divide the frame horizontally into 3 lane zones. A tracker in Lane 2 should never match a detection in Lane 1. This eliminates cross-lane ID confusion entirely
-- **Entry zone tied to conveyor direction:** New objects are only created when they appear on the left edge, which the existing script does, but the entry threshold should also scale with frame rate so it remains consistent regardless of FPS setting
+- **Per-lane spatial constraints:** The frame is divided into 3 horizontal lane zones. Tracks are assigned a lane on creation and only match detections within that lane, preventing cross-lane ID confusion
+- **Velocity initialization from conveyor speed:** The GUI conveyor speed (cm/s) is converted to pixels/frame at startup and passed to the tracker as the expected horizontal displacement. This replaces the zero-velocity cold start of the original
+- **Entry and exit zones:** New tracks are only created at the left edge. Tracks that reach the right edge are marked for grade commitment before removal
 
 **Done when:** Tracked bounding boxes with stable IDs appear on live apples in the GUI at camera speed, with IDs not swapping even when apples are adjacent or moving fast.
 
@@ -163,8 +207,10 @@ The fix is to use the conveyor speed (already stored in the GUI) to initialize t
 |---|---|
 | Can we skip Phase 1 and go straight to sorting? | No. There is no grade output to sort by |
 | Can Phase 3 hardware work be done in parallel? | Timing math and physical wiring yes. Software integration no |
-| Why not use the existing `model_test.py` directly? | It is single-threaded, folder-based, and has no grade aggregation. Not adaptable to live streaming without a full rewrite |
-| What is the highest-risk unknown? | Whether the tracker holds stable IDs at real conveyor speed with real apple spacing. Must be validated in Phase 1 before committing to the Phase 3 architecture |
+| Why not extend `model_test.py` directly? | Single-threaded, offline, missing three of five pipeline layers. Not a viable base |
+| Why ByteTrack over the custom tracker? | Two-pass association handles occlusions and dense apples. The custom tracker has zero velocity init and no lane awareness |
+| Why supervision library over writing ByteTrack manually? | Production-tested implementation, integrates with ultralytics YOLO in 4 lines, no reinventing the wheel |
+| What is the highest-risk unknown? | Whether ByteTrack ID stability holds at real conveyor speed with real apple spacing. Must be validated in Phase 1 before committing to Phase 3 |
 
 ---
 
