@@ -11,6 +11,8 @@ pyqtgraph==0.14.0
 --extra-index-url https://download.pytorch.org/whl/cu124
 torch==2.6.0+cu124
 torchvision==0.21.0+cu124
+ultralytics==8.4.53
+supervision==0.28.0
 
 # ── Hardware Control & Acquisition ────────────────────────────────────────────
 harvesters==1.4.3
