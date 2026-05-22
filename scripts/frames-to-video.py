@@ -101,13 +101,23 @@ def batch_process(source_root, output_root, fps=60, lossless=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert image frames to video. Single folder or batch (all subgroups)."
+        description=(
+            "Convert image frames to video.\n\n"
+            "Single folder (default):\n"
+            "  python frames-to-video.py -i G:/Haseeb/pic/Source0/G1 -o D:/HA/apple_gui/videos/Source0/G1\n\n"
+            "Batch (all subfolders at once):\n"
+            "  python frames-to-video.py -i G:/Haseeb/pic/Source0 -o D:/HA/apple_gui/videos/Source0 --batch\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     parser.add_argument("--input",  "-i", type=str, required=True,
-                        help="Input folder. In batch mode, this is the root containing G1/G2... subfolders.")
+                        help="Input folder of images (single mode) or root folder containing G1/G2... (batch mode).")
     parser.add_argument("--output", "-o", type=str, required=True,
-                        help="Output folder. In batch mode, group subfolders are created here automatically.")
+                        help="Output folder. File is saved here as <folder_name>.mp4 (or .avi with --lossless).")
+    parser.add_argument("--name",   "-n", type=str, default=None,
+                        help="(Single mode only) Custom output filename without extension. "
+                             "Defaults to the input folder name.")
     parser.add_argument("--fps",    "-f", type=int, default=60,
                         help="Frame rate (default: 60).")
     parser.add_argument("--lossless", "-l", action="store_true",
@@ -123,12 +133,17 @@ def main():
 
     os.makedirs(args.output, exist_ok=True)
 
+    ext = ".avi" if args.lossless else ".mp4"
+
     if args.batch:
+        if args.name:
+            print("Note: --name is ignored in batch mode (each group uses its own folder name).")
         batch_process(args.input, args.output, fps=args.fps, lossless=args.lossless)
     else:
-        ext = ".avi" if args.lossless else ".mp4"
-        folder_name   = os.path.basename(args.input.rstrip("/\\"))
-        output_file   = os.path.join(args.output, folder_name + ext)
+        # Single folder mode
+        stem          = args.name or os.path.basename(args.input.rstrip("/\\"))
+        output_file   = os.path.join(args.output, stem + ext)
+        print(f"[Single] {args.input}")
         create_video_from_frames(args.input, output_file, fps=args.fps, lossless=args.lossless)
 
 
