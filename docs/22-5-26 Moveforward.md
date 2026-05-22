@@ -62,14 +62,9 @@ The full operator interface is built and functional. A researcher can connect to
 
 **System Controls**
 - Connect / Disconnect with status indicator
-- Conveyor speed and Camera-to-Gate distance settings
-- AI Model loader (YOLO `.pt` / `.engine`)
-- Sorter enable / mode selector
-- Data logging toggle
 
 **Live Display**
 - 3-channel side-by-side view (Color · NIR1 · NIR2)
-- Stats panel: grade summary, throughput, recent results, live metrics
 
 ### Completed: Hardware Deployment
 - Camera physically mounted on conveyor at optimal height
@@ -110,6 +105,8 @@ The system can see and stream apples. It cannot yet grade or sort them.
 - Inference runs on a dedicated thread. GPU-heavy work cannot run on Qt's main UI thread without freezing the interface
 - Thread-safe frame queue between camera and inference worker to handle any FPS mismatch
 - Bounding boxes and IDs overlaid on the live display
+- **AI Model loader** (UI placeholder exists): wire the model path selector and Load button to actually instantiate the YOLO TensorRT engine and pass it to the inference worker
+- **Conveyor speed and Camera-to-Gate distance** (UI placeholder exists): wire these values into the tracker velocity initialization and sorter delay calculation
 
 **Key tasks: Conveyor-Speed-Aware Tracker**
 
@@ -136,9 +133,10 @@ The fix is to use the conveyor speed (already stored in the GUI) to initialize t
 - Each tracked object accumulates class and confidence values per frame
 - On apple exit (right edge of frame): compute final grade via majority vote or confidence-weighted average
 - Final grade emitted as a signal with apple ID and lane
-- Result logged to the stats panel and CSV
+- **Stats panel** (UI placeholder exists): wire grade summary, throughput counter, recent results list, and live metrics to real signal outputs from the aggregator
+- **Data logging toggle** (UI placeholder exists): wire the toggle to actually open a CSV file and write one row per committed apple grade
 
-**Done when:** Each apple that passes through receives exactly one committed grade in the log.
+**Done when:** Each apple that passes through receives exactly one committed grade in the log, the stats panel updates in real time, and the CSV is written when logging is enabled.
 
 ---
 
@@ -149,9 +147,10 @@ The fix is to use the conveyor speed (already stored in the GUI) to initialize t
 **Why last:** The sorter's input is the grade output. Building this before Phase 2 means testing against simulated or fake grades, and any timing issues would be impossible to attribute correctly. Separating the layers ensures each can be debugged in isolation.
 
 **Key tasks:**
-- Delay = Camera-to-Gate distance / Conveyor speed (parameters already in GUI)
+- Delay = Camera-to-Gate distance / Conveyor speed (values come from the now-wired GUI controls in Phase 1)
 - Per-lane gate mapping: Lane 1 / 2 / 3 to corresponding actuator
 - Hardware interface (GPIO / PLC / relay) for physical gate trigger
+- **Sorter enable / mode selector** (UI placeholder exists): wire the enable toggle and mode dropdown to actually arm/disarm the gate trigger logic
 - Safety default: if tracker loses an apple or grade is uncertain, route to reject lane
 
 **Done when:** Real apples are physically sorted into correct bins, end to end.
