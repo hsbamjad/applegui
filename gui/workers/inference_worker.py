@@ -12,8 +12,8 @@ Aggregator are fully wired.
 
 from __future__ import annotations
 
-import queue
 import random
+import threading
 import time
 import logging
 
@@ -93,9 +93,10 @@ class RealInferenceWorker(QThread):
     """
     Live YOLO inference worker for Phase 1+.
 
-    Runs on a dedicated QThread. Accepts frames from a thread-safe queue
-    (maxsize=2 — drops stale frames if GPU falls behind camera FPS).
-    Emits an annotated frame and raw supervision Detections per pass.
+    Runs on a dedicated QThread.  Accepts frames via a single-slot atomic
+    buffer — enqueue() simply overwrites the slot with the latest frame,
+    so the inference thread always processes the MOST RECENT frame and never
+    accumulates a backlog that would stall the GUI.
 
     Signals:
       sig_result(annotated_frame, detections)
@@ -122,41 +123,39 @@ class RealInferenceWorker(QThread):
         conf_threshold: float = 0.5,
         iou_threshold:  float = 0.45,
         device: str = "cuda",
-        input_mode: str = "RB-nir1",  # band combo the model was trained on
+        input_mode: str = "RB-nir1",
+        model_imgsz: int = 640,
     ) -> None:
         super().__init__()
-        self._model_path = model_path
-        self._conf       = conf_threshold
-        self._iou        = iou_threshold
-        self._device     = device
-        self._input_mode = input_mode
-        self._running    = False
-        self._queue: queue.Queue = queue.Queue(maxsize=2)
+        self._model_path  = model_path
+        self._conf        = conf_threshold
+        self._iou         = iou_threshold
+        self._device      = device
+        self._input_mode  = input_mode
+        self._model_imgsz = model_imgsz
+        self._running     = False
+        self._lock        = threading.Lock()
+        self._latest      = None
+        self._has_frame   = threading.Event()
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     def enqueue(self, ch1, ch2, ch3) -> None:
         """
-        Push all 3 channel frames to the inference queue.
-        Non-blocking: drops the oldest entry if queue is full.
+        Overwrite the single-slot buffer with the latest frames.
+        O(1), non-blocking — stale frames are simply replaced, never queued.
         """
         if ch1 is None:
             return
-        try:
-            self._queue.put_nowait((ch1, ch2, ch3))
-        except queue.Full:
-            try:
-                self._queue.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                self._queue.put_nowait((ch1, ch2, ch3))
-            except queue.Full:
-                pass
+        with self._lock:
+            self._latest = (ch1, ch2, ch3)
+        self._has_frame.set()
 
     def _prepare_input(self, ch1, ch2, ch3) -> np.ndarray:
         """
         Build a 3-channel uint8 numpy array for YOLO based on input_mode.
+        Frames are resized to model_imgsz BEFORE stacking to reduce memory
+        bandwidth (e.g. 2048×1536 → 640×480 = 23× less data per channel).
 
         Channel layout from camera:
           ch1 = Source0  BGR color frame  (~660 nm visible)
@@ -170,8 +169,19 @@ class RealInferenceWorker(QThread):
           'RGB'         Full BGR color frame (ch1 as-is)
           'CH1'         ch1 as-is (fallback)
         """
+        # Resize to YOLO input size first — all subsequent ops are on small frames
+        imgsz = getattr(self, '_model_imgsz', 640)
+        h0, w0 = ch1.shape[:2]
+        scale  = imgsz / max(h0, w0)
+        if scale < 1.0:
+            nw, nh = int(w0 * scale), int(h0 * scale)
+            ch1 = cv2.resize(ch1, (nw, nh), interpolation=cv2.INTER_LINEAR)
+            if ch2 is not None:
+                ch2 = cv2.resize(ch2, (nw, nh), interpolation=cv2.INTER_LINEAR)
+            if ch3 is not None:
+                ch3 = cv2.resize(ch3, (nw, nh), interpolation=cv2.INTER_LINEAR)
+
         def _to_gray(f):
-            """Ensure frame is 2-D grayscale uint8."""
             if f is None:
                 return np.zeros(ch1.shape[:2], dtype=np.uint8)
             if f.dtype != np.uint8:
@@ -185,38 +195,33 @@ class RealInferenceWorker(QThread):
 
         mode = self._input_mode.lower()
 
-        # ch1 is BGR from OpenCV: index 0=B, 1=G, 2=R
         if mode == "rb-nir1":
-            R    = ch1[:, :, 2]
-            B    = ch1[:, :, 0]
-            N1   = _to_gray(ch2)
+            R  = ch1[:, :, 2]
+            B  = ch1[:, :, 0]
+            N1 = _to_gray(ch2)
             return np.stack([R, B, N1], axis=2)
 
         elif mode == "rg-nir1":
-            R    = ch1[:, :, 2]
-            G    = ch1[:, :, 1]
-            N1   = _to_gray(ch2)
+            R  = ch1[:, :, 2]
+            G  = ch1[:, :, 1]
+            N1 = _to_gray(ch2)
             return np.stack([R, G, N1], axis=2)
 
         elif mode == "r-nir1-nir2":
-            R    = ch1[:, :, 2]
-            N1   = _to_gray(ch2)
-            N2   = _to_gray(ch3)
+            R  = ch1[:, :, 2]
+            N1 = _to_gray(ch2)
+            N2 = _to_gray(ch3)
             return np.stack([R, N1, N2], axis=2)
 
         elif mode == "rgb":
             return _ensure_bgr(ch1)
 
-        else:  # 'CH1' or unknown — pass ch1 unchanged
+        else:
             return _ensure_bgr(ch1)
 
     def stop(self) -> None:
         self._running = False
-        # Unblock the queue.get() call in run() so the thread exits cleanly
-        try:
-            self._queue.put_nowait(None)
-        except queue.Full:
-            pass
+        self._has_frame.set()   # unblock the wait() call in run()
         self.wait(5000)
 
     # ── QThread entry point ──────────────────────────────────────────────────
@@ -249,13 +254,17 @@ class RealInferenceWorker(QThread):
         fps_start      = time.perf_counter()
 
         while self._running:
-            try:
-                item = self._queue.get(timeout=0.5)
-            except queue.Empty:
+            # Sleep until a frame arrives (or 0.5 s timeout to check _running)
+            if not self._has_frame.wait(timeout=0.5):
                 continue
+            self._has_frame.clear()
+
+            with self._lock:
+                item = self._latest
+                self._latest = None
 
             if item is None:
-                break
+                continue
 
             ch1, ch2, ch3 = item
 
