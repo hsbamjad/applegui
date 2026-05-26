@@ -515,6 +515,15 @@ class MainWindow(QMainWindow):
             self._infer_w.stop()
             self._infer_w = None
 
+        # Stop mock worker — real inference takes over all stats from here
+        if self._inf_w is not None:
+            self._inf_w.stop()
+            self._inf_w = None
+            # Clear mock data from stats panel so only real data shows
+            self._right.grade_summary.reset()
+            self._right.results_group.clear_results()
+            self._right.metrics_group.reset()
+
         from pathlib import Path
         inf_cfg    = self._cfg.get("inference", {})
         models_dir = Path(inf_cfg.get("model_dir", "models/"))
@@ -537,14 +546,14 @@ class MainWindow(QMainWindow):
         self._infer_w.sig_status.connect(self._on_inference_status)
         self._infer_w.start()
 
-    # ── Class colours (BGR): 0=Cull-red  1=Fresh-green  2=Processing-amber ──
+    # ── Class colours (BGR): 0=Fresh-green  1=Processing-amber  2=Cull-red ──
     _CLASS_COLORS = [
-        (248, 113, 113),
-        (52,  211, 153),
-        (251, 191,  36),
+        (52,  211, 153),   # 0 Fresh      — green
+        (251, 191,  36),   # 1 Processing — amber
+        (248, 113, 113),   # 2 Cull       — red
     ]
-    _CLASS_NAMES = ["Cull", "Fresh", "Processing"]
-    _OUTLET_MAP  = {"Cull": "C", "Fresh": "A", "Processing": "B"}
+    _CLASS_NAMES = ["Fresh", "Processing", "Cull"]
+    _OUTLET_MAP  = {"Fresh": "A", "Processing": "B", "Cull": "C"}
 
     @pyqtSlot(object)
     def _on_inference_result(self, result) -> None:

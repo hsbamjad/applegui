@@ -51,7 +51,7 @@ class AppleTracker:
       - exit-line grade commit with duplicate suppression
     """
 
-    CLASS_NAMES = ["Cull", "Fresh", "Processing"]   # index 0/1/2 from best.pt
+    CLASS_NAMES = ["Fresh", "Processing", "Cull"]   # index 0/1/2 from best.pt
 
     def __init__(
         self,
