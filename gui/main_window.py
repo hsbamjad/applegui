@@ -394,11 +394,12 @@ class MainWindow(QMainWindow):
         self._cam_w.start()
 
         # ── Conveyor tracker ───────────────────────────────────────
-        inf_cfg     = self._cfg.get("inference", {})
+        inf_cfg      = self._cfg.get("inference", {})
         inf_tracking = inf_cfg.get("tracking", {})
+        self._exit_x_frac = inf_tracking.get("grade_line_x", 0.85)
         self._tracker = ConveyorTracker(
             n_lanes          = self._cfg.get("conveyor", {}).get("lanes", 3),
-            exit_x_fraction  = inf_tracking.get("grade_line_x", 0.85),
+            exit_x_fraction  = self._exit_x_frac,
             min_frames       = inf_tracking.get("min_frames", 8),
         )
 
@@ -573,6 +574,28 @@ class MainWindow(QMainWindow):
         self._center.channel_display.update_channel_frame(0, ann_ch1, fps)
         self._center.channel_display.update_channel_frame(1, ann_ch2, fps)
         self._center.channel_display.update_channel_frame(2, ann_ch3, fps)
+
+    @staticmethod
+    def _draw_count_line(frame: np.ndarray, exit_x_frac: float, flash: bool = False) -> np.ndarray:
+        """
+        Draw a vertical counting line at exit_x_frac * frame_width.
+        Same visual style as the chestnut pipeline:
+          - Two thin yellow band lines at ±30 px
+          - One thick center line: blue normally, green when flashing (grade committed)
+        """
+        import cv2
+        if frame is None:
+            return frame
+        h, w = frame.shape[:2]
+        x      = int(w * exit_x_frac)
+        offset = 30
+        # Band lines
+        cv2.line(frame, (x - offset, 0), (x - offset, h), (0, 255, 255), 1)  # yellow
+        cv2.line(frame, (x + offset, 0), (x + offset, h), (0, 255, 255), 1)  # yellow
+        # Center line
+        color = (0, 255, 0) if flash else (255, 0, 0)                         # green or blue
+        cv2.line(frame, (x, 0), (x, h), color, 2)
+        return frame
 
     def _annotate_tracked(self, frame: np.ndarray, active: list) -> np.ndarray:
         """
