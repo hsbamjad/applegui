@@ -591,16 +591,18 @@ class MainWindow(QMainWindow):
 
     def _annotate_tracked(self, frame: np.ndarray, active: list) -> np.ndarray:
         """
-        Draw bounding boxes + labels on a frame using the active track list
-        returned by AppleTracker.update().
-        Works on any channel (color or grayscale-converted-to-BGR).
+        Draw bounding boxes + labels proportional to frame size so they remain
+        visible after the display widget downscales the frame.
+
+        Label format:
+          #3  Fresh 94%          (committed apple — seq_id prominent)
+          ?   Fresh 94% [8f]     (not yet at exit band — show frame count)
         """
         import cv2
 
         if frame is None:
             return frame
 
-        # Ensure BGR so cv2 drawing works on NIR channels too
         if frame.ndim == 2:
             out = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
         else:
@@ -609,27 +611,61 @@ class MainWindow(QMainWindow):
         if not active:
             return out
 
+        h, w = out.shape[:2]
+
+        # All sizes proportional to frame width — stay visible at any display scale
+        scale     = w / 2048                          # 1.0 at 2048, 0.3 at 640
+        fs_id     = max(1.2, 2.8 * scale)            # font scale for the big ID
+        fs_label  = max(0.7, 1.6 * scale)            # font scale for grade/conf
+        box_thick = max(3,   int(6  * scale))         # bounding box line width
+        id_thick  = max(2,   int(4  * scale))         # ID text stroke weight
+        pad       = max(6,   int(12 * scale))         # label background padding
+
         for t in active:
-            cls   = t["class_id"]
-            conf  = t["conf"]
-            seq   = t["seq_id"]
-            lane  = t["lane"]
-            frms  = t["frames"]
+            cls      = t["class_id"]
+            conf     = t["conf"]
+            seq      = t["seq_id"]
+            lane     = t["lane"]
+            frms     = t["frames"]
+            eligible = t.get("eligible", True)
             x1, y1, x2, y2 = t["box"]
 
-            color = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
-            name  = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
+            color  = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
+            name   = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
 
-            # Box
-            cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
+            # Dim ineligible tracks (not yet entered from start zone)
+            draw_color = color if eligible else (100, 100, 100)
 
-            # Label: "Fresh 94%  #3  L2  [12f]"  or "Fresh 94%  ?  [4f]" before exit
-            id_str = f"#{seq}" if seq is not None else "?"
-            label  = f"{name} {conf*100:.0f}%  {id_str}  L{lane}  [{frms}f]"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
-            cv2.rectangle(out, (x1, y1 - th - 6), (x1 + tw + 4, y1), color, -1)
-            cv2.putText(out, label, (x1 + 2, y1 - 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+            # ── Bounding box ────────────────────────────────────────────────
+            cv2.rectangle(out, (x1, y1), (x2, y2), draw_color, box_thick)
+
+            # ── Big ID badge centred inside the box ─────────────────────────
+            id_str = f"#{seq}" if seq is not None else f"?{frms}f"
+            (iw, ih), _ = cv2.getTextSize(id_str, cv2.FONT_HERSHEY_DUPLEX, fs_id, id_thick)
+            ix = (x1 + x2) // 2 - iw // 2
+            iy = (y1 + y2) // 2 + ih // 2
+
+            # Dark shadow for contrast on any background
+            cv2.putText(out, id_str, (ix + 2, iy + 2),
+                        cv2.FONT_HERSHEY_DUPLEX, fs_id, (0, 0, 0), id_thick + 2, cv2.LINE_AA)
+            cv2.putText(out, id_str, (ix, iy),
+                        cv2.FONT_HERSHEY_DUPLEX, fs_id, draw_color, id_thick, cv2.LINE_AA)
+
+            # ── Grade + confidence label above the box ──────────────────────
+            grade_str = f"{name} {conf*100:.0f}%  L{lane}"
+            (lw, lh), _ = cv2.getTextSize(grade_str, cv2.FONT_HERSHEY_SIMPLEX, fs_label, 2)
+            lx = x1
+            ly = max(lh + pad, y1 - pad)             # clamp to frame top
+
+            # Filled background rectangle
+            cv2.rectangle(out,
+                          (lx,        ly - lh - pad),
+                          (lx + lw + pad, ly + pad // 2),
+                          draw_color, -1)
+            # Text
+            cv2.putText(out, grade_str,
+                        (lx + pad // 2, ly),
+                        cv2.FONT_HERSHEY_SIMPLEX, fs_label, (0, 0, 0), 2, cv2.LINE_AA)
 
         return out
 
