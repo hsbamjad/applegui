@@ -546,13 +546,16 @@ class MainWindow(QMainWindow):
         import cv2
         import numpy as np
 
-        # Class colours (BGR): Fresh=green, Processing=amber, Cull=red
+        # Class colours (BGR) and names — confirmed mapping:
+        #   0 = Cull       → red
+        #   1 = Fresh      → green
+        #   2 = Processing → amber
         CLASS_COLORS = [
-            (52, 211, 153),
-            (251, 191, 36),
-            (248, 113, 113),
+            (248, 113, 113),   # 0 Cull       — red
+            (52,  211, 153),   # 1 Fresh      — green
+            (251, 191,  36),   # 2 Processing — amber
         ]
-        CLASS_NAMES = ["Fresh", "Processing", "Cull"]
+        CLASS_NAMES = ["Cull", "Fresh", "Processing"]
 
         out = frame.copy()
 

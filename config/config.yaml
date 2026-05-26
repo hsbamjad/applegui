@@ -134,6 +134,10 @@ inference:
   iou_threshold: 0.45              # NMS IoU threshold
   input_mode: "RB-nir1"           # Band combo model was trained on
                                    # Options: RB-nir1 | RG-nir1 | R-nir1-nir2 | RGB | CH1
+  class_names:                     # Index order from model — confirm with training YAML
+    - "Cull"                       # 0
+    - "Fresh"                      # 1
+    - "Processing"                 # 2
 
   # Multi-view weighted voting (apple tracked across multiple frames)
   tracking:
