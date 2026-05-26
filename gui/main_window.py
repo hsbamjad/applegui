@@ -560,12 +560,12 @@ class MainWindow(QMainWindow):
         for rec in graded:
             outlet = self._OUTLET_MAP.get(rec.class_name, "?")
             self._right.results_group.add_result(
-                rec.global_id, rec.lane, rec.class_name, rec.confidence, outlet
+                rec.seq_id, rec.lane, rec.class_name, rec.confidence, outlet
             )
             self._right.grade_summary.record(rec.class_name)
             self._right.metrics_group.record_grade(self._left.conveyor_speed)
             self.statusBar().showMessage(
-                f"#{rec.global_id}  Lane {rec.lane}  →  {rec.class_name}  "
+                f"#{rec.seq_id}  Lane {rec.lane}  →  {rec.class_name}  "
                 f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
             )
 
@@ -607,8 +607,9 @@ class MainWindow(QMainWindow):
             # Box
             cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
 
-            # Label: "Fresh 94%  #10003  L1  [12f]"
-            label = f"{name} {conf*100:.0f}%  #{gid}  L{lane}  [{frms}f]"
+            # Label: "Fresh 94%  #3  L2  [12f]"  or "Fresh 94%  ?  [4f]" before exit
+            id_str = f"#{t['seq_id']}" if t["seq_id"] is not None else "?"
+            label  = f"{name} {conf*100:.0f}%  {id_str}  L{lane}  [{frms}f]"
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
             cv2.rectangle(out, (x1, y1 - th - 6), (x1 + tw + 4, y1), color, -1)
             cv2.putText(out, label, (x1 + 2, y1 - 4),
