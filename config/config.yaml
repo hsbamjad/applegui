@@ -139,13 +139,20 @@ inference:
     - "Fresh"                      # 1
     - "Processing"                 # 2
 
-  # Multi-view weighted voting (apple tracked across multiple frames)
+  # Robust counting gate — mirrors chestnut pipeline logic
   tracking:
     enabled: true
-    grade_line_x: 0.85             # Normalized X position; apple graded when it crosses
-    min_frames: 8                  # Minimum detections before grade is committed
-    max_lost_frames: 15            # Frames to keep lost track for ID recovery
-    vote_weight_confidence: true   # Weight votes by per-frame confidence score
+    grade_line_x: 0.85          # Centre of counting band (fraction of frame width)
+    band_half_frac: 0.025       # ± 2.5% of width — narrow band, NOT unbounded zone
+    entry_x_frac: 0.35          # Apple's first detection must be LEFT of this
+    min_frames: 5               # Min tracked frames before grade commit
+    max_lost_frames: 10         # Frames to keep a lost track for recovery
+    max_recover_dist: 80        # Max pixels for lost-track ID recovery
+    min_count_dist_frac: 0.12   # Proximity buffer: 12% of width (no double-count)
+    count_memory_frames: 40     # How long to keep proximity buffer entries
+    cull_weight: 1.5            # Extra vote weight for Cull class
+    hit_threshold: 20           # High-conf Cull frames to force Cull grade
+    cull_ratio_threshold: 0.55  # Cull vote fraction to force Cull grade
 
 # ══════════════════════════════════════════════════════════════
 # DATA LOGGING
