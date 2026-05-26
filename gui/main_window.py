@@ -243,6 +243,9 @@ class MainWindow(QMainWindow):
         self._tracker: ConveyorTracker | None            = None
         self._infer_fps: float = 0.0
         self._loading_model_name: str = ""
+        self._last_ch1: np.ndarray | None = None   # latest raw frames from VideoWorker
+        self._last_ch2: np.ndarray | None = None
+        self._last_ch3: np.ndarray | None = None
         self._total        = 0
         self._wb_reverting = False   # True while a revert_white_balance() call is in flight
 
@@ -443,9 +446,25 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(object, object, object, float)
     def _on_frame(self, ch1, ch2, ch3, fps: float) -> None:
-        self._center.channel_display.update_frames(ch1, ch2, ch3, fps)
+        # Always store latest frames so inference can annotate them
+        self._last_ch1 = ch1
+        self._last_ch2 = ch2
+        self._last_ch3 = ch3
+
+        inference_running = (
+            self._infer_w is not None and self._infer_w.isRunning()
+        )
+
+        if inference_running:
+            # Inference owns CH1 display (annotated) — only update raw NIR channels
+            self._center.channel_display.update_channel_frame(1, ch2, fps)
+            self._center.channel_display.update_channel_frame(2, ch3, fps)
+        else:
+            # No inference — show raw video on all channels
+            self._center.channel_display.update_frames(ch1, ch2, ch3, fps)
+
         # Feed frames to inference worker if running
-        if self._infer_w is not None and self._infer_w.isRunning():
+        if inference_running:
             self._infer_w.enqueue(ch1, ch2, ch3)
 
     @pyqtSlot(str, bool)
@@ -529,13 +548,13 @@ class MainWindow(QMainWindow):
     _CLASS_NAMES = ["Cull", "Fresh", "Processing"]
     _OUTLET_MAP  = {"Cull": "C", "Fresh": "A", "Processing": "B"}
 
-    @pyqtSlot(object, object, object, object)
-    def _on_inference_result(self, ch1, ch2, ch3, result) -> None:
-        """Vote on tracks, commit grades, annotate all 3 channels."""
-        if self._tracker is None:
+    @pyqtSlot(object)
+    def _on_inference_result(self, result) -> None:
+        """Vote on tracks, commit grades, annotate CH1 with stored latest frame."""
+        if self._tracker is None or self._last_ch1 is None:
             return
 
-        active, graded = self._tracker.update(result, ch1.shape)
+        active, graded = self._tracker.update(result, self._last_ch1.shape)
 
         # ── Commit finished grades to stats panel ─────────────────
         for rec in graded:
@@ -550,15 +569,9 @@ class MainWindow(QMainWindow):
                 f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
             )
 
-        # ── Annotate and push to all 3 channel displays ───────────
-        ann_ch1 = self._annotate_tracked(ch1, active)
-        ann_ch2 = self._annotate_tracked(ch2, active)
-        ann_ch3 = self._annotate_tracked(ch3, active)
-
-        fps = self._infer_fps
-        self._center.channel_display.update_channel_frame(0, ann_ch1, fps)
-        self._center.channel_display.update_channel_frame(1, ann_ch2, fps)
-        self._center.channel_display.update_channel_frame(2, ann_ch3, fps)
+        # ── Annotate CH1 only (NIR channels keep raw video from VideoWorker) ──
+        ann_ch1 = self._annotate_tracked(self._last_ch1, active)
+        self._center.channel_display.update_channel_frame(0, ann_ch1, self._infer_fps)
 
     def _annotate_tracked(self, frame: np.ndarray, active: list) -> np.ndarray:
         """

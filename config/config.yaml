@@ -130,7 +130,7 @@ inference:
   model_dir: "models/"
   default_model: "best.pt"         # Auto-load on startup
   device: "cuda"                   # "cuda" | "cpu"
-  confidence_threshold: 0.5
+  confidence_threshold: 0.25       # Lower = more detections, less flicker
   iou_threshold: 0.45              # NMS IoU threshold
   input_mode: "RB-nir1"           # Band combo model was trained on
                                    # Options: RB-nir1 | RG-nir1 | R-nir1-nir2 | RGB | CH1

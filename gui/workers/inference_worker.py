@@ -105,9 +105,9 @@ class RealInferenceWorker(QThread):
       sig_status(str, bool) -- status messages and errors
     """
 
-    sig_result = pyqtSignal(object, object, object, object)  # ch1, ch2, ch3, ultralytics Result
+    sig_result = pyqtSignal(object)   # ultralytics Results object only
     sig_fps    = pyqtSignal(float)
-    sig_status = pyqtSignal(str, bool)        # message, is_error
+    sig_status = pyqtSignal(str, bool)
 
     # Box colours per class index (BGR)
     _CLASS_COLORS = [
@@ -280,9 +280,8 @@ class RealInferenceWorker(QThread):
                 log.warning("Inference error: %s", e)
                 continue
 
-            # Emit all 3 raw channel frames + the ultralytics Results object
-            # Annotation and voting happen on the main thread in _on_inference_result
-            self.sig_result.emit(ch1, ch2, ch3, results[0])
+            # Emit only the result object — no heavy frame copies through Qt signal
+            self.sig_result.emit(results[0])
 
             frame_count += 1
             elapsed = time.perf_counter() - fps_start
