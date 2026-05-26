@@ -585,9 +585,11 @@ class MainWindow(QMainWindow):
         ann_ch2 = self._annotate_tracked(self._last_ch2, active)
         ann_ch3 = self._annotate_tracked(self._last_ch3, active)
         fps = self._infer_fps
-        self._center.channel_display.update_channel_frame(0, ann_ch1, fps)
-        self._center.channel_display.update_channel_frame(1, ann_ch2, fps)
-        self._center.channel_display.update_channel_frame(2, ann_ch3, fps)
+        # Pass the original full resolution so the UI label stays correct
+        orig_shape = (self._last_ch1.shape[1], self._last_ch1.shape[0])
+        self._center.channel_display.update_channel_frame(0, ann_ch1, fps, orig_shape)
+        self._center.channel_display.update_channel_frame(1, ann_ch2, fps, orig_shape)
+        self._center.channel_display.update_channel_frame(2, ann_ch3, fps, orig_shape)
 
     def _annotate_tracked(self, frame: np.ndarray, active: list) -> np.ndarray:
         """
@@ -654,8 +656,8 @@ class MainWindow(QMainWindow):
             cv2.putText(small, label, (lx + 2, ly - 1),
                         cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), txt_thick, cv2.LINE_AA)
 
-        # Upscale back to original resolution for display pipeline
-        return cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+        # Return the fast 512px render directly — NO expensive upscale!
+        return small
 
 
     @pyqtSlot(float)
