@@ -77,7 +77,7 @@ conveyor:
   # Orientation: how apples move through camera view
   #   LR = left→right   RL = right→left
   #   TB = top→bottom   BT = bottom→top  ← current camera setup
-  orientation: "BT"
+  orientation: "LR"   # LR=left→right (test video) | BT=bottom→top (real camera)
   speed_apples_per_sec: 1          # Nominal: 1 | 2 | 3 apples/s/lane
   camera_to_gate_m: 0.5            # Physical distance: camera center → sorter gate (meters)
   # Timing delay (ms) = (camera_to_gate_m / conveyor_speed_m_s) * 1000

@@ -642,7 +642,7 @@ class MainWindow(QMainWindow):
             cv2.rectangle(small, (sx1, sy1), (sx2, sy2), draw_color, box_thick)
 
             # Label: "#3 Fresh 87% L2"  or  "?8f Fresh 87% L2" before counted
-            id_part = f"#{seq}" if seq is not None else f"?{frms}f"
+            id_part = f"#{seq}" if seq is not None else "?"
             label   = f"{id_part} {name} {conf*100:.0f}% L{lane}"
 
             (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, txt_thick)
