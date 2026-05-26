@@ -105,7 +105,7 @@ class RealInferenceWorker(QThread):
       sig_status(str, bool) -- status messages and errors
     """
 
-    sig_result = pyqtSignal(object, object)   # raw_frame (numpy BGR), sv.Detections
+    sig_result = pyqtSignal(object, object, object, object)  # ch1, ch2, ch3, ultralytics Result
     sig_fps    = pyqtSignal(float)
     sig_status = pyqtSignal(str, bool)        # message, is_error
 
@@ -249,41 +249,41 @@ class RealInferenceWorker(QThread):
         fps_start      = time.perf_counter()
 
         while self._running:
-            # Block until a frame triplet arrives
             try:
                 item = self._queue.get(timeout=0.5)
             except queue.Empty:
                 continue
 
-            if item is None:   # sentinel from stop()
+            if item is None:
                 break
 
             ch1, ch2, ch3 = item
 
-            # Build the correct channel stack for this model
+            # Build model input from correct band combination
             frame = self._prepare_input(ch1, ch2, ch3)
 
-            # Run YOLO inference
+            # YOLO tracking with persist=True keeps internal tracker state
+            # across frames — far more stable than detect+external-tracker
             try:
-                results = model(
-                    source  = frame,
-                    conf    = self._conf,
-                    iou     = self._iou,
-                    device  = self._device,
-                    verbose = False,
-                    save    = False,
+                results = model.track(
+                    source   = frame,
+                    tracker  = "bytetrack.yaml",
+                    persist  = True,
+                    conf     = self._conf,
+                    iou      = self._iou,
+                    device   = self._device,
+                    imgsz    = 640,
+                    verbose  = False,
+                    save     = False,
                 )
             except Exception as e:
                 log.warning("Inference error: %s", e)
                 continue
 
-            # Convert to supervision Detections
-            detections = sv.Detections.from_ultralytics(results[0])
+            # Emit all 3 raw channel frames + the ultralytics Results object
+            # Annotation and voting happen on the main thread in _on_inference_result
+            self.sig_result.emit(ch1, ch2, ch3, results[0])
 
-            # Emit raw frame + detections (annotation happens after tracking in main thread)
-            self.sig_result.emit(frame, detections)
-
-            # Compute and report FPS every second
             frame_count += 1
             elapsed = time.perf_counter() - fps_start
             if elapsed >= 1.0:

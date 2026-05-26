@@ -1,253 +1,214 @@
 """
 gui/workers/tracker.py
-=======================
-ConveyorTracker — ByteTrack-based multi-object tracker for 3-lane conveyor.
+======================
+Apple grading tracker — multi-frame confidence voter.
 
-Architecture decision:
-  One sv.ByteTrack instance per lane. Detections are split by Y-center into
-  lane zones BEFORE tracking. This makes cross-lane ID swaps impossible by
-  design, regardless of how close apples are to each other.
-
-Lane zones (equal thirds of frame height, top-to-bottom):
-  Lane 1  →  y in [0,       H/3)
-  Lane 2  →  y in [H/3,   2H/3)
-  Lane 3  →  y in [2H/3,    H)
-
-Global track ID = lane_offset + local ByteTrack ID:
-  Lane 1: 10_001 – 19_999
-  Lane 2: 20_001 – 29_999
-  Lane 3: 30_001 – 39_999
-
-Returned object:
-  ConveyorTracker.update() returns a TrackResult namedtuple with:
-    tracked   : sv.Detections  (tracker_id set, data dict has 'lane' key)
-    exited    : list[dict]     (tracks that crossed the exit line this frame)
+Adapted from the chestnut multispectral pipeline (multi_video_processor_10cm_m345.py).
+Key differences from the previous sv.ByteTrack wrapper:
+  - Tracking is now done by YOLO's built-in model.track(persist=True) upstream.
+    This file only handles: lane assignment, multi-frame voting, grade commit,
+    and lost-track ID recovery.
+  - Grades are committed only after an apple:
+      1. Has been seen for >= min_frames consecutive detections
+      2. Crosses the exit_x line (right side of frame)
+  - Confidence is accumulated across frames (weighted sum per class), not just
+    the single-frame value.
 """
 
 from __future__ import annotations
 
-import warnings
+import math
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 
 log = logging.getLogger(__name__)
 
-# Suppress ByteTrack FutureWarning (deprecated in sv 0.28 → 0.30 replacement TBD)
-warnings.filterwarnings("ignore", category=FutureWarning, module="supervision")
 
-try:
-    import supervision as sv
-    _SV_AVAILABLE = True
-except ImportError:
-    _SV_AVAILABLE = False
-    log.warning("supervision not installed — ConveyorTracker disabled")
-
-
-# ── Lane-level ID offsets ──────────────────────────────────────────────────────
-_LANE_ID_OFFSET = [10_000, 20_000, 30_000]  # lane 0/1/2
+# ── Per-lane ID offsets (keeps global IDs unique and readable) ────────────────
+_LANE_ID_OFFSET = [10_000, 20_000, 30_000]
 
 
 @dataclass
-class ExitedTrack:
-    """Metadata for a track that has crossed the exit line."""
-    global_id: int
-    lane: int          # 1-indexed (1, 2, 3)
-    class_id: int
-    confidence: float
-    last_x: float      # last known X-center (pixels)
+class GradeRecord:
+    """Result emitted when an apple's grade is committed."""
+    global_id:   int
+    lane:        int          # 1-indexed
+    class_id:    int
+    class_name:  str
+    confidence:  float        # fraction of accumulated votes
+    frames_seen: int
 
 
-class ConveyorTracker:
+# ── Track history entry (one per YOLO track_id) ───────────────────────────────
+def _new_history():
+    return {
+        "votes":       defaultdict(float),  # class_id -> accumulated confidence
+        "frames_seen": 0,
+        "lane":        -1,
+        "last_pos":    (0, 0),
+        "last_frame":  0,
+        "committed":   False,
+    }
+
+
+class AppleTracker:
     """
-    3-lane conveyor tracker built on supervision ByteTrack.
+    Multi-frame confidence voter for 3-lane horizontal conveyor.
 
-    Parameters
-    ----------
-    n_lanes : int
-        Number of physical conveyor lanes (default 3).
-    frame_fps : int
-        Expected camera/video FPS — used for ByteTrack's lost_track_buffer timing.
-    lost_track_buffer : int
-        Frames to keep a lost track before dropping it. Increase for slower conveyors
-        where apples disappear behind each other briefly.
-    minimum_matching_threshold : float
-        IoU threshold for matching detections to existing tracks (0–1).
-        Lower = more permissive matching; raise if IDs swap frequently.
-    track_activation_threshold : float
-        Minimum detection confidence to start a new track.
-    exit_x_fraction : float
-        Normalised X position (0–1) beyond which a track is considered to have
-        exited the frame and its grade is committed. Matches grade_line_x in config.
+    Usage:
+        tracker = AppleTracker(...)
+        active, graded = tracker.update(yolo_result, frame_shape)
     """
+
+    CLASS_NAMES = ["Cull", "Fresh", "Processing"]   # indices from best.pt
 
     def __init__(
         self,
-        n_lanes: int = 3,
-        frame_fps: int = 30,
-        lost_track_buffer: int = 45,
-        minimum_matching_threshold: float = 0.70,
-        track_activation_threshold: float = 0.25,
-        exit_x_fraction: float = 0.85,
+        n_lanes:           int   = 3,
+        exit_x_fraction:   float = 0.85,   # X position (fraction of width) to commit grade
+        min_frames:        int   = 8,       # minimum detections before grade commit
+        max_lost_frames:   int   = 15,      # frames to keep lost track in buffer
+        max_recover_dist:  int   = 120,     # max pixels to re-link a recovered track
     ) -> None:
-        self._n_lanes   = n_lanes
-        self._fps       = frame_fps
-        self._exit_x_fr = exit_x_fraction
+        self._n_lanes         = n_lanes
+        self._exit_x_frac     = exit_x_fraction
+        self._min_frames      = min_frames
+        self._max_lost        = max_lost_frames
+        self._max_recover     = max_recover_dist
 
-        if not _SV_AVAILABLE:
-            self._trackers = []
-            return
-
-        # One ByteTrack per lane — guaranteed zero cross-lane ID confusion
-        self._trackers = [
-            sv.ByteTrack(
-                track_activation_threshold  = track_activation_threshold,
-                lost_track_buffer           = lost_track_buffer,
-                minimum_matching_threshold  = minimum_matching_threshold,
-                frame_rate                  = frame_fps,
-            )
-            for _ in range(n_lanes)
-        ]
-
-        # Global state
-        self._lane_of: dict[int, int]   = {}   # global_id → lane (1-indexed)
-        self._active_ids: set[int]       = set()
+        self._history:    dict[int, dict] = defaultdict(_new_history)
+        self._lost:       dict[int, dict] = {}   # track_id -> last known state
+        self._frame_no:   int  = 0
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def set_fps(self, fps: int) -> None:
-        """Update FPS parameter. Takes effect on next tracker reset."""
-        self._fps = fps
-
-    def set_conveyor_speed(self, apples_per_sec: int) -> None:
-        """
-        Receive updated conveyor speed from the GUI.
-        Stored for future use (e.g. computing expected px/frame displacement
-        for velocity-initialised Kalman seeds in a custom tracker).
-        ByteTrack does not use this directly — it is IoU-based.
-        """
-        self._conveyor_speed_aps = apples_per_sec
-
-    def reset(self) -> None:
-        """Reset all lane trackers (call between sessions/videos)."""
-        for t in self._trackers:
-            t.reset()
-        self._lane_of.clear()
-        self._active_ids.clear()
-
     def update(
-        self, detections: "sv.Detections", frame_shape: tuple[int, int]
-    ) -> tuple["sv.Detections", list[ExitedTrack]]:
+        self,
+        result,               # ultralytics.engine.results.Results
+        frame_shape: tuple,   # (H, W, C)
+    ) -> tuple[list[dict], list[GradeRecord]]:
         """
-        Run one tracking step.
-
-        Parameters
-        ----------
-        detections : sv.Detections
-            Raw YOLO detections for this frame (no tracker_id yet).
-        frame_shape : (height, width)
-            Shape of the frame in pixels (used for lane zone computation).
+        Process one YOLO tracking result.
 
         Returns
         -------
-        tracked : sv.Detections
-            Detections with tracker_id set. data['lane'] contains 1-indexed lane.
-        exited  : list[ExitedTrack]
-            Tracks that crossed the exit line this frame — ready for grade commit.
+        active  : list of dicts — one per currently visible track, for annotation
+        graded  : list of GradeRecord — apples whose grade was committed this frame
         """
-        if not _SV_AVAILABLE or not self._trackers:
-            return detections, []
+        self._frame_no += 1
+        h, w = frame_shape[:2]
+        lane_h   = h / self._n_lanes
+        exit_x   = int(w * self._exit_x_frac)
 
-        frame_h, frame_w = frame_shape[:2]
-        zone_h = frame_h / self._n_lanes
-        exit_x = frame_w * self._exit_x_fr
+        active: list[dict]        = []
+        graded: list[GradeRecord] = []
 
-        # ── Split detections by lane zone ─────────────────────────────────────
-        all_tracked_parts: list[sv.Detections] = []
+        # No detections this frame
+        if result.boxes is None or result.boxes.id is None:
+            return active, graded
 
-        for lane_idx in range(self._n_lanes):
-            y_min = lane_idx * zone_h
-            y_max = (lane_idx + 1) * zone_h
+        boxes = result.boxes.cpu().numpy()
 
-            # Mask: detections whose Y-center falls in this lane's zone
-            if len(detections) == 0:
-                lane_dets = detections
-            else:
-                cy = (detections.xyxy[:, 1] + detections.xyxy[:, 3]) / 2.0
-                mask = (cy >= y_min) & (cy < y_max)
-                lane_dets = detections[mask]
+        track_ids = boxes.id.astype(int).tolist()
+        cls_ids   = boxes.cls.astype(int).tolist()
+        xyxys     = boxes.xyxy.tolist()
+        confs     = boxes.conf.tolist()
 
-            # Run this lane's ByteTracker
-            lane_tracked = self._trackers[lane_idx].update_with_detections(lane_dets)
+        # ── Lost-track recovery ───────────────────────────────────────────────
+        # New track IDs (never seen before) may be reassigned YOLO IDs for the
+        # same physical apple.  Try to re-link them to a recently-lost track.
+        for tid, cls_id, xyxy, conf in zip(track_ids, cls_ids, xyxys, confs):
+            if self._history[tid]["frames_seen"] == 0:
+                cx = int((xyxy[0] + xyxy[2]) / 2)
+                cy = int((xyxy[1] + xyxy[3]) / 2)
+                best_id, best_dist = None, float("inf")
+                stale = []
+                for lost_id, lost in self._lost.items():
+                    if self._frame_no - lost["last_frame"] > self._max_lost:
+                        stale.append(lost_id)
+                        continue
+                    d = math.dist((cx, cy), lost["last_pos"])
+                    if d < self._max_recover and d < best_dist:
+                        best_dist, best_id = d, lost_id
+                for s in stale:
+                    del self._lost[s]
+                if best_id is not None:
+                    # Merge lost track's history into this new ID
+                    self._history[tid] = self._lost.pop(best_id)
+                    log.debug("Track %d recovered from lost track %d (dist=%.0f)", tid, best_id, best_dist)
 
-            if len(lane_tracked) == 0:
-                all_tracked_parts.append(lane_tracked)
-                continue
+        # ── Main update loop ──────────────────────────────────────────────────
+        seen_ids = set()
+        for tid, cls_id, xyxy, conf in zip(track_ids, cls_ids, xyxys, confs):
+            x1, y1, x2, y2 = map(int, xyxy)
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            lane   = min(int(cy / lane_h), self._n_lanes - 1)
 
-            # Remap local tracker IDs → globally unique IDs
-            offset = _LANE_ID_OFFSET[lane_idx]
-            global_ids = lane_tracked.tracker_id + offset
+            hist = self._history[tid]
+            hist["frames_seen"] += 1
+            hist["last_pos"]    = (cx, cy)
+            hist["last_frame"]  = self._frame_no
+            hist["lane"]        = lane
+            hist["votes"][cls_id] += float(conf)
 
-            # Record lane assignment for each track (sticky — first assignment wins)
-            for gid in global_ids:
-                if gid not in self._lane_of:
-                    self._lane_of[gid] = lane_idx + 1   # 1-indexed
+            seen_ids.add(tid)
 
-            # Attach global IDs and lane data back to the detection object
-            lane_tracked = sv.Detections(
-                xyxy       = lane_tracked.xyxy,
-                confidence = lane_tracked.confidence,
-                class_id   = lane_tracked.class_id,
-                tracker_id = global_ids,
-                data       = {"lane": np.full(len(lane_tracked), lane_idx + 1, dtype=np.int32)},
-            )
-            all_tracked_parts.append(lane_tracked)
+            # Determine current best grade (for live annotation)
+            best_cls   = max(hist["votes"], key=hist["votes"].get)
+            total_vote = sum(hist["votes"].values())
+            best_conf  = hist["votes"][best_cls] / total_vote if total_vote else conf
 
-        # ── Merge all lane results into one Detections object ─────────────────
-        merged = _merge_detections(all_tracked_parts)
+            active.append({
+                "track_id":  tid,
+                "global_id": _LANE_ID_OFFSET[lane] + tid,
+                "class_id":  best_cls,
+                "conf":      best_conf,
+                "box":       (x1, y1, x2, y2),
+                "center":    (cx, cy),
+                "lane":      lane + 1,          # 1-indexed for display
+                "frames":    hist["frames_seen"],
+            })
 
-        # ── Detect exited tracks ──────────────────────────────────────────────
-        exited: list[ExitedTrack] = []
-        if len(merged) > 0 and merged.tracker_id is not None:
-            cx = (merged.xyxy[:, 0] + merged.xyxy[:, 2]) / 2.0
-            for i, gid in enumerate(merged.tracker_id):
-                if cx[i] >= exit_x and gid in self._active_ids:
-                    exited.append(ExitedTrack(
-                        global_id  = int(gid),
-                        lane       = int(merged.data["lane"][i]),
-                        class_id   = int(merged.class_id[i]) if merged.class_id is not None else -1,
-                        confidence = float(merged.confidence[i]) if merged.confidence is not None else 0.0,
-                        last_x     = float(cx[i]),
-                    ))
-                    self._active_ids.discard(gid)
-                else:
-                    self._active_ids.add(gid)
+            # ── Grade commit ─────────────────────────────────────────────────
+            if (
+                cx > exit_x
+                and not hist["committed"]
+                and hist["frames_seen"] >= self._min_frames
+            ):
+                hist["committed"] = True
+                cls_name = self.CLASS_NAMES[best_cls] if best_cls < len(self.CLASS_NAMES) else str(best_cls)
+                rec = GradeRecord(
+                    global_id   = _LANE_ID_OFFSET[lane] + tid,
+                    lane        = lane + 1,
+                    class_id    = best_cls,
+                    class_name  = cls_name,
+                    confidence  = best_conf,
+                    frames_seen = hist["frames_seen"],
+                )
+                graded.append(rec)
+                log.info(
+                    "Grade committed: #%d  lane=%d  class=%s  conf=%.2f  frames=%d",
+                    rec.global_id, rec.lane, rec.class_name, rec.confidence, rec.frames_seen,
+                )
 
-        return merged, exited
+        # ── Move disappeared tracks to lost buffer ────────────────────────────
+        all_known = set(self._history.keys())
+        for tid in all_known - seen_ids:
+            hist = self._history.get(tid)
+            if hist and hist["frames_seen"] > 0 and not hist["committed"]:
+                self._lost[tid] = hist
 
+        return active, graded
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+    def reset(self) -> None:
+        """Call between sessions / video restarts."""
+        self._history.clear()
+        self._lost.clear()
+        self._frame_no = 0
 
-def _merge_detections(parts: list) -> "sv.Detections":
-    """Concatenate a list of sv.Detections into one, handling empty parts."""
-    non_empty = [p for p in parts if p is not None and len(p) > 0]
-    if not non_empty:
-        return sv.Detections.empty()
-    if len(non_empty) == 1:
-        return non_empty[0]
-
-    xyxy       = np.concatenate([p.xyxy for p in non_empty], axis=0)
-    confidence = np.concatenate([p.confidence for p in non_empty]) if non_empty[0].confidence is not None else None
-    class_id   = np.concatenate([p.class_id for p in non_empty])   if non_empty[0].class_id   is not None else None
-    tracker_id = np.concatenate([p.tracker_id for p in non_empty]) if non_empty[0].tracker_id  is not None else None
-    lane       = np.concatenate([p.data["lane"] for p in non_empty if "lane" in p.data])
-
-    return sv.Detections(
-        xyxy       = xyxy,
-        confidence = confidence,
-        class_id   = class_id,
-        tracker_id = tracker_id,
-        data       = {"lane": lane},
-    )
+    def set_conveyor_speed(self, apples_per_sec: int) -> None:
+        """Stored for future use (velocity priors, dynamic lost buffer, etc.)."""
+        self._conveyor_speed_aps = apples_per_sec

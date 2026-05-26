@@ -44,7 +44,7 @@ from gui.widgets.image_display import MultiChannelDisplay
 from gui.workers.camera_worker import CameraWorker
 from gui.workers.video_worker  import VideoWorker
 from gui.workers.inference_worker import MockInferenceWorker, RealInferenceWorker
-from gui.workers.tracker import ConveyorTracker
+from gui.workers.tracker import AppleTracker as ConveyorTracker
 
 log = logging.getLogger(__name__)
 
@@ -391,11 +391,12 @@ class MainWindow(QMainWindow):
         self._cam_w.start()
 
         # ── Conveyor tracker ───────────────────────────────────────
-        inf_tracking = self._cfg.get("inference", {}).get("tracking", {})
+        inf_cfg     = self._cfg.get("inference", {})
+        inf_tracking = inf_cfg.get("tracking", {})
         self._tracker = ConveyorTracker(
-            n_lanes                     = self._cfg.get("conveyor", {}).get("lanes", 3),
-            frame_fps                   = self._cfg.get("display", {}).get("fps_limit", 30),
-            exit_x_fraction             = inf_tracking.get("grade_line_x", 0.85),
+            n_lanes          = self._cfg.get("conveyor", {}).get("lanes", 3),
+            exit_x_fraction  = inf_tracking.get("grade_line_x", 0.85),
+            min_frames       = inf_tracking.get("min_frames", 8),
         )
 
         # ── Inference worker ───────────────────────────────────────
@@ -519,70 +520,86 @@ class MainWindow(QMainWindow):
         self._infer_w.sig_status.connect(self._on_inference_status)
         self._infer_w.start()
 
-    @pyqtSlot(object, object)
-    def _on_inference_result(self, raw_frame, detections) -> None:
-        """Track raw detections, annotate frame, update CH1 display."""
+    # ── Class colours (BGR): 0=Cull-red  1=Fresh-green  2=Processing-amber ──
+    _CLASS_COLORS = [
+        (248, 113, 113),
+        (52,  211, 153),
+        (251, 191,  36),
+    ]
+    _CLASS_NAMES = ["Cull", "Fresh", "Processing"]
+    _OUTLET_MAP  = {"Cull": "C", "Fresh": "A", "Processing": "B"}
+
+    @pyqtSlot(object, object, object, object)
+    def _on_inference_result(self, ch1, ch2, ch3, result) -> None:
+        """Vote on tracks, commit grades, annotate all 3 channels."""
         if self._tracker is None:
             return
 
-        tracked, exited = self._tracker.update(detections, raw_frame.shape)
+        active, graded = self._tracker.update(result, ch1.shape)
 
-        # Log exited tracks (Phase 2 will commit grades here)
-        for t in exited:
-            log.info(
-                "Track %d exited  lane=%d  class=%d  conf=%.2f",
-                t.global_id, t.lane, t.class_id, t.confidence,
+        # ── Commit finished grades to stats panel ─────────────────
+        for rec in graded:
+            outlet = self._OUTLET_MAP.get(rec.class_name, "?")
+            self._right.results_group.add_result(
+                rec.global_id, rec.lane, rec.class_name, rec.confidence, outlet
+            )
+            self._right.grade_summary.record(rec.class_name)
+            self._right.metrics_group.record_grade(self._left.conveyor_speed)
+            self.statusBar().showMessage(
+                f"#{rec.global_id}  Lane {rec.lane}  →  {rec.class_name}  "
+                f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
             )
 
-        annotated = self._annotate_tracked(raw_frame, tracked)
-        self._center.channel_display.update_channel_frame(0, annotated, self._infer_fps)
+        # ── Annotate and push to all 3 channel displays ───────────
+        ann_ch1 = self._annotate_tracked(ch1, active)
+        ann_ch2 = self._annotate_tracked(ch2, active)
+        ann_ch3 = self._annotate_tracked(ch3, active)
 
-    @staticmethod
-    def _annotate_tracked(frame, tracked) -> np.ndarray:
+        fps = self._infer_fps
+        self._center.channel_display.update_channel_frame(0, ann_ch1, fps)
+        self._center.channel_display.update_channel_frame(1, ann_ch2, fps)
+        self._center.channel_display.update_channel_frame(2, ann_ch3, fps)
+
+    def _annotate_tracked(self, frame: np.ndarray, active: list) -> np.ndarray:
         """
-        Draw bounding boxes, class labels, track IDs and lane badges
-        on the frame after ByteTrack assigns IDs.
+        Draw bounding boxes + labels on a frame using the active track list
+        returned by AppleTracker.update().
+        Works on any channel (color or grayscale-converted-to-BGR).
         """
         import cv2
-        import numpy as np
 
-        # Class colours (BGR) and names — confirmed mapping:
-        #   0 = Cull       → red
-        #   1 = Fresh      → green
-        #   2 = Processing → amber
-        CLASS_COLORS = [
-            (248, 113, 113),   # 0 Cull       — red
-            (52,  211, 153),   # 1 Fresh      — green
-            (251, 191,  36),   # 2 Processing — amber
-        ]
-        CLASS_NAMES = ["Cull", "Fresh", "Processing"]
+        if frame is None:
+            return frame
 
-        out = frame.copy()
+        # Ensure BGR so cv2 drawing works on NIR channels too
+        if frame.ndim == 2:
+            out = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        else:
+            out = frame.copy()
 
-        if tracked is None or len(tracked) == 0:
+        if not active:
             return out
 
-        for i in range(len(tracked)):
-            box    = tracked.xyxy[i].astype(int)
-            cls    = int(tracked.class_id[i])   if tracked.class_id   is not None else 0
-            conf   = float(tracked.confidence[i]) if tracked.confidence is not None else 0.0
-            tid    = int(tracked.tracker_id[i])  if tracked.tracker_id is not None else -1
-            lane   = int(tracked.data["lane"][i]) if "lane" in tracked.data else 0
-            color  = CLASS_COLORS[cls % len(CLASS_COLORS)]
-            name   = CLASS_NAMES[cls] if cls < len(CLASS_NAMES) else str(cls)
+        for t in active:
+            cls   = t["class_id"]
+            conf  = t["conf"]
+            gid   = t["global_id"]
+            lane  = t["lane"]
+            frms  = t["frames"]
+            x1, y1, x2, y2 = t["box"]
 
-            # Bounding box
-            cv2.rectangle(out, (box[0], box[1]), (box[2], box[3]), color, 2)
+            color = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
+            name  = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
 
-            # Label: "Fresh 0.94  #12003  L2"
-            label = f"{name} {conf:.2f}  #{tid}  L{lane}"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            cv2.rectangle(out,
-                          (box[0], box[1] - th - 6),
-                          (box[0] + tw + 4, box[1]), color, -1)
-            cv2.putText(out, label,
-                        (box[0] + 2, box[1] - 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+            # Box
+            cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
+
+            # Label: "Fresh 94%  #10003  L1  [12f]"
+            label = f"{name} {conf*100:.0f}%  #{gid}  L{lane}  [{frms}f]"
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            cv2.rectangle(out, (x1, y1 - th - 6), (x1 + tw + 4, y1), color, -1)
+            cv2.putText(out, label, (x1 + 2, y1 - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
 
         return out
 

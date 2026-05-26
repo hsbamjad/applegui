@@ -142,7 +142,9 @@ inference:
   # Multi-view weighted voting (apple tracked across multiple frames)
   tracking:
     enabled: true
-    grade_line_x: 0.85             # Normalized X position in frame; apple graded when it crosses
+    grade_line_x: 0.85             # Normalized X position; apple graded when it crosses
+    min_frames: 8                  # Minimum detections before grade is committed
+    max_lost_frames: 15            # Frames to keep lost track for ID recovery
     vote_weight_confidence: true   # Weight votes by per-frame confidence score
 
 # ══════════════════════════════════════════════════════════════
