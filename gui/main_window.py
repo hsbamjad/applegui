@@ -576,25 +576,6 @@ class MainWindow(QMainWindow):
         self._center.channel_display.update_channel_frame(1, ann_ch2, fps)
         self._center.channel_display.update_channel_frame(2, ann_ch3, fps)
 
-    @staticmethod
-    def _draw_count_line(frame: np.ndarray, exit_x_frac: float, flash: bool = False) -> np.ndarray:
-        """Vertical counting line — exact same style as chestnut pipeline, scaled for frame width."""
-        import cv2
-        if frame is None:
-            return frame
-        h, w = frame.shape[:2]
-        x      = int(w * exit_x_frac)
-        offset = max(40, int(w * 0.04))          # band half-width
-        thick  = max(6,  int(w * 0.02))          # center line thickness
-        bt     = max(3,  int(w * 0.012))         # band line thickness
-        # Band lines (yellow) — like chestnut's line_y ± line_offset
-        cv2.line(frame, (x - offset, 0), (x - offset, h), (0, 255, 255), bt)
-        cv2.line(frame, (x + offset, 0), (x + offset, h), (0, 255, 255), bt)
-        # Center line (blue normally, green on grade commit)
-        color = (0, 255, 0) if flash else (255, 50, 0)
-        cv2.line(frame, (x, 0), (x, h), color, thick)
-        return frame
-
     def _annotate_tracked(self, frame: np.ndarray, active: list) -> np.ndarray:
         """
         Draw bounding boxes + labels on a frame using the active track list
