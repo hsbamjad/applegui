@@ -73,7 +73,11 @@ channels:
 # 3-lane screw conveyor; apples spin as they travel
 # ══════════════════════════════════════════════════════════════
 conveyor:
-  lanes: 3                         # Number of physical lanes
+  lanes: 3
+  # Orientation: how apples move through camera view
+  #   LR = left→right   RL = right→left
+  #   TB = top→bottom   BT = bottom→top  ← current camera setup
+  orientation: "BT"
   speed_apples_per_sec: 1          # Nominal: 1 | 2 | 3 apples/s/lane
   camera_to_gate_m: 0.5            # Physical distance: camera center → sorter gate (meters)
   # Timing delay (ms) = (camera_to_gate_m / conveyor_speed_m_s) * 1000
@@ -142,17 +146,17 @@ inference:
   # Robust counting gate — mirrors chestnut pipeline logic
   tracking:
     enabled: true
-    grade_line_x: 0.85          # Centre of counting band (fraction of frame width)
-    band_half_frac: 0.025       # ± 2.5% of width — narrow band, NOT unbounded zone
-    entry_x_frac: 0.35          # Apple's first detection must be LEFT of this
-    min_frames: 5               # Min tracked frames before grade commit
-    max_lost_frames: 10         # Frames to keep a lost track for recovery
-    max_recover_dist: 80        # Max pixels for lost-track ID recovery
-    min_count_dist_frac: 0.12   # Proximity buffer: 12% of width (no double-count)
-    count_memory_frames: 40     # How long to keep proximity buffer entries
-    cull_weight: 1.5            # Extra vote weight for Cull class
-    hit_threshold: 20           # High-conf Cull frames to force Cull grade
-    cull_ratio_threshold: 0.55  # Cull vote fraction to force Cull grade
+    exit_frac: 0.85             # Exit band centre (fraction of TRAVEL axis)
+    band_half_frac: 0.025       # ± 2.5% of travel axis — narrow band
+    entry_frac: 0.35            # First detection must be in start zone (<35%)
+    min_frames: 5
+    max_lost_frames: 10
+    max_recover_dist: 80
+    min_count_dist_frac: 0.12
+    count_memory_frames: 40
+    cull_weight: 1.5
+    hit_threshold: 20
+    cull_ratio_threshold: 0.55
 
 # ══════════════════════════════════════════════════════════════
 # DATA LOGGING

@@ -397,12 +397,14 @@ class MainWindow(QMainWindow):
         # ── Conveyor tracker ───────────────────────────────────────
         inf_cfg      = self._cfg.get("inference", {})
         inf_tracking = inf_cfg.get("tracking", {})
-        self._exit_x_frac = inf_tracking.get("grade_line_x", 0.85)
+        conv_cfg     = self._cfg.get("conveyor", {})
+        self._exit_x_frac = inf_tracking.get("exit_frac", 0.85)
         self._tracker = ConveyorTracker(
-            n_lanes              = self._cfg.get("conveyor", {}).get("lanes", 3),
-            exit_x_frac          = self._exit_x_frac,
+            n_lanes              = conv_cfg.get("lanes", 3),
+            orientation          = conv_cfg.get("orientation", "BT"),
+            exit_frac            = inf_tracking.get("exit_frac",            0.85),
             band_half_frac       = inf_tracking.get("band_half_frac",       0.025),
-            entry_x_frac         = inf_tracking.get("entry_x_frac",         0.35),
+            entry_frac           = inf_tracking.get("entry_frac",           0.35),
             min_frames           = inf_tracking.get("min_frames",           5),
             max_lost_frames      = inf_tracking.get("max_lost_frames",      10),
             max_recover_dist     = inf_tracking.get("max_recover_dist",     80),
