@@ -591,9 +591,9 @@ class MainWindow(QMainWindow):
 
     def _annotate_tracked(self, frame: np.ndarray, active: list) -> np.ndarray:
         """
-        Draw bounding boxes + large ID numbers on all 3 channels.
-        Sizes are proportional to frame width so they stay readable
-        even after the display widget scales the image down 10x.
+        Draw bounding boxes + labels on a frame using the active track list
+        returned by AppleTracker.update().
+        Works on any channel (color or grayscale-converted-to-BGR).
         """
         import cv2
 
@@ -609,49 +609,27 @@ class MainWindow(QMainWindow):
         if not active:
             return out
 
-        h, w = out.shape[:2]
-        box_thick = max(3, int(w * 0.003))
-        lbl_scale = max(0.9, w / 1400)
-        lbl_thick = max(2, int(lbl_scale * 2))
-
         for t in active:
-            cls  = t["class_id"]
-            conf = t["conf"]
-            seq  = t["seq_id"]
-            lane = t["lane"]
+            cls   = t["class_id"]
+            conf  = t["conf"]
+            seq   = t["seq_id"]
+            lane  = t["lane"]
+            frms  = t["frames"]
             x1, y1, x2, y2 = t["box"]
-            bw = max(1, x2 - x1)
-            bh = max(1, y2 - y1)
 
             color = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
             name  = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
 
-            # Thick bounding box
-            cv2.rectangle(out, (x1, y1), (x2, y2), color, box_thick)
+            # Box
+            cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
 
-            # Large ID number centred inside the box
-            id_str   = f"#{seq}" if seq is not None else "?"
-            id_scale = max(1.2, bh / 55)
-            id_thick = max(3, int(id_scale * 2.8))
-            (iw, ih), _ = cv2.getTextSize(id_str, cv2.FONT_HERSHEY_DUPLEX, id_scale, id_thick)
-            ix = x1 + (bw - iw) // 2
-            iy = y1 + (bh + ih) // 2
-            # Black drop-shadow for contrast on any background
-            cv2.putText(out, id_str, (ix+3, iy+3),
-                        cv2.FONT_HERSHEY_DUPLEX, id_scale, (0,0,0), id_thick+3, cv2.LINE_AA)
-            # White text on top
-            cv2.putText(out, id_str, (ix, iy),
-                        cv2.FONT_HERSHEY_DUPLEX, id_scale, (255,255,255), id_thick, cv2.LINE_AA)
-
-            # Class + confidence label above the box
-            label = f"{name} {conf*100:.0f}%  L{lane}"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, lbl_scale, lbl_thick)
-            pad = max(4, int(w * 0.002))
-            lx  = x1
-            ly  = max(th + pad*2, y1 - pad)
-            cv2.rectangle(out, (lx, ly-th-pad), (lx+tw+pad*2, ly+pad//2), color, -1)
-            cv2.putText(out, label, (lx+pad, ly),
-                        cv2.FONT_HERSHEY_SIMPLEX, lbl_scale, (0,0,0), lbl_thick, cv2.LINE_AA)
+            # Label: "Fresh 94%  #3  L2  [12f]"  or "Fresh 94%  ?  [4f]" before exit
+            id_str = f"#{seq}" if seq is not None else "?"
+            label  = f"{name} {conf*100:.0f}%  {id_str}  L{lane}  [{frms}f]"
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            cv2.rectangle(out, (x1, y1 - th - 6), (x1 + tw + 4, y1), color, -1)
+            cv2.putText(out, label, (x1 + 2, y1 - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
 
         return out
 
