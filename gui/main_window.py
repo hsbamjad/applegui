@@ -243,9 +243,10 @@ class MainWindow(QMainWindow):
         self._tracker: ConveyorTracker | None            = None
         self._infer_fps: float = 0.0
         self._loading_model_name: str = ""
-        self._last_ch1: np.ndarray | None = None   # latest raw frames from VideoWorker
+        self._last_ch1: np.ndarray | None = None
         self._last_ch2: np.ndarray | None = None
         self._last_ch3: np.ndarray | None = None
+        self._exit_x_frac: float = 0.85   # set again in _start_pipeline from config
         self._total        = 0
         self._wb_reverting = False   # True while a revert_white_balance() call is in flight
 
@@ -577,45 +578,21 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _draw_count_line(frame: np.ndarray, exit_x_frac: float, flash: bool = False) -> np.ndarray:
-        """
-        Draw a bold vertical counting line that stays visible after display scaling.
-        All sizes are proportional to frame width so they look right at any resolution.
-        """
+        """Vertical counting line — exact same style as chestnut pipeline, scaled for frame width."""
         import cv2
         if frame is None:
             return frame
-
-        h, w   = frame.shape[:2]
+        h, w = frame.shape[:2]
         x      = int(w * exit_x_frac)
-
-        # Proportional sizes — visible even when frame is downscaled 10x
-        offset  = max(40, int(w * 0.04))   # zone half-width  (~82px @ 2048)
-        thick_c = max(8,  int(w * 0.025))  # center line      (~51px @ 2048)
-        thick_b = max(4,  int(w * 0.016))  # band lines       (~33px @ 2048)
-
-        # Semi-transparent zone
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (x - offset, 0), (x + offset, h), (0, 220, 220), -1)
-        cv2.addWeighted(overlay, 0.20, frame, 0.80, 0, frame)
-
-        # Band lines (cyan)
-        cv2.line(frame, (x - offset, 0), (x - offset, h), (255, 255, 0), thick_b)
-        cv2.line(frame, (x + offset, 0), (x + offset, h), (255, 255, 0), thick_b)
-
-        # Center counting line — bright green on grade commit, orange otherwise
-        color = (0, 255, 0) if flash else (0, 140, 255)
-        cv2.line(frame, (x, 0), (x, h), color, thick_c)
-
-        # Label proportional to frame width
-        fs = max(0.8, w / 1800)
-        label = "GRADE LINE"
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 2)
-        pad = max(4, int(w * 0.003))
-        cv2.rectangle(frame, (x - tw // 2 - pad, pad),
-                      (x + tw // 2 + pad, th + pad * 3), color, -1)
-        cv2.putText(frame, label, (x - tw // 2, th + pad * 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), 2, cv2.LINE_AA)
-
+        offset = max(40, int(w * 0.04))          # band half-width
+        thick  = max(6,  int(w * 0.02))          # center line thickness
+        bt     = max(3,  int(w * 0.012))         # band line thickness
+        # Band lines (yellow) — like chestnut's line_y ± line_offset
+        cv2.line(frame, (x - offset, 0), (x - offset, h), (0, 255, 255), bt)
+        cv2.line(frame, (x + offset, 0), (x + offset, h), (0, 255, 255), bt)
+        # Center line (blue normally, green on grade commit)
+        color = (0, 255, 0) if flash else (255, 50, 0)
+        cv2.line(frame, (x, 0), (x, h), color, thick)
         return frame
 
     def _annotate_tracked(self, frame: np.ndarray, active: list) -> np.ndarray:
