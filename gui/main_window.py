@@ -578,23 +578,42 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _draw_count_line(frame: np.ndarray, exit_x_frac: float, flash: bool = False) -> np.ndarray:
         """
-        Draw a vertical counting line at exit_x_frac * frame_width.
-        Same visual style as the chestnut pipeline:
-          - Two thin yellow band lines at ±30 px
-          - One thick center line: blue normally, green when flashing (grade committed)
+        Draw a bold vertical counting line visible at any display scale.
+        Style mirrors the chestnut pipeline:
+          - Semi-transparent yellow zone between the band markers
+          - Thick cyan band marker lines
+          - Very thick center line: blue normally, bright green when a grade commits
+          - Text label
         """
         import cv2
         if frame is None:
             return frame
+
         h, w = frame.shape[:2]
         x      = int(w * exit_x_frac)
-        offset = 30
-        # Band lines
-        cv2.line(frame, (x - offset, 0), (x - offset, h), (0, 255, 255), 1)  # yellow
-        cv2.line(frame, (x + offset, 0), (x + offset, h), (0, 255, 255), 1)  # yellow
-        # Center line
-        color = (0, 255, 0) if flash else (255, 0, 0)                         # green or blue
-        cv2.line(frame, (x, 0), (x, h), color, 2)
+        offset = max(30, int(w * 0.015))   # ~1.5% of width, min 30px
+
+        # Semi-transparent yellow zone between bands
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (x - offset, 0), (x + offset, h), (0, 220, 220), -1)
+        cv2.addWeighted(overlay, 0.15, frame, 0.85, 0, frame)
+
+        # Band marker lines (thick cyan)
+        cv2.line(frame, (x - offset, 0), (x - offset, h), (255, 255, 0), 3)
+        cv2.line(frame, (x + offset, 0), (x + offset, h), (255, 255, 0), 3)
+
+        # Center counting line — very thick, flashes green on grade commit
+        color = (0, 255, 0) if flash else (0, 120, 255)   # bright green or orange-blue
+        cv2.line(frame, (x, 0), (x, h), color, 8)
+
+        # Label at top
+        label = "GRADE LINE"
+        fs    = max(0.6, w / 2048)   # font scale proportional to frame width
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 2)
+        cv2.rectangle(frame, (x - tw // 2 - 4, 4), (x + tw // 2 + 4, th + 12), color, -1)
+        cv2.putText(frame, label, (x - tw // 2, th + 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), 2, cv2.LINE_AA)
+
         return frame
 
     def _annotate_tracked(self, frame: np.ndarray, active: list) -> np.ndarray:
