@@ -404,21 +404,14 @@ class MainWindow(QMainWindow):
             min_frames       = inf_tracking.get("min_frames", 8),
         )
 
-        # ── Inference worker ───────────────────────────────────────
-        speed = self._left.conveyor_speed
-        self._inf_w = MockInferenceWorker(apples_per_sec=speed)
-        self._inf_w.sig_grade.connect(self._on_grade)
-        self._inf_w.start()
 
         # ── UI state ───────────────────────────────────────────────
         self._left.set_camera_connected(True)
-        sg.set_status("AI Model", "online", "Mock pipeline")
+        sg.set_status("AI Model", "idle",   "Waiting for model")
         sg.set_status("Sorter",   "idle",   "Simulation")
         self._right.metrics_group.start_session()
         self._total = 0
-        self.statusBar().showMessage(
-            f"Pipeline running  ·  {speed} apple/s/lane × 3 lanes"
-        )
+        self.statusBar().showMessage("Camera connected  ·  Load a model to start grading")
 
     def _stop_pipeline(self) -> None:
         if self._infer_w:
