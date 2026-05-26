@@ -236,8 +236,7 @@ class RealInferenceWorker(QThread):
             model = YOLO(self._model_path)
             class_names = model.names   # {0: 'Fresh', 1: 'Processing', 2: 'Cull'}
             self.sig_status.emit(
-                f"Model loaded  |  classes: {list(class_names.values())}  "
-                f"|  device: {self._device}", False
+                f"Model loaded successfully  |  Device: {self._device.upper()}", False
             )
         except Exception as e:
             self.sig_status.emit(f"Model load failed: {e}", True)
