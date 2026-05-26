@@ -455,11 +455,7 @@ class MainWindow(QMainWindow):
             self._infer_w is not None and self._infer_w.isRunning()
         )
 
-        if inference_running:
-            # Inference owns CH1 display (annotated) — only update raw NIR channels
-            self._center.channel_display.update_channel_frame(1, ch2, fps)
-            self._center.channel_display.update_channel_frame(2, ch3, fps)
-        else:
+        if not inference_running:
             # No inference — show raw video on all channels
             self._center.channel_display.update_frames(ch1, ch2, ch3, fps)
 
@@ -569,9 +565,14 @@ class MainWindow(QMainWindow):
                 f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
             )
 
-        # ── Annotate CH1 only (NIR channels keep raw video from VideoWorker) ──
+        # ── Annotate all 3 channels with same boxes ───────────────
         ann_ch1 = self._annotate_tracked(self._last_ch1, active)
-        self._center.channel_display.update_channel_frame(0, ann_ch1, self._infer_fps)
+        ann_ch2 = self._annotate_tracked(self._last_ch2, active)
+        ann_ch3 = self._annotate_tracked(self._last_ch3, active)
+        fps = self._infer_fps
+        self._center.channel_display.update_channel_frame(0, ann_ch1, fps)
+        self._center.channel_display.update_channel_frame(1, ann_ch2, fps)
+        self._center.channel_display.update_channel_frame(2, ann_ch3, fps)
 
     def _annotate_tracked(self, frame: np.ndarray, active: list) -> np.ndarray:
         """
@@ -596,7 +597,7 @@ class MainWindow(QMainWindow):
         for t in active:
             cls   = t["class_id"]
             conf  = t["conf"]
-            gid   = t["global_id"]
+            seq   = t["seq_id"]
             lane  = t["lane"]
             frms  = t["frames"]
             x1, y1, x2, y2 = t["box"]
@@ -608,7 +609,7 @@ class MainWindow(QMainWindow):
             cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
 
             # Label: "Fresh 94%  #3  L2  [12f]"  or "Fresh 94%  ?  [4f]" before exit
-            id_str = f"#{t['seq_id']}" if t["seq_id"] is not None else "?"
+            id_str = f"#{seq}" if seq is not None else "?"
             label  = f"{name} {conf*100:.0f}%  {id_str}  L{lane}  [{frms}f]"
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
             cv2.rectangle(out, (x1, y1 - th - 6), (x1 + tw + 4, y1), color, -1)
