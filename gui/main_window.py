@@ -578,40 +578,42 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _draw_count_line(frame: np.ndarray, exit_x_frac: float, flash: bool = False) -> np.ndarray:
         """
-        Draw a bold vertical counting line visible at any display scale.
-        Style mirrors the chestnut pipeline:
-          - Semi-transparent yellow zone between the band markers
-          - Thick cyan band marker lines
-          - Very thick center line: blue normally, bright green when a grade commits
-          - Text label
+        Draw a bold vertical counting line that stays visible after display scaling.
+        All sizes are proportional to frame width so they look right at any resolution.
         """
         import cv2
         if frame is None:
             return frame
 
-        h, w = frame.shape[:2]
+        h, w   = frame.shape[:2]
         x      = int(w * exit_x_frac)
-        offset = max(30, int(w * 0.015))   # ~1.5% of width, min 30px
 
-        # Semi-transparent yellow zone between bands
+        # Proportional sizes — visible even when frame is downscaled 10x
+        offset  = max(40, int(w * 0.04))   # zone half-width  (~82px @ 2048)
+        thick_c = max(8,  int(w * 0.025))  # center line      (~51px @ 2048)
+        thick_b = max(4,  int(w * 0.016))  # band lines       (~33px @ 2048)
+
+        # Semi-transparent zone
         overlay = frame.copy()
         cv2.rectangle(overlay, (x - offset, 0), (x + offset, h), (0, 220, 220), -1)
-        cv2.addWeighted(overlay, 0.15, frame, 0.85, 0, frame)
+        cv2.addWeighted(overlay, 0.20, frame, 0.80, 0, frame)
 
-        # Band marker lines (thick cyan)
-        cv2.line(frame, (x - offset, 0), (x - offset, h), (255, 255, 0), 3)
-        cv2.line(frame, (x + offset, 0), (x + offset, h), (255, 255, 0), 3)
+        # Band lines (cyan)
+        cv2.line(frame, (x - offset, 0), (x - offset, h), (255, 255, 0), thick_b)
+        cv2.line(frame, (x + offset, 0), (x + offset, h), (255, 255, 0), thick_b)
 
-        # Center counting line — very thick, flashes green on grade commit
-        color = (0, 255, 0) if flash else (0, 120, 255)   # bright green or orange-blue
-        cv2.line(frame, (x, 0), (x, h), color, 8)
+        # Center counting line — bright green on grade commit, orange otherwise
+        color = (0, 255, 0) if flash else (0, 140, 255)
+        cv2.line(frame, (x, 0), (x, h), color, thick_c)
 
-        # Label at top
+        # Label proportional to frame width
+        fs = max(0.8, w / 1800)
         label = "GRADE LINE"
-        fs    = max(0.6, w / 2048)   # font scale proportional to frame width
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 2)
-        cv2.rectangle(frame, (x - tw // 2 - 4, 4), (x + tw // 2 + 4, th + 12), color, -1)
-        cv2.putText(frame, label, (x - tw // 2, th + 6),
+        pad = max(4, int(w * 0.003))
+        cv2.rectangle(frame, (x - tw // 2 - pad, pad),
+                      (x + tw // 2 + pad, th + pad * 3), color, -1)
+        cv2.putText(frame, label, (x - tw // 2, th + pad * 2),
                     cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), 2, cv2.LINE_AA)
 
         return frame
