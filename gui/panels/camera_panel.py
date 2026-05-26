@@ -537,11 +537,11 @@ class LeftControlPanel(QWidget):
         vlayout.addWidget(self._roi_card())
 
 
-        vlayout.addWidget(_SectionHeader("Conveyor"))
-        vlayout.addWidget(self._conveyor_card())
-
         vlayout.addWidget(_SectionHeader("AI Model"))
         vlayout.addWidget(self._model_card())
+
+        vlayout.addWidget(_SectionHeader("Conveyor"))
+        vlayout.addWidget(self._conveyor_card())
 
         vlayout.addWidget(_SectionHeader("Sorter"))
         vlayout.addWidget(self._sorter_card())
