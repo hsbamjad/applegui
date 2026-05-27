@@ -364,28 +364,25 @@ class CenterPanel(QWidget):
             }}
         """)
 
-        # ── Top row: 3 raw sensor channels + AI Model Input (all equal width) ──
-        # MultiChannelDisplay has 3 internal panels (stretch=3).
-        # ModelInputPanel sits alongside with stretch=1 → all 4 become equal.
-        top_row = QWidget()
-        top_row.setStyleSheet(f"background-color: {BG_BASE};")
-        top_layout = QHBoxLayout(top_row)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(1)
-
+        # Top: raw 3-channel sensor display
         self.channel_display = MultiChannelDisplay(self)
+        splitter.addWidget(self.channel_display)
+
+        # Bottom: tab widget — AI Model Input | Analytics
+        from PyQt6.QtWidgets import QTabWidget
+        self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)   # removes the pane border for a cleaner look
+
+        # ── Tab 0: AI Model Input ──────────────────────────────────────
         cfg = _load_config()
         input_mode = cfg.get("inference", {}).get("input_mode", "RB-nir1")
         self.model_input_panel = ModelInputPanel(input_mode=input_mode)
+        self._tabs.addTab(self.model_input_panel, "◆  AI Model Input")
 
-        top_layout.addWidget(self.channel_display,    stretch=3)
-        top_layout.addWidget(self.model_input_panel,  stretch=1)
-        splitter.addWidget(top_row)
-
-        # ── Bottom row: Analytics (Phase 6 charts placeholder) ─────────────────
-        analytics_row = QWidget()
-        analytics_row.setStyleSheet(f"background-color: {BG_BASE};")
-        analytics_layout = QHBoxLayout(analytics_row)
+        # ── Tab 1: Analytics (Phase 6 placeholder) ─────────────────────
+        analytics_widget = QWidget()
+        analytics_widget.setStyleSheet(f"background-color: {BG_BASE};")
+        analytics_layout = QHBoxLayout(analytics_widget)
         analytics_layout.setContentsMargins(1, 1, 1, 1)
         analytics_layout.setSpacing(1)
         analytics_layout.addWidget(ChartPlaceholder(
@@ -398,8 +395,9 @@ class CenterPanel(QWidget):
             "Apples / min rolling window  ·  Phase 6",
             SUCCESS,
         ))
-        splitter.addWidget(analytics_row)
+        self._tabs.addTab(analytics_widget, "⬛  Analytics")
 
+        splitter.addWidget(self._tabs)
         splitter.setSizes([700, 300])
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
