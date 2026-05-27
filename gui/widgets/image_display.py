@@ -51,6 +51,10 @@ class ChannelPanel(QWidget):
         self._meta   = CHANNEL_META[idx]
         self._color  = CH_COLORS[idx]
         self._frames = 0
+        # Last received frame — re-rendered on resize so maximizing fills correctly
+        self._last_frame:      np.ndarray | None       = None
+        self._last_fps:        float                   = 0.0
+        self._last_orig_shape: tuple[int, int] | None  = None
         # ROI preview overlay — sensor-space rectangle (None = no overlay)
         self._roi_preview: tuple[int, int, int, int] | None = None  # (ox, oy, w, h)
         # Active ROI: the sensor-space region the camera is currently streaming.
@@ -185,9 +189,27 @@ class ChannelPanel(QWidget):
         super().resizeEvent(event)
         if self._frames == 0:
             self._draw_placeholder()
+        elif self._last_frame is not None:
+            # Re-render the last frame at the new widget size so maximizing
+            # the window immediately fills the panel without waiting for the
+            # next camera frame to arrive.
+            self._render(self._last_frame, self._last_fps, self._last_orig_shape)
 
     @pyqtSlot(object, float, object)
     def update_frame(self, frame: np.ndarray, fps: float = 0.0, orig_shape: tuple[int, int] | None = None) -> None:
+        if frame is None:
+            return
+
+        # Cache for re-render on resize
+        self._last_frame      = frame
+        self._last_fps        = fps
+        self._last_orig_shape = orig_shape
+        self._frames += 1   # count real new frames only (not resize re-renders)
+
+        self._render(frame, fps, orig_shape)
+
+    def _render(self, frame: np.ndarray, fps: float, orig_shape: tuple[int, int] | None) -> None:
+        """Convert frame to pixmap and push to the display label."""
         if frame is None:
             return
 
@@ -227,7 +249,6 @@ class ChannelPanel(QWidget):
             pixmap = self._draw_roi_overlay(pixmap, w, h)
 
         self._display.setPixmap(pixmap)
-        self._frames += 1
         disp_w = orig_shape[0] if orig_shape else w
         disp_h = orig_shape[1] if orig_shape else h
         self._lbl_res.setText(f"{disp_w}×{disp_h}")
