@@ -339,6 +339,12 @@ class ModelInputPanel(QWidget):
         self._count_lbl.setText("0 graded")
         self._draw_placeholder()
 
+    def set_mode(self, input_mode: str) -> None:
+        """Update the band-config label in the header — called when a new model is loaded."""
+        self._mode = input_mode
+        band_desc = self._BAND_LABELS.get(input_mode.lower(), input_mode)
+        self._band_lbl.setText(band_desc)
+
 
 # ── Center panel ──────────────────────────────────────────────────────────────
 
@@ -712,10 +718,13 @@ class MainWindow(QMainWindow):
             self._right.results_group.clear_results()
             self._right.metrics_group.reset()
 
-        from pathlib import Path
-        inf_cfg    = self._cfg.get("inference", {})
+        # Re-read config from disk every time a model is loaded so that changes
+        # to config.yaml (e.g. swapping input_mode) take effect without restarting.
+        fresh_cfg  = _load_config()
+        inf_cfg    = fresh_cfg.get("inference", {})
         models_dir = Path(inf_cfg.get("model_dir", "models/"))
         model_path = str(models_dir / name)
+        input_mode = inf_cfg.get("input_mode", "RB-nir1")
 
         self._right.status_group.set_status("AI Model", "warning", f"Loading {name}...")
         self._left.set_model_loading(True)   # disable button + combo while GPU loads
@@ -724,12 +733,13 @@ class MainWindow(QMainWindow):
 
         self._total_graded = 0
         self._center.model_input_panel.reset()
+        self._center.model_input_panel.set_mode(input_mode)   # update header label live
         self._infer_w = RealInferenceWorker(
             model_path     = model_path,
             conf_threshold = inf_cfg.get("confidence_threshold", 0.5),
             iou_threshold  = inf_cfg.get("iou_threshold", 0.45),
             device         = inf_cfg.get("device", "cuda"),
-            input_mode     = inf_cfg.get("input_mode", "RB-nir1"),
+            input_mode     = input_mode,
         )
         self._infer_w.sig_result.connect(self._on_inference_result)
         self._infer_w.sig_input_frame.connect(self._on_input_frame)
