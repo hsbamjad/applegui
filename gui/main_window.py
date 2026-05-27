@@ -850,9 +850,15 @@ class MainWindow(QMainWindow):
             # Box
             cv2.rectangle(small, (sx1, sy1), (sx2, sy2), draw_color, box_thick)
 
-            # Label: "#3 Fresh 87% L2"  or  "?8f Fresh 87% L2" before counted
+            # Label pill ─────────────────────────────────────────────────────
+            # show_label=True  (AI Model Input panel): "#3 Fresh 87% L2"
+            # show_label=False (raw CH1/CH2/CH3):      "#3 L2"  — ID + lane only
             id_part = f"#{seq}" if seq is not None else "?"
-            label   = f"{id_part} {name} {conf*100:.0f}% L{lane}"
+            if show_label:
+                name  = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
+                label = f"{id_part} {name} {conf*100:.0f}% L{lane}"
+            else:
+                label = f"{id_part} L{lane}"
 
             (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, txt_thick)
             lx = max(0, sx1)
