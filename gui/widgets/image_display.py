@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy,
 )
 from PyQt6.QtGui import QPixmap, QImage, QFont, QColor, QPainter, QPen, QBrush
-from PyQt6.QtCore import Qt, QTimer, pyqtSlot
+from PyQt6.QtCore import Qt, pyqtSlot
 
 from gui.styles import CH_COLORS, BG_BASE, BG_CARD, BORDER, TEXT_1, TEXT_2, TEXT_3
 
@@ -51,15 +51,6 @@ class ChannelPanel(QWidget):
         self._meta   = CHANNEL_META[idx]
         self._color  = CH_COLORS[idx]
         self._frames = 0
-        # Last received frame — re-rendered on resize so maximizing fills correctly
-        self._last_frame:      np.ndarray | None       = None
-        self._last_fps:        float                   = 0.0
-        self._last_orig_shape: tuple[int, int] | None  = None
-        # Debounce timer: fires once after window resize settles (avoids animation
-        # stutter from re-rendering on every intermediate resizeEvent call).
-        self._resize_timer = QTimer(self)
-        self._resize_timer.setSingleShot(True)
-        self._resize_timer.timeout.connect(self._on_resize_settled)
         # ROI preview overlay — sensor-space rectangle (None = no overlay)
         self._roi_preview: tuple[int, int, int, int] | None = None  # (ox, oy, w, h)
         # Active ROI: the sensor-space region the camera is currently streaming.
@@ -194,31 +185,9 @@ class ChannelPanel(QWidget):
         super().resizeEvent(event)
         if self._frames == 0:
             self._draw_placeholder()
-        elif self._last_frame is not None:
-            # Debounce: resize fires ~60x during maximize animation.
-            # Start/restart the timer — _on_resize_settled fires once it settles.
-            self._resize_timer.start(100)
-
-    def _on_resize_settled(self) -> None:
-        """Called once after window resize is stable. Re-renders at final size."""
-        if self._last_frame is not None:
-            self._render(self._last_frame, self._last_fps, self._last_orig_shape)
 
     @pyqtSlot(object, float, object)
     def update_frame(self, frame: np.ndarray, fps: float = 0.0, orig_shape: tuple[int, int] | None = None) -> None:
-        if frame is None:
-            return
-
-        # Cache for re-render on resize
-        self._last_frame      = frame
-        self._last_fps        = fps
-        self._last_orig_shape = orig_shape
-        self._frames += 1   # count real new frames only (not resize re-renders)
-
-        self._render(frame, fps, orig_shape)
-
-    def _render(self, frame: np.ndarray, fps: float, orig_shape: tuple[int, int] | None) -> None:
-        """Convert frame to pixmap and push to the display label."""
         if frame is None:
             return
 
@@ -258,6 +227,7 @@ class ChannelPanel(QWidget):
             pixmap = self._draw_roi_overlay(pixmap, w, h)
 
         self._display.setPixmap(pixmap)
+        self._frames += 1
         disp_w = orig_shape[0] if orig_shape else w
         disp_h = orig_shape[1] if orig_shape else h
         self._lbl_res.setText(f"{disp_w}×{disp_h}")
