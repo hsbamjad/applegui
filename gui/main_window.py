@@ -768,9 +768,9 @@ class MainWindow(QMainWindow):
             )
 
         # ── Annotate all 3 channels with same boxes ───────────────
-        ann_ch1 = self._annotate_tracked(self._last_ch1, active)
-        ann_ch2 = self._annotate_tracked(self._last_ch2, active)
-        ann_ch3 = self._annotate_tracked(self._last_ch3, active)
+        ann_ch1 = self._annotate_tracked(self._last_ch1, active, show_label=False)
+        ann_ch2 = self._annotate_tracked(self._last_ch2, active, show_label=False)
+        ann_ch3 = self._annotate_tracked(self._last_ch3, active, show_label=False)
         fps = self._infer_fps
         # Pass the original full resolution so the UI label stays correct
         orig_shape = (self._last_ch1.shape[1], self._last_ch1.shape[0])
@@ -781,7 +781,7 @@ class MainWindow(QMainWindow):
         # ── Push annotated spectral composite to AI Model Input panel ─
         if self._last_input_frame is not None:
             self._total_graded += len(graded)
-            ann_input = self._annotate_tracked(self._last_input_frame, active)
+            ann_input = self._annotate_tracked(self._last_input_frame, active, show_label=True)
             self._center.model_input_panel.update_frame(
                 ann_input, fps, self._total_graded
             )
@@ -791,11 +791,19 @@ class MainWindow(QMainWindow):
         """Cache the spectral composite emitted by RealInferenceWorker."""
         self._last_input_frame = frame
 
-    def _annotate_tracked(self, frame: np.ndarray, active: list) -> np.ndarray:
+    def _annotate_tracked(
+        self, frame: np.ndarray, active: list, show_label: bool = True
+    ) -> np.ndarray:
         """
-        Draw bounding boxes + ID labels.
-        Works on a downscaled copy for speed — cv2 ops on 512px are 16x faster
-        than on 2048px, and the display widget is only ~130px wide anyway.
+        Draw bounding boxes on a downscaled copy for speed.
+
+        Args:
+            frame:      Source numpy frame (any channel layout).
+            active:     List of active track dicts from AppleTracker.
+            show_label: If True, draw grade + ID pill above each box.
+                        If False, draw the coloured box only — used for
+                        the raw CH1/CH2/CH3 panels where grading info is
+                        shown exclusively in the AI Model Input panel.
         """
         import cv2
 
@@ -828,7 +836,6 @@ class MainWindow(QMainWindow):
             conf     = t["conf"]
             seq      = t["seq_id"]
             lane     = t["lane"]
-            frms     = t["frames"]
             eligible = t.get("eligible", True)
             x1, y1, x2, y2 = t["box"]
 
