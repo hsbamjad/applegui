@@ -105,9 +105,10 @@ class RealInferenceWorker(QThread):
       sig_status(str, bool) -- status messages and errors
     """
 
-    sig_result = pyqtSignal(object)   # ultralytics Results object only
-    sig_fps    = pyqtSignal(float)
-    sig_status = pyqtSignal(str, bool)
+    sig_result      = pyqtSignal(object)   # ultralytics Results object only
+    sig_input_frame = pyqtSignal(object)   # numpy array: the spectral composite fed to YOLO
+    sig_fps         = pyqtSignal(float)
+    sig_status      = pyqtSignal(str, bool)
 
     # Box colours per class index (BGR)
     _CLASS_COLORS = [
@@ -281,6 +282,10 @@ class RealInferenceWorker(QThread):
 
             # Emit only the result object — no heavy frame copies through Qt signal
             self.sig_result.emit(results[0])
+
+            # Emit the spectral composite that was fed to YOLO so the UI can
+            # display the "model-eye" view in the AI Model Input panel.
+            self.sig_input_frame.emit(frame.copy())
 
             frame_count += 1
             elapsed = time.perf_counter() - fps_start

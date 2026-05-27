@@ -139,7 +139,7 @@ class HeaderBar(QWidget):
         painter.end()
 
 
-# ── Chart placeholder ─────────────────────────────────────────────────────────
+# ── Chart placeholder (used in Analytics tab) ─────────────────────────────────
 
 class ChartPlaceholder(QWidget):
     def __init__(self, title: str, body: str, color: str, parent=None) -> None:
@@ -174,6 +174,171 @@ class ChartPlaceholder(QWidget):
         layout.addLayout(inner)
 
 
+# ── Model Input Panel ─────────────────────────────────────────────────────────
+
+class ModelInputPanel(QWidget):
+    """
+    Displays the exact spectral composite (e.g. RB+NIR1) that the YOLO model
+    sees at inference time, with tracking boxes and grade labels overlaid.
+
+    This makes it immediately clear to the viewer which spectral channels
+    drive the AI decision — scientifically honest and great for demo purposes.
+    """
+
+    # Band-combo → human-readable description
+    _BAND_LABELS: dict[str, str] = {
+        "rb-nir1":     "R · B · NIR1     (660nm Red · 660nm Blue · 800nm NIR)",
+        "rg-nir1":     "R · G · NIR1     (660nm Red · 660nm Green · 800nm NIR)",
+        "r-nir1-nir2": "R · NIR1 · NIR2  (660nm Red · 800nm NIR · 900nm NIR)",
+        "rgb":         "RGB  (full color 660nm)",
+        "ch1":         "CH1  (raw color sensor)",
+    }
+
+    def __init__(self, input_mode: str = "RB-nir1", parent=None) -> None:
+        super().__init__(parent)
+        self._mode      = input_mode
+        self._has_frame = False
+        self.setStyleSheet(f"background-color: {BG_BASE};")
+        self._build()
+
+    def _build(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Top accent bar (indigo — AI colour) ──────────────────────
+        accent = QWidget()
+        accent.setFixedHeight(3)
+        accent.setStyleSheet(f"background-color: {ACCENT}; border: none;")
+        root.addWidget(accent)
+
+        # ── Header row ───────────────────────────────────────────────
+        hdr = QWidget()
+        hdr.setFixedHeight(32)
+        hdr.setStyleSheet(
+            f"background-color: {BG_SURFACE}; "
+            f"border-bottom: 1px solid {BORDER}; border: none;"
+        )
+        hdr_layout = QHBoxLayout(hdr)
+        hdr_layout.setContentsMargins(12, 0, 12, 0)
+        hdr_layout.setSpacing(8)
+
+        icon = QLabel("◆")
+        icon.setStyleSheet(f"color: {ACCENT}; font-size: 10px; background: transparent;")
+
+        title_lbl = QLabel("AI MODEL INPUT")
+        title_lbl.setStyleSheet(
+            f"color: {TEXT_1}; font-size: 10px; font-weight: 700; "
+            f"letter-spacing: 1.2px; background: transparent;"
+        )
+
+        sep = QLabel("·")
+        sep.setStyleSheet(f"color: {TEXT_3}; background: transparent;")
+
+        band_desc = self._BAND_LABELS.get(self._mode.lower(), self._mode)
+        self._band_lbl = QLabel(band_desc)
+        self._band_lbl.setStyleSheet(
+            f"color: {TEXT_2}; font-size: 10px; background: transparent;"
+        )
+
+        hdr_layout.addWidget(icon)
+        hdr_layout.addWidget(title_lbl)
+        hdr_layout.addWidget(sep)
+        hdr_layout.addWidget(self._band_lbl)
+        hdr_layout.addStretch()
+
+        self._count_lbl = QLabel("0 graded")
+        self._count_lbl.setStyleSheet(
+            f"color: {SUCCESS}; font-size: 10px; font-weight: 600; "
+            f"background: transparent;"
+        )
+        self._fps_lbl = QLabel("-- FPS")
+        self._fps_lbl.setStyleSheet(
+            f"color: {TEXT_3}; font-size: 10px; background: transparent;"
+        )
+        hdr_layout.addWidget(self._count_lbl)
+        hdr_layout.addSpacing(12)
+        hdr_layout.addWidget(self._fps_lbl)
+        root.addWidget(hdr)
+
+        # ── Image area ───────────────────────────────────────────────
+        self._display = QLabel()
+        self._display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._display.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self._display.setStyleSheet(
+            "background-color: transparent; border: none;"
+        )
+        root.addWidget(self._display, stretch=1)
+
+        self._draw_placeholder()
+
+    # ------------------------------------------------------------------
+    def _draw_placeholder(self) -> None:
+        from PyQt6.QtGui import QPixmap, QPainter
+        w = max(self._display.width(), 400)
+        h = max(self._display.height(), 160)
+        pixmap = QPixmap(w, h)
+        pixmap.fill(QColor(BG_BASE))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = QFont("Segoe UI Variable", 10)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 5)
+        painter.setFont(font)
+        painter.setPen(QColor(ACCENT + "33"))
+        painter.drawText(
+            pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "WAITING FOR MODEL"
+        )
+        painter.end()
+        self._display.setPixmap(pixmap)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        if not self._has_frame:
+            self._draw_placeholder()
+
+    # ------------------------------------------------------------------
+    def update_frame(
+        self, frame: np.ndarray, fps: float, graded_count: int
+    ) -> None:
+        """Push an annotated model-input composite to the display."""
+        import cv2
+        from PyQt6.QtGui import QPixmap, QImage
+
+        if frame is None:
+            return
+
+        if frame.dtype != np.uint8:
+            frame = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
+
+        h, w = frame.shape[:2]
+        if frame.ndim == 3 and frame.shape[2] == 3:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        elif frame.ndim == 2:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+        else:
+            return
+
+        qt_img = QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
+        disp_size = self._display.size()
+        pixmap = QPixmap.fromImage(qt_img).scaled(
+            disp_size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._display.setPixmap(pixmap)
+        self._fps_lbl.setText(f"{fps:.1f} FPS")
+        self._count_lbl.setText(f"{graded_count} graded")
+        self._has_frame = True
+
+    def reset(self) -> None:
+        self._has_frame = False
+        self._fps_lbl.setText("-- FPS")
+        self._count_lbl.setText("0 graded")
+        self._draw_placeholder()
+
+
 # ── Center panel ──────────────────────────────────────────────────────────────
 
 class CenterPanel(QWidget):
@@ -198,28 +363,41 @@ class CenterPanel(QWidget):
             }}
         """)
 
+        # Top: raw 3-channel sensor display
         self.channel_display = MultiChannelDisplay(self)
         splitter.addWidget(self.channel_display)
 
-        chart_row = QWidget()
-        chart_row.setStyleSheet(f"background-color: {BG_BASE};")
-        chart_layout = QHBoxLayout(chart_row)
-        chart_layout.setContentsMargins(1, 1, 1, 1)
-        chart_layout.setSpacing(1)
+        # Bottom: tab widget — AI Model Input | Analytics
+        from PyQt6.QtWidgets import QTabWidget
+        self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)   # removes the pane border for a cleaner look
 
-        chart_layout.addWidget(ChartPlaceholder(
+        # ── Tab 0: AI Model Input ──────────────────────────────────────
+        cfg = _load_config()
+        input_mode = cfg.get("inference", {}).get("input_mode", "RB-nir1")
+        self.model_input_panel = ModelInputPanel(input_mode=input_mode)
+        self._tabs.addTab(self.model_input_panel, "◆  AI Model Input")
+
+        # ── Tab 1: Analytics (Phase 6 placeholder) ─────────────────────
+        analytics_widget = QWidget()
+        analytics_widget.setStyleSheet(f"background-color: {BG_BASE};")
+        analytics_layout = QHBoxLayout(analytics_widget)
+        analytics_layout.setContentsMargins(1, 1, 1, 1)
+        analytics_layout.setSpacing(1)
+        analytics_layout.addWidget(ChartPlaceholder(
             "Grade Distribution",
             "PyQtGraph live chart  ·  Phase 6",
             ACCENT,
         ))
-        chart_layout.addWidget(ChartPlaceholder(
+        analytics_layout.addWidget(ChartPlaceholder(
             "Throughput Over Time",
             "Apples / min rolling window  ·  Phase 6",
             SUCCESS,
         ))
+        self._tabs.addTab(analytics_widget, "⬛  Analytics")
 
-        splitter.addWidget(chart_row)
-        splitter.setSizes([700, 300])
+        splitter.addWidget(self._tabs)
+        splitter.setSizes([650, 350])
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
 
@@ -243,11 +421,13 @@ class MainWindow(QMainWindow):
         self._tracker: ConveyorTracker | None            = None
         self._infer_fps: float = 0.0
         self._loading_model_name: str = ""
-        self._last_ch1: np.ndarray | None = None
-        self._last_ch2: np.ndarray | None = None
-        self._last_ch3: np.ndarray | None = None
+        self._last_ch1:        np.ndarray | None = None
+        self._last_ch2:        np.ndarray | None = None
+        self._last_ch3:        np.ndarray | None = None
+        self._last_input_frame: np.ndarray | None = None  # spectral composite fed to YOLO
         self._exit_x_frac: float = 0.85   # set again in _start_pipeline from config
         self._total        = 0
+        self._total_graded = 0             # running count for model input panel badge
         self._wb_reverting = False   # True while a revert_white_balance() call is in flight
 
         self._setup_window()
@@ -439,6 +619,9 @@ class MainWindow(QMainWindow):
 
         self._left.set_camera_connected(False)
         self._center.channel_display.reset_all()
+        self._center.model_input_panel.reset()
+        self._last_input_frame = None
+        self._total_graded = 0
 
         sg = self._right.status_group
         sg.set_status("Camera",   "offline", "Disconnected")
@@ -538,6 +721,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Loading model: {name}")
         self._loading_model_name = name      # remember for set_model_loaded callback
 
+        self._total_graded = 0
+        self._center.model_input_panel.reset()
         self._infer_w = RealInferenceWorker(
             model_path     = model_path,
             conf_threshold = inf_cfg.get("confidence_threshold", 0.5),
@@ -546,6 +731,7 @@ class MainWindow(QMainWindow):
             input_mode     = inf_cfg.get("input_mode", "RB-nir1"),
         )
         self._infer_w.sig_result.connect(self._on_inference_result)
+        self._infer_w.sig_input_frame.connect(self._on_input_frame)
         self._infer_w.sig_fps.connect(self._on_inference_fps)
         self._infer_w.sig_status.connect(self._on_inference_status)
         self._infer_w.start()
@@ -590,6 +776,19 @@ class MainWindow(QMainWindow):
         self._center.channel_display.update_channel_frame(0, ann_ch1, fps, orig_shape)
         self._center.channel_display.update_channel_frame(1, ann_ch2, fps, orig_shape)
         self._center.channel_display.update_channel_frame(2, ann_ch3, fps, orig_shape)
+
+        # ── Push annotated spectral composite to AI Model Input panel ─
+        if self._last_input_frame is not None:
+            self._total_graded += len(graded)
+            ann_input = self._annotate_tracked(self._last_input_frame, active)
+            self._center.model_input_panel.update_frame(
+                ann_input, fps, self._total_graded
+            )
+
+    @pyqtSlot(object)
+    def _on_input_frame(self, frame: np.ndarray) -> None:
+        """Cache the spectral composite emitted by RealInferenceWorker."""
+        self._last_input_frame = frame
 
     def _annotate_tracked(self, frame: np.ndarray, active: list) -> np.ndarray:
         """
