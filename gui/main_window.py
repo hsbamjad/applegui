@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import numpy as np
 import yaml
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
