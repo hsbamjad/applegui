@@ -398,7 +398,7 @@ class CenterPanel(QWidget):
         self._tabs.addTab(analytics_widget, "⬛  Analytics")
 
         splitter.addWidget(self._tabs)
-        splitter.setSizes([650, 350])
+        splitter.setSizes([700, 300])
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
 
