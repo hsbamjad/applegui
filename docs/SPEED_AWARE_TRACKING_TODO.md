@@ -1,4 +1,4 @@
-# Speed-Aware Tracking — Pending Work
+# Speed-Aware Tracking - Pending Work
 
 **Status:** ⏸ Blocked — waiting on confirmed conveyor speed from lead  
 **Created:** 2026-05-27  
