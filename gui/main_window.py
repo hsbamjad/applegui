@@ -906,8 +906,9 @@ class MainWindow(QMainWindow):
                 cv2.fillPoly(overlay, [pts], draw_color)
                 cv2.addWeighted(overlay, 0.35, small, 0.65, 0, small)
 
-                # Solid outline
-                cv2.polylines(small, [pts], isClosed=True, color=draw_color, thickness=2)
+                # Solid antialiased outline
+                cv2.polylines(small, [pts], isClosed=True, color=draw_color,
+                              thickness=2, lineType=cv2.LINE_AA)
 
                 # Anchor for label pill — top-left of bounding box
                 lx_anchor = int(x1 * scale_f)
