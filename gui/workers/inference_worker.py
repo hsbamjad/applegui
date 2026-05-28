@@ -280,7 +280,6 @@ class RealInferenceWorker(QThread):
                     imgsz        = 640,
                     verbose      = False,
                     save         = False,
-                    retina_masks = True,   # full-res mask polygons
                 )
             except Exception as e:
                 log.warning("Inference error: %s", e)

@@ -436,6 +436,7 @@ class MainWindow(QMainWindow):
         self._total        = 0
         self._total_graded = 0             # running count for model input panel badge
         self._wb_reverting = False   # True while a revert_white_balance() call is in flight
+        self._active_tracks: list = []    # cached tracks for per-frame re-annotation
 
         self._setup_window()
         self._build_ui()
@@ -654,10 +655,19 @@ class MainWindow(QMainWindow):
         if not inference_running:
             # No inference — show raw video on all channels
             self._center.channel_display.update_frames(ch1, ch2, ch3, fps)
+            return
 
-        # Feed frames to inference worker if running
-        if inference_running:
-            self._infer_w.enqueue(ch1, ch2, ch3)
+        # Feed frames to inference worker
+        self._infer_w.enqueue(ch1, ch2, ch3)
+
+        # Re-annotate CH1 every incoming frame using the last cached tracks.
+        # This keeps the display smooth and eliminates the "masks frozen"
+        # glitch where apples move but overlaid masks stay at old positions.
+        # _annotate_tracked is cheap here: it resizes to 512px first (no
+        # full-res copy) so the annotation cost is minimal even at 30 FPS.
+        orig_shape = (ch1.shape[1], ch1.shape[0])
+        ann_ch1 = self._annotate_tracked(ch1, self._active_tracks, show_label=False)
+        self._center.channel_display.update_channel_frame(0, ann_ch1, fps, orig_shape)
 
     @pyqtSlot(str, bool)
     def _on_cam_status(self, msg: str, is_error: bool) -> None:
@@ -795,11 +805,15 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(object)
     def _on_inference_result(self, result) -> None:
-        """Vote on tracks, commit grades, annotate CH1 with stored latest frame."""
+        """Vote on tracks, commit grades, update track cache for smooth per-frame display."""
         if self._tracker is None or self._last_ch1 is None:
             return
 
         active, graded = self._tracker.update(result, self._last_ch1.shape)
+
+        # Cache active tracks — _on_frame uses these to annotate CH1 every
+        # video frame so the display stays smooth between inference updates.
+        self._active_tracks = active
 
         # ── Commit finished grades to stats panel ─────────────────
         for rec in graded:
@@ -814,16 +828,17 @@ class MainWindow(QMainWindow):
                 f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
             )
 
-        # ── Annotate all 3 channels with same boxes ───────────────
-        ann_ch1 = self._annotate_tracked(self._last_ch1, active, show_label=False)
-        ann_ch2 = self._annotate_tracked(self._last_ch2, active, show_label=False)
-        ann_ch3 = self._annotate_tracked(self._last_ch3, active, show_label=False)
+        # ── CH1 is re-annotated every frame in _on_frame — skip here ─────────
+        # Only update CH2/CH3 (NIR panels) at inference rate to save
+        # main-thread time. Model input panel also updated here.
         fps = self._infer_fps
-        # Pass the original full resolution so the UI label stays correct
         orig_shape = (self._last_ch1.shape[1], self._last_ch1.shape[0])
-        self._center.channel_display.update_channel_frame(0, ann_ch1, fps, orig_shape)
-        self._center.channel_display.update_channel_frame(1, ann_ch2, fps, orig_shape)
-        self._center.channel_display.update_channel_frame(2, ann_ch3, fps, orig_shape)
+        if self._last_ch2 is not None:
+            ann_ch2 = self._annotate_tracked(self._last_ch2, active, show_label=False)
+            self._center.channel_display.update_channel_frame(1, ann_ch2, fps, orig_shape)
+        if self._last_ch3 is not None:
+            ann_ch3 = self._annotate_tracked(self._last_ch3, active, show_label=False)
+            self._center.channel_display.update_channel_frame(2, ann_ch3, fps, orig_shape)
 
         # ── Push annotated spectral composite to AI Model Input panel ─
         if self._last_input_frame is not None:
@@ -864,21 +879,22 @@ class MainWindow(QMainWindow):
         if frame is None:
             return frame
 
-        if frame.ndim == 2:
-            out = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-        else:
-            out = frame.copy()
-
-        if not active:
-            return out
-
-        h, w = out.shape[:2]
-
-        # ── Downscale for fast drawing ──────────────────────────────────────
-        DRAW_W = 512
+        h, w = frame.shape[:2]
+        DRAW_W  = 512
         scale_f = DRAW_W / w
         draw_h  = int(h * scale_f)
-        small   = cv2.resize(out, (DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
+
+        # Resize to 512px FIRST — avoids copying the full-res frame (~9 MB).
+        # cv2.resize reads frame without modifying it and writes to a new buffer.
+        if frame.ndim == 2:
+            gray_small = cv2.resize(frame, (DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
+            small = cv2.cvtColor(gray_small, cv2.COLOR_GRAY2BGR)
+        else:
+            small = cv2.resize(frame, (DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
+
+        # Early-exit still returns a properly-sized 512px frame.
+        if not active:
+            return small
 
         # Drawing params for 512px canvas
         fs        = 0.55   # font scale
