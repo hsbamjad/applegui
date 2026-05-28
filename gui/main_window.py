@@ -898,17 +898,25 @@ class MainWindow(QMainWindow):
 
             # ── Mask or fallback rectangle ─────────────────────────────────
             if mask_poly is not None and len(mask_poly) >= 3:
-                # Scale polygon to draw canvas
-                pts = (mask_poly * scale_f).astype(np.int32)
+                # Smooth the polygon contour with a circular convolution so that
+                # integer-rounding when scaling 2048→512px does not leave visible
+                # stepped corners (same effect as drawing at full resolution).
+                k      = 9
+                kernel = np.ones(k) / k
+                smooth = mask_poly.copy()
+                smooth[:, 0] = np.convolve(mask_poly[:, 0], kernel, mode="wrap")
+                smooth[:, 1] = np.convolve(mask_poly[:, 1], kernel, mode="wrap")
+
+                pts = (smooth * scale_f).astype(np.int32)
 
                 # Semi-transparent filled mask (35% opacity)
                 overlay = small.copy()
                 cv2.fillPoly(overlay, [pts], draw_color)
                 cv2.addWeighted(overlay, 0.35, small, 0.65, 0, small)
 
-                # Solid antialiased outline
+                # Thin antialiased outline — thickness=1 keeps it precise, not chunky
                 cv2.polylines(small, [pts], isClosed=True, color=draw_color,
-                              thickness=2, lineType=cv2.LINE_AA)
+                              thickness=1, lineType=cv2.LINE_AA)
 
                 # Anchor for label pill — top-left of bounding box
                 lx_anchor = int(x1 * scale_f)
