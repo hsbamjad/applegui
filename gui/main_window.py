@@ -844,13 +844,11 @@ class MainWindow(QMainWindow):
         """
         Draw segmentation mask overlays on a downscaled copy for speed.
 
-        For each tracked apple, draws:
-          - Semi-transparent filled mask polygon (35% opacity)
-          - Solid 2px outline around the mask
-          - Label pill above the mask (grade/ID/lane info)
-
-        Falls back to a bounding rectangle if no mask polygon is available
-        (i.e. model is a detect-only model, not seg).
+        Methodology mirrors the chestnut tracking script:
+          - Raw mask polygon (no smoothing — smoothing blurs the boundary)
+          - 30% opacity filled overlay
+          - 1px outline drawn directly on the polygon contour
+          - Labels drawn on the downscaled canvas after all masks are painted
 
         Args:
             frame:      Source numpy frame (any channel layout).
@@ -870,18 +868,56 @@ class MainWindow(QMainWindow):
             out = frame.copy()
 
         if not active:
-            return out
+            # Still downscale even if no active tracks
+            DRAW_W = 768
+            draw_h = int(out.shape[0] * DRAW_W / out.shape[1])
+            return cv2.resize(out, (DRAW_W, draw_h), interpolation=cv2.INTER_AREA)
 
         h, w = out.shape[:2]
-
-        # Downscale for fast drawing — all coords scaled accordingly
-        DRAW_W  = 512
+        DRAW_W  = 768                          # larger canvas = less polygon stepping
         scale_f = DRAW_W / w
         draw_h  = int(h * scale_f)
-        small   = cv2.resize(out, (DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
 
-        # Drawing params for 512px canvas
-        fs        = 0.55
+        # ── Phase 1: paint all mask fills into one overlay at draw resolution ──
+        # Resize first then draw — avoids working on the full 2048×1536 frame.
+        small   = cv2.resize(out, (DRAW_W, draw_h), interpolation=cv2.INTER_AREA)
+        overlay = small.copy()
+
+        for t in active:
+            cls       = t["class_id"]
+            eligible  = t.get("eligible", True)
+            mask_poly = t.get("mask")
+            color     = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
+            draw_color = color if eligible else (120, 120, 120)
+
+            if mask_poly is not None and len(mask_poly) >= 3:
+                # Scale raw polygon — no smoothing (smoothing blurs the boundary)
+                pts = (mask_poly * scale_f).astype(np.int32)
+                cv2.fillPoly(overlay, [pts], draw_color)
+
+        # Single blend for all masks — 30% opacity matching chestnut script
+        cv2.addWeighted(overlay, 0.30, small, 0.70, 0, small)
+
+        # ── Phase 2: draw outlines + fallback boxes ────────────────────────────
+        for t in active:
+            cls       = t["class_id"]
+            eligible  = t.get("eligible", True)
+            mask_poly = t.get("mask")
+            x1, y1, x2, y2 = t["box"]
+            color     = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
+            draw_color = color if eligible else (120, 120, 120)
+
+            if mask_poly is not None and len(mask_poly) >= 3:
+                pts = (mask_poly * scale_f).astype(np.int32)
+                cv2.polylines(small, [pts], isClosed=True, color=draw_color, thickness=1)
+            else:
+                # Fallback: rectangle for detect-only models
+                sx1 = int(x1 * scale_f); sy1 = int(y1 * scale_f)
+                sx2 = int(x2 * scale_f); sy2 = int(y2 * scale_f)
+                cv2.rectangle(small, (sx1, sy1), (sx2, sy2), draw_color, 1)
+
+        # ── Phase 3: draw label pills on the small canvas ─────────────────────
+        fs        = 0.50
         txt_thick = 1
 
         for t in active:
@@ -890,51 +926,10 @@ class MainWindow(QMainWindow):
             seq      = t["seq_id"]
             lane     = t["lane"]
             eligible = t.get("eligible", True)
-            x1, y1, x2, y2 = t["box"]
-            mask_poly       = t.get("mask")   # (N, 2) float array or None
-
-            color      = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
+            x1, y1  = t["box"][0], t["box"][1]
+            color    = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
             draw_color = color if eligible else (120, 120, 120)
 
-            # ── Mask or fallback rectangle ─────────────────────────────────
-            if mask_poly is not None and len(mask_poly) >= 3:
-                # Smooth the polygon contour with circular convolution so that
-                # integer-rounding when scaling 2048→512px does not produce
-                # visible stepped corners.
-                # np.convolve has no 'wrap' mode, so we manually pad the polygon
-                # end-to-end before convolving with mode='valid'.
-                k      = 9
-                pad    = k // 2
-                kernel = np.ones(k) / k
-                smooth = mask_poly.copy()
-                px = np.concatenate([mask_poly[-pad:, 0], mask_poly[:, 0], mask_poly[:pad, 0]])
-                py = np.concatenate([mask_poly[-pad:, 1], mask_poly[:, 1], mask_poly[:pad, 1]])
-                smooth[:, 0] = np.convolve(px, kernel, mode="valid")
-                smooth[:, 1] = np.convolve(py, kernel, mode="valid")
-
-                pts = (smooth * scale_f).astype(np.int32)
-
-                # Semi-transparent filled mask (35% opacity)
-                overlay = small.copy()
-                cv2.fillPoly(overlay, [pts], draw_color)
-                cv2.addWeighted(overlay, 0.35, small, 0.65, 0, small)
-
-                # Thin antialiased outline — thickness=1 keeps it precise, not chunky
-                cv2.polylines(small, [pts], isClosed=True, color=draw_color,
-                              thickness=1, lineType=cv2.LINE_AA)
-
-                # Anchor for label pill — top-left of bounding box
-                lx_anchor = int(x1 * scale_f)
-                ly_anchor = int(y1 * scale_f)
-            else:
-                # Fallback: plain rectangle (detect-only model)
-                sx1 = int(x1 * scale_f); sy1 = int(y1 * scale_f)
-                sx2 = int(x2 * scale_f); sy2 = int(y2 * scale_f)
-                cv2.rectangle(small, (sx1, sy1), (sx2, sy2), draw_color, 2)
-                lx_anchor = sx1
-                ly_anchor = sy1
-
-            # ── Label pill ─────────────────────────────────────────────────
             id_part = f"#{seq}" if seq is not None else "?"
             if show_label:
                 name  = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
@@ -942,17 +937,17 @@ class MainWindow(QMainWindow):
             else:
                 label = f"{id_part} L{lane}"
 
+            lx = max(0, int(x1 * scale_f))
+            ly_anchor = int(y1 * scale_f)
             (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, txt_thick)
-            lx = max(0, lx_anchor)
             ly = max(lh + 4, ly_anchor - 4)
 
-            # Filled pill background
             cv2.rectangle(small, (lx, ly - lh - 3), (lx + lw + 4, ly + 2), draw_color, -1)
             cv2.putText(small, label, (lx + 2, ly - 1),
                         cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), txt_thick, cv2.LINE_AA)
 
-        # Return the 512px render directly — no expensive upscale
         return small
+
 
 
 
