@@ -1,15 +1,15 @@
-# RGB Channel Flicker at High FPS — Root Cause Analysis
+# RGB Channel Flicker at High FPS - Root Cause Analysis
 
-**Date:** 2026-05-20  
-**Camera:** JAI FS-3200T (3-source multispectral)  
-**Observed by:** Hardware testing during ROI/FPS calibration  
+**Date:** 2026-05-20
+**Camera:** JAI FS-3200T (3-source multispectral)
+**Observed by:** Hardware testing during ROI/FPS calibration
 
 ---
 
 ## Symptom
 
 When FPS is increased beyond a certain threshold, the **CH1 (RGB/Color)** channel
-begins flickering — rapid brightness oscillation (high → low → high) visible in the
+begins flickering - rapid brightness oscillation (high → low → high) visible in the
 live feed. CH2 (NIR1 ~800 nm) and CH3 (NIR2 ~900 nm) are **unaffected**.
 
 ---
@@ -31,7 +31,7 @@ This pulsing is invisible to the human eye (too fast) but the camera captures it
 
 Each camera frame integrates light over its exposure window. If the camera FPS does
 **not divide evenly** into the light pulse frequency, consecutive frames catch the
-light at different phases of its cycle — one frame at peak brightness, the next at
+light at different phases of its cycle - one frame at peak brightness, the next at
 trough. This appears as brightness oscillation.
 
 ```
@@ -43,23 +43,23 @@ Light intensity (120 Hz pulse):
 
 Frame timing examples (US grid, 120 Hz light):
 
-  30 FPS → 120 / 30 = 4.00 cycles/frame → integer → STABLE ✓
-  40 FPS → 120 / 40 = 3.00 cycles/frame → integer → STABLE ✓
-  60 FPS → 120 / 60 = 2.00 cycles/frame → integer → STABLE ✓
+  30 FPS → 120 / 30 = 4.00 cycles/frame → integer → STABLE
+  40 FPS → 120 / 40 = 3.00 cycles/frame → integer → STABLE
+  60 FPS → 120 / 60 = 2.00 cycles/frame → integer → STABLE
 
-  45 FPS → 120 / 45 = 2.67 cycles/frame → NOT integer → FLICKERING ✗
-  50 FPS → 120 / 50 = 2.40 cycles/frame → NOT integer → FLICKERING ✗
-  48 FPS → 120 / 48 = 2.50 cycles/frame → NOT integer → FLICKERING ✗
+  45 FPS → 120 / 45 = 2.67 cycles/frame → NOT integer → FLICKERING
+  50 FPS → 120 / 50 = 2.40 cycles/frame → NOT integer → FLICKERING
+  48 FPS → 120 / 48 = 2.50 cycles/frame → NOT integer → FLICKERING
 ```
 
-### Why Only RGB — Not NIR?
+### Why Only RGB - Not NIR?
 
 The NIR channels (CH2 ~800 nm, CH3 ~900 nm) use **narrowband optical filters**.
 Standard fluorescent tubes and most LED panels emit negligible energy above 750 nm.
 The NIR channels are effectively isolated from visible-spectrum flicker.
 
-The color channel (CH1) captures the full visible spectrum (400–700 nm) where the
-light pulse energy is concentrated — making it the only channel affected.
+The color channel (CH1) captures the full visible spectrum (400-700 nm) where the
+light pulse energy is concentrated - making it the only channel affected.
 
 ---
 
@@ -69,18 +69,18 @@ Use FPS values that are **integer divisors of 120**:
 
 | FPS | 120 / FPS | Status |
 |-----|-----------|--------|
-| 20  | 6.00      | ✅ Safe |
-| 24  | 5.00      | ✅ Safe |
-| 30  | 4.00      | ✅ Safe |
-| 40  | 3.00      | ✅ Safe |
-| 60  | 2.00      | ✅ Safe |
-| 120 | 1.00      | ✅ Safe |
-| 25  | 4.80      | ❌ Flicker |
-| 45  | 2.67      | ❌ Flicker |
-| 48  | 2.50      | ❌ Flicker |
-| 50  | 2.40      | ❌ Flicker |
+| 20  | 6.00      | Safe |
+| 24  | 5.00      | Safe |
+| 30  | 4.00      | Safe |
+| 40  | 3.00      | Safe |
+| 60  | 2.00      | Safe |
+| 120 | 1.00      | Safe |
+| 25  | 4.80      | Flicker |
+| 45  | 2.67      | Flicker |
+| 48  | 2.50      | Flicker |
+| 50  | 2.40      | Flicker |
 
-> **For EU 50 Hz grid (100 Hz light):** safe values are divisors of 100 — 20, 25,
+> **For EU 50 Hz grid (100 Hz light):** safe values are divisors of 100 - 20, 25,
 > 50, 100 FPS.
 
 ---
@@ -89,7 +89,7 @@ Use FPS values that are **integer divisors of 120**:
 
 Even at non-integer FPS, flickering can be **eliminated by setting the exposure time
 to an exact multiple of one light cycle**. The frame integrates a whole number of
-complete flicker cycles regardless of phase — the total light captured is always the
+complete flicker cycles regardless of phase - the total light captured is always the
 same.
 
 | Grid | Light cycle period | Safe exposure multiples |
@@ -97,7 +97,7 @@ same.
 | 60 Hz (US) | 1/120 s = **8,333 µs** | 8333, 16667, 25000 µs … |
 | 50 Hz (EU) | 1/100 s = **10,000 µs** | 10000, 20000, 30000 µs … |
 
-**This is the recommended fix** — it allows any FPS to be used without flicker.
+**This is the recommended fix** - it allows any FPS to be used without flicker.
 
 ### Example (US lab, targeting 45 FPS):
 ```
@@ -118,12 +118,12 @@ The permanent solution is to replace the chamber light source with one that does
 
 | Option | Flicker | Notes |
 |---|---|---|
-| Standard fluorescent tube | ✗ 100/120 Hz | Avoid |
-| Standard LED strip (AC-driven) | ✗ 100/120 Hz | Avoid |
-| **Halogen / incandescent** | ✅ Negligible | Thermal inertia smooths flicker |
-| **DC-powered LED** (constant current driver) | ✅ None | Best choice |
-| **Machine vision strobe** (triggered) | ✅ None | Synced to camera trigger |
-| High-frequency ballast fluorescent (≥20 kHz) | ✅ None | Acceptable |
+| Standard fluorescent tube | 100/120 Hz | Avoid |
+| Standard LED strip (AC-driven) | 100/120 Hz | Avoid |
+| **Halogen / incandescent** | Negligible | Thermal inertia smooths flicker |
+| **DC-powered LED** (constant current driver) | None | Best choice |
+| **Machine vision strobe** (triggered) | None | Synced to camera trigger |
+| High-frequency ballast fluorescent (>=20 kHz) | None | Acceptable |
 
 For a production sorting line, a **DC-powered LED ring/panel** or **triggered strobe**
 synchronized to the camera's trigger signal is the gold standard.
@@ -147,7 +147,7 @@ See `docs/camera_controls_research.md` for GenICam parameter reference.
 | Factor | Detail |
 |---|---|
 | **Root cause** | FPS not a divisor of light pulse frequency (120 Hz US) |
-| **Affected channel** | CH1 (RGB) only — NIR immune due to narrowband filters |
+| **Affected channel** | CH1 (RGB) only - NIR immune due to narrowband filters |
 | **Quick fix** | Set exposure = multiple of 8,333 µs (US) / 10,000 µs (EU) |
 | **Permanent fix** | DC-powered LED or camera-triggered strobe |
 | **Safe FPS (US)** | 20, 24, 30, 40, 60, 120 |

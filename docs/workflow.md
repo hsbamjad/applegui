@@ -1,4 +1,4 @@
-# 📋 Project Workflow Document
+#  Project Workflow Document
 ## Multispectral Apple Sorting GUI
 **Michigan State University | ASABE AIM26 | Version 1.0**
 **Last Updated: May 2026**
@@ -61,7 +61,7 @@ All **code development, design, and documentation** happens on the **laptop**. A
 ```
 
 ### Key Rule
-> **Never commit code that only works on one system.** All code must function on both machines — using `mock` mode on the laptop, `jai` mode on the shuttle. Any machine-specific config lives in `config.yaml` only, never hardcoded.
+> **Never commit code that only works on one system.** All code must function on both machines - using `mock` mode on the laptop, `jai` mode on the shuttle. Any machine-specific config lives in `config.yaml` only, never hardcoded.
 
 ### Environment Variable for Machine Identity
 Each machine has an environment variable set once:
@@ -94,7 +94,7 @@ apple_gui/
 │   ├── config_laptop.yaml         ← Laptop overrides (mock mode)
 │   └── config_shuttle.yaml        ← Shuttle overrides (real camera)
 │
-├── core/                          ← Business logic — no GUI imports here
+├── core/                          ← Business logic - no GUI imports here
 │   ├── __init__.py
 │   ├── camera/
 │   │   ├── __init__.py
@@ -207,8 +207,8 @@ Every commit message follows this format:
 ```
 <type>(<scope>): <short description>
 
-[optional body — what and why, not how]
-[optional footer — issue references]
+[optional body - what and why, not how]
+[optional footer - issue references]
 ```
 
 **Types:**
@@ -260,7 +260,7 @@ __pycache__/
 *.pyo
 *.egg-info/
 
-# Conda — environments are reproduced from environment.yml, not committed
+# Conda - environments are reproduced from environment.yml, not committed
 .conda/
 conda-meta/
 
@@ -269,7 +269,7 @@ data/logs/
 data/images/
 data/sessions/
 
-# AI models (too large — share via separate link)
+# AI models (too large - share via separate link)
 models/*.pt
 models/*.onnx
 models/*.pth
@@ -296,7 +296,7 @@ Thumbs.db
 ## 5. Environment Setup
 
 > **Package Manager: Conda**
-> We use **Conda** for environment management. The environment is named `applegui` and is identical on both the laptop and shuttle PC. All dependencies are declared in `environment.yml` — this is the single source of truth.
+> We use **Conda** for environment management. The environment is named `applegui` and is identical on both the laptop and shuttle PC. All dependencies are declared in `environment.yml` - this is the single source of truth.
 
 ### 5.1 Laptop (Development)
 
@@ -333,8 +333,8 @@ Same conda setup PLUS hardware-specific steps:
 conda env create -f environment.yml
 conda activate applegui
 
-# 2. Install JAI eBUS SDK (download from jai.com — see docs/camera_setup.md)
-#    This installs the GenTL producer (.cti file) — NOT via conda
+# 2. Install JAI eBUS SDK (download from jai.com - see docs/camera_setup.md)
+#    This installs the GenTL producer (.cti file) - NOT via conda
 
 # 3. Configure 10 GigE NIC
 #    - Jumbo Frames = 9014 bytes
@@ -482,7 +482,7 @@ time.sleep(FRAME_INTERVAL_SEC)
 
 ### 6.7 Thread Safety Rules
 
-- Never update a Qt widget from a non-main thread — always use signals.
+- Never update a Qt widget from a non-main thread - always use signals.
 - Never share mutable state between threads without a `Queue` or `threading.Lock`.
 - All `QThread` workers must implement a `stop()` method and clean up resources.
 
@@ -519,7 +519,7 @@ class BaseCamera(ABC):
 
     @abstractmethod
     def acquire_frame(self) -> np.ndarray | None:
-        """Returns shape (H, W, 3) — channels [CH1, CH2, CH3]"""
+        """Returns shape (H, W, 3) - channels [CH1, CH2, CH3]"""
         ...
 
     @abstractmethod
@@ -561,7 +561,7 @@ camera:
 ```
 
 ```python
-# core/camera/__init__.py — Auto-selects based on config
+# core/camera/__init__.py - Auto-selects based on config
 def create_camera(config: dict) -> BaseCamera:
     mode = config["camera"]["mode"]
     if mode == "mock":
@@ -617,7 +617,7 @@ import pytest
 
 @pytest.mark.hardware
 def test_real_camera_connection():
-    """Requires physical JAI camera — shuttle only."""
+    """Requires physical JAI camera - shuttle only."""
     ...
 
 @pytest.mark.slow
@@ -676,15 +676,15 @@ After the session:
 
 | Parameter | Value | Status |
 |---|---|---|
-| Camera model | JAI FSFE-3200T-10GE | ✅ Confirmed |
-| Lens | Edmund Optics 16mm f/1.6 VIS-NIR | ✅ Confirmed |
-| CH1 wavelength | TBD | ⏳ Need to verify |
-| CH2 wavelength | TBD | ⏳ Need to verify |
-| CH3 wavelength | TBD | ⏳ Need to verify |
-| 10 GigE NIC model | TBD | ⏳ Need to verify |
-| Sorter interface | TBD | ⏳ Need to confirm with advisor |
-| Conveyor encoder | TBD | ⏳ Need to confirm |
-| Camera-to-gate distance | TBD | ⏳ Measure physically |
+| Camera model | JAI FSFE-3200T-10GE | Confirmed |
+| Lens | Edmund Optics 16mm f/1.6 VIS-NIR | Confirmed |
+| CH1 wavelength | TBD | Pending verification |
+| CH2 wavelength | TBD | Pending verification |
+| CH3 wavelength | TBD | Pending verification |
+| 10 GigE NIC model | TBD | Pending verification |
+| Sorter interface | TBD | Pending confirmation with advisor |
+| Conveyor encoder | TBD | Pending confirmation |
+| Camera-to-gate distance | TBD | Measure physically |
 
 ---
 
@@ -706,9 +706,9 @@ After the session:
 ### 10.2 README Structure
 
 The README always contains:
-1. **What it is** — 2-sentence description.
-2. **Screenshot / Demo GIF** — visual first impression.
-3. **Quick Start** — conda setup → run in under 5 steps:
+1. **What it is** - 2-sentence description.
+2. **Screenshot / Demo GIF** - visual first impression.
+3. **Quick Start** - conda setup → run in under 5 steps:
    ```bash
    git clone <repo>
    cd apple_gui
@@ -741,7 +741,7 @@ The README always contains:
 Every shuttle session is logged in `docs/TESTING_LOG.md`:
 
 ```markdown
-## Session 2026-05-21 — Camera Integration Test
+## Session 2026-05-21 - Camera Integration Test
 
 **Tester:** [Your name]
 **System:** Shuttle PC
@@ -750,13 +750,13 @@ Every shuttle session is logged in `docs/TESTING_LOG.md`:
 ### Results
 | Test | Result | Notes |
 |---|---|---|
-| eBUS Player 3-channel stream | ✅ Pass | All 3 channels visible |
-| Harvesters connection | ✅ Pass | Device detected index 0 |
-| 30 FPS sustained | ✅ Pass | Actual: 28.7 FPS avg |
-| 107 FPS sustained | ⚠️ Partial | Drops to 95 FPS after 2min |
+| eBUS Player 3-channel stream | Pass | All 3 channels visible |
+| Harvesters connection | Pass | Device detected index 0 |
+| 30 FPS sustained | Pass | Actual: 28.7 FPS avg |
+| 107 FPS sustained | Partial | Drops to 95 FPS after 2min |
 
 ### Issues Found
-1. Buffer overflow at 107 FPS — increase buffer count in config.
+1. Buffer overflow at 107 FPS - increase buffer count in config.
 
 ### Action Items
 - [ ] Increase `num_buffers` from 10 to 32 in config_shuttle.yaml
@@ -784,7 +784,7 @@ END
 ### 11.2 Weekly Milestone Review
 
 Every week, assess:
-- Which phase are we in? (0–7)
+- Which phase are we in? (0-7)
 - What was completed this week?
 - What's blocked? Why?
 - What's the priority for next week?
@@ -794,14 +794,14 @@ Every week, assess:
 
 | Phase | Description | Status |
 |---|---|---|
-| **Phase 0** | Hardware verification (eBUS Player, camera test) | ⏳ Not started |
-| **Phase 1** | Camera sandbox script (Python, no GUI) | ⏳ Not started |
-| **Phase 2** | GUI skeleton + threading (mock camera) | ⏳ Not started |
-| **Phase 3** | Camera integration in GUI (real camera on shuttle) | ⏳ Not started |
-| **Phase 4** | AI model integration (inference in GUI) | ⏳ Not started |
-| **Phase 5** | Sorter control (hardware timing logic) | ⏳ Not started |
-| **Phase 6** | Dashboard, charts, and data logging | ⏳ Not started |
-| **Phase 7** | Testing, validation, polish, ASABE demo prep | ⏳ Not started |
+| **Phase 0** | Hardware verification (eBUS Player, camera test) | Not started |
+| **Phase 1** | Camera sandbox script (Python, no GUI) | Not started |
+| **Phase 2** | GUI skeleton + threading (mock camera) | Not started |
+| **Phase 3** | Camera integration in GUI (real camera on shuttle) | Not started |
+| **Phase 4** | AI model integration (inference in GUI) | Not started |
+| **Phase 5** | Sorter control (hardware timing logic) | Not started |
+| **Phase 6** | Dashboard, charts, and data logging | Not started |
+| **Phase 7** | Testing, validation, polish, ASABE demo prep | Not started |
 
 ---
 
@@ -835,4 +835,4 @@ Every week, assess:
 
 ---
 
-*Document maintained by the development team. Update this document whenever a process changes — do not let it go stale.*
+*Document maintained by the development team. Update this document whenever a process changes - do not let it go stale.*

@@ -1,6 +1,6 @@
 # Multi-spectral Apple Sorting Pipeline Architecture
 
-This document outlines the complete AI inference, tracking, counting, and grading pipeline for the Multi-spectral Vision System. 
+This document outlines the complete AI inference, tracking, counting, and grading pipeline for the Multi-spectral Vision System.
 
 ## 1. Resolution & Performance Flow
 
@@ -17,7 +17,7 @@ The camera pushes frames at 60 FPS. The GPU inference runs at ~21 FPS.
 To prevent the system from falling behind, the pipeline uses a decoupled **Drop-Oldest Queue (maxsize=2)**:
 1. Camera puts new frames into the queue.
 2. If the queue is full, the oldest frame is discarded.
-3. The GPU always pulls the most recent frame available. 
+3. The GPU always pulls the most recent frame available.
 This guarantees the tracker is always analyzing live data with zero latency buildup.
 
 ---
@@ -46,7 +46,7 @@ If ByteTrack loses an ID (e.g., apple rolls or occlusion) and assigns a new ID a
 
 To prevent double-counting or phantom detections, an apple MUST pass 5 strict guards before it is counted and assigned a sequential ID (e.g., `#3`).
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > If an apple fails these checks, it is shown on screen as a grey `?` box. It is tracked, but it will never be counted or sent to the physical sorter.
 
 1. **Entry Zone Check**: The apple's *very first detection* must have occurred in the first 35% of the frame (`entry_frac = 0.35`). This prevents an ID reassignment halfway down the belt from being counted as a "new" apple.

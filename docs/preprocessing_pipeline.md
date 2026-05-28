@@ -1,14 +1,14 @@
 # JAI FS-3200T Multispectral Camera Preprocessing & Hardware Controls Pipeline Handbook
 
-**Project:** Apple Sorting GUI — MSU ASABE AIM26  
-**Applies to:** `core/camera/camera_interface.py` · `gui/widgets/image_display.py` · `gui/workers/camera_worker.py` · `gui/panels/camera_panel.py`  
+**Project:** Apple Sorting GUI - MSU ASABE AIM26
+**Applies to:** `core/camera/camera_interface.py` · `gui/widgets/image_display.py` · `gui/workers/camera_worker.py` · `gui/panels/camera_panel.py`
 **Last Updated:** May 20, 2026
 
 ---
 
 ## 1. System Overview: End-to-End Processing Architecture
 
-The JAI FS-3200T multispectral camera contains three independent CMOS sensors in a single physical body. It streams three hardware-synchronized GigE Vision (GEV) channels over a single 10 GigE link. 
+The JAI FS-3200T multispectral camera contains three independent CMOS sensors in a single physical body. It streams three hardware-synchronized GigE Vision (GEV) channels over a single 10 GigE link.
 
 In our upgraded architecture, **frame acquisition is completely decoupled from visual representation**. The core camera backend operates strictly on raw, full-resolution buffers, while the frontend handles memory-safe rendering, scaling, and interactive ROI previews.
 
@@ -84,7 +84,7 @@ Every successful acquisition outputs a `FrameTriplet` object consisting of three
 
 | Channel | Physical Sensor | Target Spectrum | Data Shape | Pixel Format | Description |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **CH1** | Color (Bayer RGB) | Visible (~400–670 nm) | `(1536, 2048, 3)` | `uint8` | Standard color image (Bayer demosaiced to BGR) |
+| **CH1** | Color (Bayer RGB) | Visible (~400-670 nm) | `(1536, 2048, 3)` | `uint8` | Standard color image (Bayer demosaiced to BGR) |
 | **CH2** | NIR 1 (Monochrome) | Near-Infrared (~800 nm) | `(1536, 2048)` | `uint8` | Reveals internal fruit structure & bruises |
 | **CH3** | NIR 2 (Monochrome) | Near-Infrared (~900 nm) | `(1536, 2048)` | `uint8` | Captures different water absorption/reflectance bands |
 
@@ -115,7 +115,7 @@ All adjustments are applied directly to the camera's analog and digital electron
 *   **Firmware Clamp**: Capped globally by FPS: $\text{ExposureTime (µs)} \le \frac{1,000,000}{\text{FPS}}$.
 
 ### 4.2. Frame Rate (FPS)
-*   **What**: Adjusts the global clock of the sensor. 
+*   **What**: Adjusts the global clock of the sensor.
 *   **Dynamic Exposure Clamping**: Setting a high FPS (e.g., 30 to 60) automatically reduces the maximum integration period. Our system captures the `sig_fps_changed` signal, applies the value to `AcquisitionFrameRate` globally, queries the new firmware-clamped exposure limits, and immediately syncs the UI spinboxes to avoid out-of-bounds requests.
 
 ### 4.3. Per-Channel Gain
