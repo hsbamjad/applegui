@@ -734,6 +734,13 @@ class MainWindow(QMainWindow):
         self._total_graded = 0
         self._center.model_input_panel.reset()
         self._center.model_input_panel.set_mode(input_mode)   # update header label live
+
+        # Pause the video so it does not advance while the GPU loads the model.
+        # For a real JAI camera this is a no-op (CameraWorker has no pause).
+        if isinstance(self._cam_w, VideoWorker):
+            self._cam_w.pause()
+            log.info("_on_load_model: VideoWorker paused while model loads")
+
         self._infer_w = RealInferenceWorker(
             model_path     = model_path,
             conf_threshold = inf_cfg.get("confidence_threshold", 0.5),
@@ -741,6 +748,7 @@ class MainWindow(QMainWindow):
             device         = inf_cfg.get("device", "cuda"),
             input_mode     = input_mode,
         )
+        self._infer_w.sig_model_ready.connect(self._on_model_ready)  # resume video here
         self._infer_w.sig_result.connect(self._on_inference_result)
         self._infer_w.sig_input_frame.connect(self._on_input_frame)
         self._infer_w.sig_fps.connect(self._on_inference_fps)
@@ -755,6 +763,35 @@ class MainWindow(QMainWindow):
     ]
     _CLASS_NAMES = ["Fresh", "Processing", "Cull"]
     _OUTLET_MAP  = {"Fresh": "A", "Processing": "B", "Cull": "C"}
+
+    @pyqtSlot()
+    def _on_model_ready(self) -> None:
+        """
+        Called (in the main thread via Qt signal) once RealInferenceWorker has
+        finished loading the model and is about to enter the inference loop.
+
+        At this point the VideoWorker is still paused, so no new frames have
+        entered the inference queue since the pause.  We drain any stale frames
+        that were already in the queue before the pause, then resume the video
+        so it continues from exactly where it stopped.
+        """
+        # Drain the inference queue so the model processes only fresh frames.
+        if self._infer_w is not None:
+            q = self._infer_w._queue
+            drained = 0
+            while True:
+                try:
+                    q.get_nowait()
+                    drained += 1
+                except Exception:
+                    break
+            if drained:
+                log.debug("_on_model_ready: drained %d stale frame(s) from inference queue", drained)
+
+        # Resume video from the exact frame it was paused at.
+        if isinstance(self._cam_w, VideoWorker):
+            self._cam_w.resume()
+            log.info("_on_model_ready: VideoWorker resumed")
 
     @pyqtSlot(object)
     def _on_inference_result(self, result) -> None:
