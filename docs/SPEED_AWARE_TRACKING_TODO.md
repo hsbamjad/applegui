@@ -1,7 +1,7 @@
 # Speed-Aware Tracking — Status & Notes
 
-**Status:** ✅ Likely fine for all 3 speeds — confirm FOV pitch count  
-**Updated:** 2026-05-28 — conveyor type confirmed as screw conveyor  
+**Status:** ✅ CLOSED — all 3 speeds confirmed safe, no code changes needed  
+**Updated:** 2026-05-28 — pitch count measured from simulation video  
 **Relevant files:** `gui/workers/tracker.py` · `config/config.yaml`
 
 ---
@@ -112,28 +112,30 @@ running at fixed 1/2/3 apples/s.
 
 ---
 
-## Remaining Open Item — Measure From Image
+## ✅ Pitch Count — Measured from Video (2026-05-28)
 
-Mechanical engineer confirmed (2026-05-28):
-> "I didn't account that. You can account it through the image."
+Video frame shows the simulation video (G1). Counted visible apple positions:
 
-**How to measure it (takes 30 seconds):**
+- Top lane:    ~7 apples visible
+- Middle lane: ~7 apples visible  
+- Bottom lane: ~6 apples visible
 
-1. Run the app in simulation mode (`simulation.enabled: true` in `config.yaml`)
-2. Connect camera, look at the **CH1 raw channel display**
-3. Count how many apples are **simultaneously visible** in the frame
-4. That number = pitches in the camera's FOV
+**Confirmed: ~6–7 screw pitches in camera FOV.**
 
-**Then plug into:**
 ```
-transit_time = pitches_in_FOV / apples_per_second
-frames_in_view = transit_time × inference_fps
+transit_time   = 6 pitches / 3 apples/s = 2.0 seconds   (worst case, fastest speed)
+frames_in_view = 2.0 s × 15 FPS        = 30 frames
+
+30 frames >> min_frames=5  →  ✅ confirmed safe at all speeds
 ```
 
-As long as `frames_in_view ≥ 5` at the fastest speed (3 apples/s), current params are confirmed safe.
+Also confirmed from the image: conveyor orientation is **LR** (left→right),
+consistent with `config.yaml → conveyor.orientation: "LR"` for simulation.
 
-- [ ] Run simulation, count visible apples in frame, record number here: `__`
-- [ ] Verify: `__ pitches / 3 apples/s × 15 FPS ≥ 5 frames` → ✅ confirmed
+- [x] Run simulation, count visible apples in frame → **~6–7 pitches**
+- [x] Verify: `6 pitches / 3 apples/s × 15 FPS = 30 frames ≥ 5` → ✅ confirmed
+
+**No code changes required. This topic is fully resolved.**
 
 ---
 
