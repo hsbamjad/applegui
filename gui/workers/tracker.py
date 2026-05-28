@@ -175,14 +175,6 @@ class AppleTracker:
         xyxys     = boxes.xyxy.tolist()
         confs     = boxes.conf.tolist()
 
-        # Extract per-instance mask polygons (masks.xy) keyed by track_id
-        mask_xy_list = result.masks.xy if result.masks is not None else None
-        mask_by_tid: dict[int, object] = {}
-        if mask_xy_list is not None:
-            for i, tid in enumerate(track_ids):
-                if i < len(mask_xy_list):
-                    mask_by_tid[tid] = mask_xy_list[i]
-
         # ── Step 1: Lost-track recovery for brand-new YOLO IDs ───────────────
         for i, tid in enumerate(track_ids):
             if self._history[tid]["frames_seen"] != 0:
@@ -324,7 +316,6 @@ class AppleTracker:
                 "lane":      lane,
                 "frames":    hist["frames_seen"],
                 "eligible":  entered_start,
-                "mask":      mask_by_tid.get(tid, None),  # polygon pts or None
             })
 
         # ── Step 3: Move disappeared tracks to lost buffer ────────────────────

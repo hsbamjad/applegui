@@ -436,7 +436,6 @@ class MainWindow(QMainWindow):
         self._total        = 0
         self._total_graded = 0             # running count for model input panel badge
         self._wb_reverting = False   # True while a revert_white_balance() call is in flight
-        self._active_tracks: list = []    # cached tracks for per-frame re-annotation
 
         self._setup_window()
         self._build_ui()
@@ -655,19 +654,10 @@ class MainWindow(QMainWindow):
         if not inference_running:
             # No inference — show raw video on all channels
             self._center.channel_display.update_frames(ch1, ch2, ch3, fps)
-            return
 
-        # Feed frames to inference worker
-        self._infer_w.enqueue(ch1, ch2, ch3)
-
-        # Re-annotate CH1 every incoming frame using the last cached tracks.
-        # This keeps the display smooth and eliminates the "masks frozen"
-        # glitch where apples move but overlaid masks stay at old positions.
-        # _annotate_tracked is cheap here: it resizes to 512px first (no
-        # full-res copy) so the annotation cost is minimal even at 30 FPS.
-        orig_shape = (ch1.shape[1], ch1.shape[0])
-        ann_ch1 = self._annotate_tracked(ch1, self._active_tracks, show_label=False)
-        self._center.channel_display.update_channel_frame(0, ann_ch1, fps, orig_shape)
+        # Feed frames to inference worker if running
+        if inference_running:
+            self._infer_w.enqueue(ch1, ch2, ch3)
 
     @pyqtSlot(str, bool)
     def _on_cam_status(self, msg: str, is_error: bool) -> None:
@@ -805,15 +795,11 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(object)
     def _on_inference_result(self, result) -> None:
-        """Vote on tracks, commit grades, update track cache for smooth per-frame display."""
+        """Vote on tracks, commit grades, annotate CH1 with stored latest frame."""
         if self._tracker is None or self._last_ch1 is None:
             return
 
         active, graded = self._tracker.update(result, self._last_ch1.shape)
-
-        # Cache active tracks — _on_frame uses these to annotate CH1 every
-        # video frame so the display stays smooth between inference updates.
-        self._active_tracks = active
 
         # ── Commit finished grades to stats panel ─────────────────
         for rec in graded:
@@ -828,17 +814,16 @@ class MainWindow(QMainWindow):
                 f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
             )
 
-        # ── CH1 is re-annotated every frame in _on_frame — skip here ─────────
-        # Only update CH2/CH3 (NIR panels) at inference rate to save
-        # main-thread time. Model input panel also updated here.
+        # ── Annotate all 3 channels with same boxes ───────────────
+        ann_ch1 = self._annotate_tracked(self._last_ch1, active, show_label=False)
+        ann_ch2 = self._annotate_tracked(self._last_ch2, active, show_label=False)
+        ann_ch3 = self._annotate_tracked(self._last_ch3, active, show_label=False)
         fps = self._infer_fps
+        # Pass the original full resolution so the UI label stays correct
         orig_shape = (self._last_ch1.shape[1], self._last_ch1.shape[0])
-        if self._last_ch2 is not None:
-            ann_ch2 = self._annotate_tracked(self._last_ch2, active, show_label=False)
-            self._center.channel_display.update_channel_frame(1, ann_ch2, fps, orig_shape)
-        if self._last_ch3 is not None:
-            ann_ch3 = self._annotate_tracked(self._last_ch3, active, show_label=False)
-            self._center.channel_display.update_channel_frame(2, ann_ch3, fps, orig_shape)
+        self._center.channel_display.update_channel_frame(0, ann_ch1, fps, orig_shape)
+        self._center.channel_display.update_channel_frame(1, ann_ch2, fps, orig_shape)
+        self._center.channel_display.update_channel_frame(2, ann_ch3, fps, orig_shape)
 
         # ── Push annotated spectral composite to AI Model Input panel ─
         if self._last_input_frame is not None:
@@ -857,55 +842,41 @@ class MainWindow(QMainWindow):
         self, frame: np.ndarray, active: list, show_label: bool = True
     ) -> np.ndarray:
         """
-        Draw smooth transparent segmentation masks on a downscaled copy.
-
-        Style matches the chestnut pipeline:
-          - Semi-transparent fill  (alpha 0.30)  — ONE blend for all masks combined
-          - Thin 1-px outline polyline
-          - No bounding boxes
-          - Small floating label pill above the mask centroid (optional)
-
-        Performance: single overlay copy + single addWeighted blend regardless
-        of how many apples are visible (was N copies + N blends previously).
+        Draw bounding boxes on a downscaled copy for speed.
 
         Args:
             frame:      Source numpy frame (any channel layout).
             active:     List of active track dicts from AppleTracker.
-            show_label: If True, draw grade + ID pill above each mask.
-                        If False, draw the coloured mask only.
+            show_label: If True, draw grade + ID pill above each box.
+                        If False, draw the coloured box only — used for
+                        the raw CH1/CH2/CH3 panels where grading info is
+                        shown exclusively in the AI Model Input panel.
         """
         import cv2
 
         if frame is None:
             return frame
 
-        h, w = frame.shape[:2]
-        DRAW_W  = 512
+        if frame.ndim == 2:
+            out = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        else:
+            out = frame.copy()
+
+        if not active:
+            return out
+
+        h, w = out.shape[:2]
+
+        # ── Downscale for fast drawing ─────────────────────────────────────
+        DRAW_W = 512
         scale_f = DRAW_W / w
         draw_h  = int(h * scale_f)
-
-        # Resize to 512px FIRST — avoids copying the full-res frame (~9 MB).
-        # cv2.resize reads frame without modifying it and writes to a new buffer.
-        if frame.ndim == 2:
-            gray_small = cv2.resize(frame, (DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
-            small = cv2.cvtColor(gray_small, cv2.COLOR_GRAY2BGR)
-        else:
-            small = cv2.resize(frame, (DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
-
-        # Early-exit still returns a properly-sized 512px frame.
-        if not active:
-            return small
+        small   = cv2.resize(out, (DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
 
         # Drawing params for 512px canvas
         fs        = 0.55   # font scale
+        box_thick = 2
         txt_thick = 1
-
-        # ── Single-pass overlay: ONE copy + ONE blend for ALL masks ─────────
-        # Collect per-track data while drawing fills into the overlay.
-        # This avoids N frame copies / N addWeighted calls (was O(N), now O(1)).
-        overlay  = small.copy()
-        outlines = []   # (contour_or_None, draw_color, cx_s, cy_s, r_s)
-        labels   = []   # (lx, ly, label_str, draw_color)
 
         for t in active:
             cls      = t["class_id"]
@@ -913,73 +884,40 @@ class MainWindow(QMainWindow):
             seq      = t["seq_id"]
             lane     = t["lane"]
             eligible = t.get("eligible", True)
-            mask_pts = t.get("mask", None)
             x1, y1, x2, y2 = t["box"]
 
+            # Scale box coords to draw canvas
+            sx1 = int(x1 * scale_f); sy1 = int(y1 * scale_f)
+            sx2 = int(x2 * scale_f); sy2 = int(y2 * scale_f)
+
             color      = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
+            name       = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
             draw_color = color if eligible else (120, 120, 120)
 
-            has_mask = mask_pts is not None and len(mask_pts) >= 3
-            if has_mask:
-                cnt = (mask_pts * scale_f).astype("int32")
-                cv2.fillPoly(overlay, [cnt], draw_color)          # fill into overlay
-                M = cv2.moments(cnt)
-                if M["m00"] != 0:
-                    lx = int(M["m10"] / M["m00"])
-                    ly = int(M["m01"] / M["m00"])
-                else:
-                    lx = int((x1 + x2) / 2 * scale_f)
-                    ly = int(y1 * scale_f)
-                outlines.append((cnt, draw_color, None, None, None))
-            else:
-                cx_s = int((x1 + x2) / 2 * scale_f)
-                cy_s = int((y1 + y2) / 2 * scale_f)
-                r_s  = max(4, int((x2 - x1) / 2 * scale_f))
-                cv2.circle(overlay, (cx_s, cy_s), r_s, draw_color, -1)  # fill into overlay
-                lx, ly = cx_s, int(y1 * scale_f)
-                outlines.append((None, draw_color, cx_s, cy_s, r_s))
+            # Box
+            cv2.rectangle(small, (sx1, sy1), (sx2, sy2), draw_color, box_thick)
 
-            # Build label string
+            # Label pill ─────────────────────────────────────────────────────
+            # show_label=True  (AI Model Input panel): "#3 Fresh 87% L2"
+            # show_label=False (raw CH1/CH2/CH3):      "#3 L2"  — ID + lane only
             id_part = f"#{seq}" if seq is not None else "?"
             if show_label:
                 name  = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
-                lbl   = f"{id_part} {name} {conf*100:.0f}% L{lane}"
+                label = f"{id_part} {name} {conf*100:.0f}% L{lane}"
             else:
-                lbl   = f"{id_part} L{lane}"
-            labels.append((lx, ly, lbl, draw_color))
+                label = f"{id_part} L{lane}"
 
-        # ── Single blend: all fills at once ────────────────────────────────
-        cv2.addWeighted(overlay, 0.30, small, 0.70, 0, small)
+            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, txt_thick)
+            lx = max(0, sx1)
+            ly = max(lh + 4, sy1 - 4)
 
-        # ── Outlines drawn directly (no copy needed) ────────────────────────
-        for cnt, draw_color, cx_s, cy_s, r_s in outlines:
-            if cnt is not None:
-                cv2.polylines(small, [cnt], True, draw_color, 1, cv2.LINE_AA)
-            else:
-                cv2.circle(small, (cx_s, cy_s), r_s, draw_color, 1, cv2.LINE_AA)
-
-        # ── Label pills ─────────────────────────────────────────────────────
-        for lx, ly, label, draw_color in labels:
-            (lw_px, lh_px), _ = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, fs, txt_thick
-            )
-            pill_x = max(0, lx - lw_px // 2)
-            pill_y = max(lh_px + 4, ly - 6)
-            cv2.rectangle(
-                small,
-                (pill_x, pill_y - lh_px - 3),
-                (pill_x + lw_px + 4, pill_y + 2),
-                draw_color, -1,
-            )
-            cv2.putText(
-                small, label, (pill_x + 2, pill_y - 1),
-                cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), txt_thick, cv2.LINE_AA,
-            )
+            # Small filled pill behind text
+            cv2.rectangle(small, (lx, ly - lh - 3), (lx + lw + 4, ly + 2), draw_color, -1)
+            cv2.putText(small, label, (lx + 2, ly - 1),
+                        cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), txt_thick, cv2.LINE_AA)
 
         # Return the fast 512px render directly — NO expensive upscale!
         return small
-
-
 
 
     @pyqtSlot(float)
