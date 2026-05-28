@@ -644,7 +644,7 @@ class JAICamera:
             log.warning("set_fps: no device connected")
             return False
         try:
-            print(f"[CAM] set_fps: writing {fps} FPS to device")
+            log.debug("set_fps: writing %.1f FPS to device", fps)
             nm = self._device.GetParameters()
             # Must enable frame rate control before setting value
             enable = nm.GetBoolean("AcquisitionFrameRateEnable")
@@ -652,21 +652,17 @@ class JAICamera:
                 enable.SetValue(True)
             param = nm.GetFloat("AcquisitionFrameRate")
             if param is None:
-                print("[CAM] set_fps: AcquisitionFrameRate param is None!")
                 log.error("set_fps: AcquisitionFrameRate parameter not found on device")
                 return False
             r = param.SetValue(float(fps))
             if r.IsOK():
                 _, actual = param.GetValue()
-                print(f"[CAM] set_fps: OK, actual={actual:.1f} FPS")
-                log.info("Camera: AcquisitionFrameRate = %.1f FPS (max exposure now %.0f µs)",
+                log.info("Camera: AcquisitionFrameRate = %.1f FPS (max exposure now %.0f us)",
                          actual, 1_000_000 / max(actual, 1))
                 return True
-            print(f"[CAM] set_fps: REJECTED by camera: {r.GetCodeString()}")
             log.error("set_fps: camera rejected %.1f FPS: %s", fps, r.GetCodeString())
             return False
         except Exception as e:
-            print(f"[CAM] set_fps: EXCEPTION: {e}")
             log.error("set_fps exception: %s", e)
             return False
 
@@ -737,12 +733,12 @@ class JAICamera:
                 if r.IsOK():
                     _, v = param.GetValue()
                     actual = float(v)
-                    print(f"[CAM] Gain {src._source_name} [{sel}]: "
-                          f"req={gain_db:.1f} actual={actual:.1f} dB")
+                    log.debug("Gain %s [%s]: req=%.1f actual=%.1f dB",
+                              src._source_name, sel, gain_db, actual)
                     wrote = True
                 else:
-                    print(f"[CAM] Gain {src._source_name} [{sel}]: "
-                          f"REJECTED {gain_db:.1f} dB — {r.GetCodeString()}")
+                    log.warning("Gain %s [%s]: rejected %.1f dB — %s",
+                                src._source_name, sel, gain_db, r.GetCodeString())
 
             if not wrote:
                 log.error("set_gain: could not write to source %s", src._source_name)
@@ -975,8 +971,8 @@ class JAICamera:
                 if r_write.IsOK():
                     _, v = param.GetValue()
                     actuals[role] = float(v)
-                    print(f"[CAM] WB Source0 [{sel_name}]: "
-                          f"req={targets[role]:.4f} actual={actuals[role]:.4f}")
+                    log.debug("WB Source0 [%s]: req=%.4f actual=%.4f",
+                              sel_name, targets[role], actuals[role])
                 else:
                     log.warning("set_wb: Gain.SetValue(%s, %.4f) failed: %s",
                                 sel_name, clamped, r_write.GetCodeString())
@@ -1147,8 +1143,8 @@ class JAICamera:
             if r_write.IsOK():
                 _, v = param.GetValue()
                 actual = float(v)
-                print(f"[CAM] BlackLevel {src._source_name}: "
-                      f"req={level:.1f} actual={actual:.1f} DN")
+                log.debug("BlackLevel %s: req=%.1f actual=%.1f DN",
+                          src._source_name, level, actual)
             else:
                 actual = level
                 log.warning("BlackLevel.SetValue(%.1f) failed on %s: %s",
@@ -1355,11 +1351,11 @@ class JAICamera:
                     p_w.SetValue(mw)
                     p_h.SetValue(mh)
                     # Step 3: Set target WIDTH and HEIGHT *first*
-                    #   e.g. Width=1648 → 0+1648=1648 ≤ 2048 ✓
+                    #   e.g. Width=1648 -> 0+1648=1648 <= 2048 (ok)
                     r_w = p_w.SetValue(w)
                     r_h = p_h.SetValue(h)
                     # Step 4: Now set OffsetX/OffsetY (size already reduced to fit)
-                    #   e.g. OffsetX=400 → 400+1648=2048 ≤ 2048 ✓
+                    #   e.g. OffsetX=400 -> 400+1648=2048 <= 2048 (ok)
                     r_ox = p_ox.SetValue(ox)
                     r_oy = p_oy.SetValue(oy)
                     if not r_w.IsOK():
@@ -1404,8 +1400,8 @@ class JAICamera:
             actual = self.get_roi()
             log.info("ROI confirmed: OffsetX=%d OffsetY=%d Width=%d Height=%d",
                      *actual)
-            print(f"[CAM] ROI applied: ({actual[0]}, {actual[1]}) "
-                  f"{actual[2]}×{actual[3]} px")
+            log.debug("ROI applied: (%d, %d) %dx%d px",
+                      actual[0], actual[1], actual[2], actual[3])
             return actual
 
         except Exception as e:
