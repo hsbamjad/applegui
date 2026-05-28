@@ -116,11 +116,11 @@ running at fixed 1/2/3 apples/s.
 
 Video frame shows the simulation video (G1). Counted visible apple positions:
 
-- Top lane:    ~7 apples visible
-- Middle lane: ~7 apples visible  
-- Bottom lane: ~6 apples visible
+- Top lane:    6 apples
+- Middle lane: 6 apples
+- Bottom lane: 6 apples
 
-**Confirmed: ~6–7 screw pitches in camera FOV.**
+**Confirmed: 6 screw pitches in camera FOV.**
 
 ```
 transit_time   = 6 pitches / 3 apples/s = 2.0 seconds   (worst case, fastest speed)
@@ -132,7 +132,7 @@ frames_in_view = 2.0 s × 15 FPS        = 30 frames
 Also confirmed from the image: conveyor orientation is **LR** (left→right),
 consistent with `config.yaml → conveyor.orientation: "LR"` for simulation.
 
-- [x] Run simulation, count visible apples in frame → **~6–7 pitches**
+- [x] Run simulation, count visible apples in frame → **6 pitches per lane**
 - [x] Verify: `6 pitches / 3 apples/s × 15 FPS = 30 frames ≥ 5` → ✅ confirmed
 
 **No code changes required. This topic is fully resolved.**
