@@ -196,31 +196,31 @@ class ChannelPanel(QWidget):
 
         h, w = frame.shape[:2]
 
-        # Pre-scale with cv2 (SIMD-optimised, 10-20x faster than Qt SmoothTransformation)
-        # before creating QImage so we never allocate a full-res pixmap and Qt never has
-        # to do software bilinear filtering on the main thread.
-        disp_size = self._display.size()
-        dw, dh = disp_size.width(), disp_size.height()
-        if dw > 0 and dh > 0 and (w != dw or h != dh):
-            scale    = min(dw / w, dh / h)
-            new_w    = max(1, int(w * scale))
-            new_h    = max(1, int(h * scale))
-            interp   = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
-            frame    = cv2.resize(frame, (new_w, new_h), interpolation=interp)
-            h, w     = new_h, new_w
-
-        # Convert to RGB888 for Qt (QImage requires RGB, not BGR).
-        # .copy() is critical — it deep-copies the pixel buffer so the temporary
-        # numpy array is not GC'd while QPixmap still holds a pointer to it.
+        # 1. Convert grayscale and color to RGB to ensure absolute display compatibility.
+        # Calling .copy() is CRITICAL here to force a deep-copy of the pixel buffer. Without it,
+        # PySide6 wraps the temporary numpy array's data pointer, which is garbage collected immediately,
+        # resulting in corrupted color rendering, washed-out tones, and visual noise.
         if frame.ndim == 2:
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+            qt_img = QImage(rgb_frame.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
         elif frame.ndim == 3 and frame.shape[2] == 3:
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            qt_img = QImage(rgb_frame.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
         else:
             return
 
-        qt_img = QImage(rgb_frame.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
-        pixmap  = QPixmap.fromImage(qt_img)   # already display-sized — no .scaled() needed
+        # 2. Viewport-Matching Scaling Bypass: Skip expensive QPixmap.scaled() if viewport matches frame dimensions
+        # Use high-quality SmoothTransformation (bilinear interpolation) instead of blocky FastTransformation
+        # to eliminate aliasing, jaggies, and pixelation on the watch dial and fine arm details!
+        disp_size = self._display.size()
+        if w == disp_size.width() and h == disp_size.height():
+            pixmap = QPixmap.fromImage(qt_img)
+        else:
+            pixmap = QPixmap.fromImage(qt_img).scaled(
+                disp_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
 
         # Draw ROI overlay on top of the scaled pixmap (before display)
         if self._roi_preview is not None:
