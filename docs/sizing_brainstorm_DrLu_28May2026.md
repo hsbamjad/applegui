@@ -129,6 +129,8 @@ size_estimation:
 
 ### STEP B - Perspective Correction Factor (THE CRITICAL NEW PART)
 
+![Perspective correction diagram — camera height H and lane offset X_lane](./perspective_correction_diagram.png)
+
 #### The physical setup
 
 ```
