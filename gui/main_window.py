@@ -845,10 +845,13 @@ class MainWindow(QMainWindow):
         Draw smooth transparent segmentation masks on a downscaled copy.
 
         Style matches the chestnut pipeline:
-          - Semi-transparent fill  (alpha 0.30)
+          - Semi-transparent fill  (alpha 0.30)  — ONE blend for all masks combined
           - Thin 1-px outline polyline
           - No bounding boxes
           - Small floating label pill above the mask centroid (optional)
+
+        Performance: single overlay copy + single addWeighted blend regardless
+        of how many apples are visible (was N copies + N blends previously).
 
         Args:
             frame:      Source numpy frame (any channel layout).
@@ -881,29 +884,29 @@ class MainWindow(QMainWindow):
         fs        = 0.55   # font scale
         txt_thick = 1
 
+        # ── Single-pass overlay: ONE copy + ONE blend for ALL masks ─────────
+        # Collect per-track data while drawing fills into the overlay.
+        # This avoids N frame copies / N addWeighted calls (was O(N), now O(1)).
+        overlay  = small.copy()
+        outlines = []   # (contour_or_None, draw_color, cx_s, cy_s, r_s)
+        labels   = []   # (lx, ly, label_str, draw_color)
+
         for t in active:
             cls      = t["class_id"]
             conf     = t["conf"]
             seq      = t["seq_id"]
             lane     = t["lane"]
             eligible = t.get("eligible", True)
-            mask_pts = t.get("mask", None)   # numpy array of polygon pts or None
+            mask_pts = t.get("mask", None)
             x1, y1, x2, y2 = t["box"]
 
             color      = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
             draw_color = color if eligible else (120, 120, 120)
 
-            # ── Scale mask polygon to draw canvas ──────────────────────────
             has_mask = mask_pts is not None and len(mask_pts) >= 3
             if has_mask:
                 cnt = (mask_pts * scale_f).astype("int32")
-                # Smooth transparent fill (chestnut style)
-                overlay = small.copy()
-                cv2.fillPoly(overlay, [cnt], draw_color)
-                cv2.addWeighted(overlay, 0.30, small, 0.70, 0, small)
-                # Thin outline — no thick border
-                cv2.polylines(small, [cnt], True, draw_color, 1, cv2.LINE_AA)
-                # Centroid for label anchor
+                cv2.fillPoly(overlay, [cnt], draw_color)          # fill into overlay
                 M = cv2.moments(cnt)
                 if M["m00"] != 0:
                     lx = int(M["m10"] / M["m00"])
@@ -911,31 +914,41 @@ class MainWindow(QMainWindow):
                 else:
                     lx = int((x1 + x2) / 2 * scale_f)
                     ly = int(y1 * scale_f)
+                outlines.append((cnt, draw_color, None, None, None))
             else:
-                # Fallback: thin circle at centroid
                 cx_s = int((x1 + x2) / 2 * scale_f)
                 cy_s = int((y1 + y2) / 2 * scale_f)
                 r_s  = max(4, int((x2 - x1) / 2 * scale_f))
-                overlay = small.copy()
-                cv2.circle(overlay, (cx_s, cy_s), r_s, draw_color, -1)
-                cv2.addWeighted(overlay, 0.30, small, 0.70, 0, small)
-                cv2.circle(small, (cx_s, cy_s), r_s, draw_color, 1, cv2.LINE_AA)
+                cv2.circle(overlay, (cx_s, cy_s), r_s, draw_color, -1)  # fill into overlay
                 lx, ly = cx_s, int(y1 * scale_f)
+                outlines.append((None, draw_color, cx_s, cy_s, r_s))
 
-            # ── Floating label pill ────────────────────────────────────────
+            # Build label string
             id_part = f"#{seq}" if seq is not None else "?"
             if show_label:
                 name  = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
-                label = f"{id_part} {name} {conf*100:.0f}% L{lane}"
+                lbl   = f"{id_part} {name} {conf*100:.0f}% L{lane}"
             else:
-                label = f"{id_part} L{lane}"
+                lbl   = f"{id_part} L{lane}"
+            labels.append((lx, ly, lbl, draw_color))
 
+        # ── Single blend: all fills at once ────────────────────────────────
+        cv2.addWeighted(overlay, 0.30, small, 0.70, 0, small)
+
+        # ── Outlines drawn directly (no copy needed) ────────────────────────
+        for cnt, draw_color, cx_s, cy_s, r_s in outlines:
+            if cnt is not None:
+                cv2.polylines(small, [cnt], True, draw_color, 1, cv2.LINE_AA)
+            else:
+                cv2.circle(small, (cx_s, cy_s), r_s, draw_color, 1, cv2.LINE_AA)
+
+        # ── Label pills ─────────────────────────────────────────────────────
+        for lx, ly, label, draw_color in labels:
             (lw_px, lh_px), _ = cv2.getTextSize(
                 label, cv2.FONT_HERSHEY_SIMPLEX, fs, txt_thick
             )
             pill_x = max(0, lx - lw_px // 2)
             pill_y = max(lh_px + 4, ly - 6)
-
             cv2.rectangle(
                 small,
                 (pill_x, pill_y - lh_px - 3),
@@ -949,6 +962,7 @@ class MainWindow(QMainWindow):
 
         # Return the fast 512px render directly — NO expensive upscale!
         return small
+
 
 
 
