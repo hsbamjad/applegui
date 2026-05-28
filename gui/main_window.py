@@ -553,15 +553,17 @@ class MainWindow(QMainWindow):
         display_fps = self._cfg.get("display", {}).get("fps_limit", 24)
 
         if self._is_sim:
-            sim_vids = self._sim_cfg.get("videos", {})
-            sim_fps  = self._sim_cfg.get("fps", 30)
-            sim_loop = self._sim_cfg.get("loop", True)
+            sim_vids   = self._sim_cfg.get("videos", {})
+            sim_fps    = self._sim_cfg.get("fps", 30)
+            sim_loop   = self._sim_cfg.get("loop", True)
+            sim_height = self._sim_cfg.get("sim_height", 768)  # Fix 1: downsample target
             self._cam_w = VideoWorker(
-                path_ch1 = sim_vids.get("ch1", ""),
-                path_ch2 = sim_vids.get("ch2", ""),
-                path_ch3 = sim_vids.get("ch3", ""),
-                fps      = sim_fps,
-                loop     = sim_loop,
+                path_ch1   = sim_vids.get("ch1", ""),
+                path_ch2   = sim_vids.get("ch2", ""),
+                path_ch3   = sim_vids.get("ch3", ""),
+                fps        = sim_fps,
+                loop       = sim_loop,
+                sim_height = sim_height,
             )
             self._header.set_mode("simulation")
         else:

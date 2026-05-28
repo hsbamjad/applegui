@@ -22,6 +22,11 @@ camera:
     enabled: false
     loop: true          # Loop videos when end is reached
     fps: 30             # Playback frame rate
+    sim_height: 768     # Downsample simulation frames to this height (px) before emitting.
+                        # Fixes 3x slowdown caused by decoding 3x 2048x1536 frames serially.
+                        # YOLO receives imgsz=640 regardless, so inference accuracy is unchanged.
+                        # Real camera stream is completely unaffected by this setting.
+                        # Set to 0 to disable downsampling (native resolution, slow playback).
     videos:
       ch1: "D:/HA/apple_gui/videos/Source0/G1/G1.mp4"
       ch2: "D:/HA/apple_gui/videos/Source1/G1/G1.avi"
