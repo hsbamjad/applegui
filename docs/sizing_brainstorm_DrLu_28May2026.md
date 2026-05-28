@@ -434,6 +434,3 @@ R² = 1 - SS_res / SS_tot
 ```
 
 ---
-
-*Document created: 28 May 2026 - Haseeb Bajwa, MSU*
-*Branch: feature/apple-size-estimation*
