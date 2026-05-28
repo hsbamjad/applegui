@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import time
 import logging
-import threading
 
 import cv2
 import numpy as np
@@ -62,9 +61,6 @@ class VideoWorker(QThread):
         self._fps     = max(1, fps)
         self._loop    = loop
         self._running = False
-        # Pause / resume: cleared = paused, set = running
-        self._pause_event = threading.Event()
-        self._pause_event.set()  # start unpaused
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -72,24 +68,8 @@ class VideoWorker(QThread):
         """Update playback speed at runtime (takes effect on next frame)."""
         self._fps = max(1, fps)
 
-    def pause(self) -> None:
-        """
-        Freeze playback without closing the video captures.
-        The run loop blocks at its current frame position until resume() is called.
-        """
-        self._pause_event.clear()
-        log.info("VideoWorker: paused")
-
-    def resume(self) -> None:
-        """
-        Continue playback from exactly the frame position where pause() was called.
-        """
-        self._pause_event.set()
-        log.info("VideoWorker: resumed")
-
     def stop(self) -> None:
         self._running = False
-        self._pause_event.set()   # unblock the wait() so the thread can exit
         self.wait(3000)
 
     # ── QThread entry point ──────────────────────────────────────────────────
@@ -117,11 +97,6 @@ class VideoWorker(QThread):
         reported_fps = float(self._fps)
 
         while self._running:
-            # Block here while paused — frame position is preserved
-            self._pause_event.wait()
-            if not self._running:
-                break
-
             t0           = time.perf_counter()
             min_interval = 1.0 / self._fps
 

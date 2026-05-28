@@ -109,7 +109,6 @@ class RealInferenceWorker(QThread):
     sig_input_frame = pyqtSignal(object)   # numpy array: the spectral composite fed to YOLO
     sig_fps         = pyqtSignal(float)
     sig_status      = pyqtSignal(str, bool)
-    sig_model_ready = pyqtSignal()         # fired once: model loaded, inference loop about to start
 
     # Box colours per class index (BGR)
     _CLASS_COLORS = [
@@ -244,10 +243,6 @@ class RealInferenceWorker(QThread):
             self.sig_status.emit(f"Model load failed: {e}", True)
             log.exception("RealInferenceWorker: model load failed")
             return
-
-        # Signal the main thread that the model is ready.
-        # main_window._on_model_ready will resume the VideoWorker from here.
-        self.sig_model_ready.emit()
 
         self._running  = True
         frame_count    = 0
