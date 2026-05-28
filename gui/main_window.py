@@ -898,14 +898,19 @@ class MainWindow(QMainWindow):
 
             # ── Mask or fallback rectangle ─────────────────────────────────
             if mask_poly is not None and len(mask_poly) >= 3:
-                # Smooth the polygon contour with a circular convolution so that
-                # integer-rounding when scaling 2048→512px does not leave visible
-                # stepped corners (same effect as drawing at full resolution).
+                # Smooth the polygon contour with circular convolution so that
+                # integer-rounding when scaling 2048→512px does not produce
+                # visible stepped corners.
+                # np.convolve has no 'wrap' mode, so we manually pad the polygon
+                # end-to-end before convolving with mode='valid'.
                 k      = 9
+                pad    = k // 2
                 kernel = np.ones(k) / k
                 smooth = mask_poly.copy()
-                smooth[:, 0] = np.convolve(mask_poly[:, 0], kernel, mode="wrap")
-                smooth[:, 1] = np.convolve(mask_poly[:, 1], kernel, mode="wrap")
+                px = np.concatenate([mask_poly[-pad:, 0], mask_poly[:, 0], mask_poly[:pad, 0]])
+                py = np.concatenate([mask_poly[-pad:, 1], mask_poly[:, 1], mask_poly[:pad, 1]])
+                smooth[:, 0] = np.convolve(px, kernel, mode="valid")
+                smooth[:, 1] = np.convolve(py, kernel, mode="valid")
 
                 pts = (smooth * scale_f).astype(np.int32)
 
