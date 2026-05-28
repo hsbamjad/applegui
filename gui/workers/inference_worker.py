@@ -271,16 +271,15 @@ class RealInferenceWorker(QThread):
             # across frames — far more stable than detect+external-tracker
             try:
                 results = model.track(
-                    source       = frame,
-                    tracker      = "bytetrack.yaml",
-                    persist      = True,
-                    conf         = self._conf,
-                    iou          = self._iou,
-                    device       = self._device,
-                    imgsz        = 640,
-                    retina_masks = True,   # full-resolution masks (not 160x160 grid)
-                    verbose      = False,
-                    save         = False,
+                    source   = frame,
+                    tracker  = "bytetrack.yaml",
+                    persist  = True,
+                    conf     = self._conf,
+                    iou      = self._iou,
+                    device   = self._device,
+                    imgsz    = 640,
+                    verbose  = False,
+                    save     = False,
                 )
             except Exception as e:
                 log.warning("Inference error: %s", e)

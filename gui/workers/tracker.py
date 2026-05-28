@@ -175,15 +175,6 @@ class AppleTracker:
         xyxys     = boxes.xyxy.tolist()
         confs     = boxes.conf.tolist()
 
-        # Extract segmentation mask polygons if the model is a seg model.
-        # masks.xy is a list of (N, 2) float arrays in original frame pixel space,
-        # one entry per detection, same index order as boxes.
-        masks_xy: list = [None] * len(track_ids)
-        if result.masks is not None:
-            raw = result.masks.xy
-            if len(raw) == len(track_ids):
-                masks_xy = raw
-
         # ── Step 1: Lost-track recovery for brand-new YOLO IDs ───────────────
         for i, tid in enumerate(track_ids):
             if self._history[tid]["frames_seen"] != 0:
@@ -212,9 +203,7 @@ class AppleTracker:
         # ── Step 2: Update votes + gate check ────────────────────────────────
         seen_ids: set[int] = set()
 
-        for tid, cls_id, xyxy, conf, mask_poly in zip(
-            track_ids, cls_ids, xyxys, confs, masks_xy
-        ):
+        for tid, cls_id, xyxy, conf in zip(track_ids, cls_ids, xyxys, confs):
             x1, y1, x2, y2 = map(int, xyxy)
             cx, cy = (x1+x2)//2, (y1+y2)//2
             travel, lane = self._travel_and_lane(cx, cy, w, h)
@@ -327,7 +316,6 @@ class AppleTracker:
                 "lane":      lane,
                 "frames":    hist["frames_seen"],
                 "eligible":  entered_start,
-                "mask":      mask_poly,   # (N, 2) float array or None
             })
 
         # ── Step 3: Move disappeared tracks to lost buffer ────────────────────

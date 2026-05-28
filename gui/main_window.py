@@ -842,22 +842,17 @@ class MainWindow(QMainWindow):
         self, frame: np.ndarray, active: list, show_label: bool = True
     ) -> np.ndarray:
         """
-        Draw segmentation mask overlays on a downscaled copy for speed.
-
-        Methodology mirrors the chestnut tracking script:
-          - Raw mask polygon (no smoothing — smoothing blurs the boundary)
-          - 30% opacity filled overlay
-          - 1px outline drawn directly on the polygon contour
-          - Labels drawn on the downscaled canvas after all masks are painted
+        Draw bounding boxes on a downscaled copy for speed.
 
         Args:
             frame:      Source numpy frame (any channel layout).
             active:     List of active track dicts from AppleTracker.
-            show_label: If True, draw full grade label (AI Model Input panel).
-                        If False, draw ID + lane only (raw CH1/CH2/CH3 panels).
+            show_label: If True, draw grade + ID pill above each box.
+                        If False, draw the coloured box only — used for
+                        the raw CH1/CH2/CH3 panels where grading info is
+                        shown exclusively in the AI Model Input panel.
         """
         import cv2
-        import numpy as np
 
         if frame is None:
             return frame
@@ -868,56 +863,19 @@ class MainWindow(QMainWindow):
             out = frame.copy()
 
         if not active:
-            # Still downscale even if no active tracks
-            DRAW_W = 768
-            draw_h = int(out.shape[0] * DRAW_W / out.shape[1])
-            return cv2.resize(out, (DRAW_W, draw_h), interpolation=cv2.INTER_AREA)
+            return out
 
         h, w = out.shape[:2]
-        DRAW_W  = 768                          # larger canvas = less polygon stepping
+
+        # ── Downscale for fast drawing ─────────────────────────────────────
+        DRAW_W = 512
         scale_f = DRAW_W / w
         draw_h  = int(h * scale_f)
+        small   = cv2.resize(out, (DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
 
-        # ── Phase 1: paint all mask fills into one overlay at draw resolution ──
-        # Resize first then draw — avoids working on the full 2048×1536 frame.
-        small   = cv2.resize(out, (DRAW_W, draw_h), interpolation=cv2.INTER_AREA)
-        overlay = small.copy()
-
-        for t in active:
-            cls       = t["class_id"]
-            eligible  = t.get("eligible", True)
-            mask_poly = t.get("mask")
-            color     = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
-            draw_color = color if eligible else (120, 120, 120)
-
-            if mask_poly is not None and len(mask_poly) >= 3:
-                # Scale raw polygon — no smoothing (smoothing blurs the boundary)
-                pts = (mask_poly * scale_f).astype(np.int32)
-                cv2.fillPoly(overlay, [pts], draw_color)
-
-        # Single blend for all masks — 30% opacity matching chestnut script
-        cv2.addWeighted(overlay, 0.30, small, 0.70, 0, small)
-
-        # ── Phase 2: draw outlines + fallback boxes ────────────────────────────
-        for t in active:
-            cls       = t["class_id"]
-            eligible  = t.get("eligible", True)
-            mask_poly = t.get("mask")
-            x1, y1, x2, y2 = t["box"]
-            color     = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
-            draw_color = color if eligible else (120, 120, 120)
-
-            if mask_poly is not None and len(mask_poly) >= 3:
-                pts = (mask_poly * scale_f).astype(np.int32)
-                cv2.polylines(small, [pts], isClosed=True, color=draw_color, thickness=1)
-            else:
-                # Fallback: rectangle for detect-only models
-                sx1 = int(x1 * scale_f); sy1 = int(y1 * scale_f)
-                sx2 = int(x2 * scale_f); sy2 = int(y2 * scale_f)
-                cv2.rectangle(small, (sx1, sy1), (sx2, sy2), draw_color, 1)
-
-        # ── Phase 3: draw label pills on the small canvas ─────────────────────
-        fs        = 0.50
+        # Drawing params for 512px canvas
+        fs        = 0.55   # font scale
+        box_thick = 2
         txt_thick = 1
 
         for t in active:
@@ -926,10 +884,22 @@ class MainWindow(QMainWindow):
             seq      = t["seq_id"]
             lane     = t["lane"]
             eligible = t.get("eligible", True)
-            x1, y1  = t["box"][0], t["box"][1]
-            color    = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
+            x1, y1, x2, y2 = t["box"]
+
+            # Scale box coords to draw canvas
+            sx1 = int(x1 * scale_f); sy1 = int(y1 * scale_f)
+            sx2 = int(x2 * scale_f); sy2 = int(y2 * scale_f)
+
+            color      = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
+            name       = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
             draw_color = color if eligible else (120, 120, 120)
 
+            # Box
+            cv2.rectangle(small, (sx1, sy1), (sx2, sy2), draw_color, box_thick)
+
+            # Label pill ─────────────────────────────────────────────────────
+            # show_label=True  (AI Model Input panel): "#3 Fresh 87% L2"
+            # show_label=False (raw CH1/CH2/CH3):      "#3 L2"  — ID + lane only
             id_part = f"#{seq}" if seq is not None else "?"
             if show_label:
                 name  = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
@@ -937,18 +907,17 @@ class MainWindow(QMainWindow):
             else:
                 label = f"{id_part} L{lane}"
 
-            lx = max(0, int(x1 * scale_f))
-            ly_anchor = int(y1 * scale_f)
             (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, txt_thick)
-            ly = max(lh + 4, ly_anchor - 4)
+            lx = max(0, sx1)
+            ly = max(lh + 4, sy1 - 4)
 
+            # Small filled pill behind text
             cv2.rectangle(small, (lx, ly - lh - 3), (lx + lw + 4, ly + 2), draw_color, -1)
             cv2.putText(small, label, (lx + 2, ly - 1),
                         cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), txt_thick, cv2.LINE_AA)
 
+        # Return the fast 512px render directly — NO expensive upscale!
         return small
-
-
 
 
     @pyqtSlot(float)
