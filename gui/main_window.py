@@ -842,15 +842,19 @@ class MainWindow(QMainWindow):
         self, frame: np.ndarray, active: list, show_label: bool = True
     ) -> np.ndarray:
         """
-        Draw bounding boxes on a downscaled copy for speed.
+        Draw smooth transparent segmentation masks on a downscaled copy.
+
+        Style matches the chestnut pipeline:
+          - Semi-transparent fill  (alpha 0.30)
+          - Thin 1-px outline polyline
+          - No bounding boxes
+          - Small floating label pill above the mask centroid (optional)
 
         Args:
             frame:      Source numpy frame (any channel layout).
             active:     List of active track dicts from AppleTracker.
-            show_label: If True, draw grade + ID pill above each box.
-                        If False, draw the coloured box only — used for
-                        the raw CH1/CH2/CH3 panels where grading info is
-                        shown exclusively in the AI Model Input panel.
+            show_label: If True, draw grade + ID pill above each mask.
+                        If False, draw the coloured mask only.
         """
         import cv2
 
@@ -867,7 +871,7 @@ class MainWindow(QMainWindow):
 
         h, w = out.shape[:2]
 
-        # ── Downscale for fast drawing ─────────────────────────────────────
+        # ── Downscale for fast drawing ──────────────────────────────────────
         DRAW_W = 512
         scale_f = DRAW_W / w
         draw_h  = int(h * scale_f)
@@ -875,7 +879,6 @@ class MainWindow(QMainWindow):
 
         # Drawing params for 512px canvas
         fs        = 0.55   # font scale
-        box_thick = 2
         txt_thick = 1
 
         for t in active:
@@ -884,22 +887,42 @@ class MainWindow(QMainWindow):
             seq      = t["seq_id"]
             lane     = t["lane"]
             eligible = t.get("eligible", True)
+            mask_pts = t.get("mask", None)   # numpy array of polygon pts or None
             x1, y1, x2, y2 = t["box"]
 
-            # Scale box coords to draw canvas
-            sx1 = int(x1 * scale_f); sy1 = int(y1 * scale_f)
-            sx2 = int(x2 * scale_f); sy2 = int(y2 * scale_f)
-
             color      = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
-            name       = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
             draw_color = color if eligible else (120, 120, 120)
 
-            # Box
-            cv2.rectangle(small, (sx1, sy1), (sx2, sy2), draw_color, box_thick)
+            # ── Scale mask polygon to draw canvas ──────────────────────────
+            has_mask = mask_pts is not None and len(mask_pts) >= 3
+            if has_mask:
+                cnt = (mask_pts * scale_f).astype("int32")
+                # Smooth transparent fill (chestnut style)
+                overlay = small.copy()
+                cv2.fillPoly(overlay, [cnt], draw_color)
+                cv2.addWeighted(overlay, 0.30, small, 0.70, 0, small)
+                # Thin outline — no thick border
+                cv2.polylines(small, [cnt], True, draw_color, 1, cv2.LINE_AA)
+                # Centroid for label anchor
+                M = cv2.moments(cnt)
+                if M["m00"] != 0:
+                    lx = int(M["m10"] / M["m00"])
+                    ly = int(M["m01"] / M["m00"])
+                else:
+                    lx = int((x1 + x2) / 2 * scale_f)
+                    ly = int(y1 * scale_f)
+            else:
+                # Fallback: thin circle at centroid
+                cx_s = int((x1 + x2) / 2 * scale_f)
+                cy_s = int((y1 + y2) / 2 * scale_f)
+                r_s  = max(4, int((x2 - x1) / 2 * scale_f))
+                overlay = small.copy()
+                cv2.circle(overlay, (cx_s, cy_s), r_s, draw_color, -1)
+                cv2.addWeighted(overlay, 0.30, small, 0.70, 0, small)
+                cv2.circle(small, (cx_s, cy_s), r_s, draw_color, 1, cv2.LINE_AA)
+                lx, ly = cx_s, int(y1 * scale_f)
 
-            # Label pill ─────────────────────────────────────────────────────
-            # show_label=True  (AI Model Input panel): "#3 Fresh 87% L2"
-            # show_label=False (raw CH1/CH2/CH3):      "#3 L2"  — ID + lane only
+            # ── Floating label pill ────────────────────────────────────────
             id_part = f"#{seq}" if seq is not None else "?"
             if show_label:
                 name  = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
@@ -907,17 +930,26 @@ class MainWindow(QMainWindow):
             else:
                 label = f"{id_part} L{lane}"
 
-            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, txt_thick)
-            lx = max(0, sx1)
-            ly = max(lh + 4, sy1 - 4)
+            (lw_px, lh_px), _ = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, fs, txt_thick
+            )
+            pill_x = max(0, lx - lw_px // 2)
+            pill_y = max(lh_px + 4, ly - 6)
 
-            # Small filled pill behind text
-            cv2.rectangle(small, (lx, ly - lh - 3), (lx + lw + 4, ly + 2), draw_color, -1)
-            cv2.putText(small, label, (lx + 2, ly - 1),
-                        cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), txt_thick, cv2.LINE_AA)
+            cv2.rectangle(
+                small,
+                (pill_x, pill_y - lh_px - 3),
+                (pill_x + lw_px + 4, pill_y + 2),
+                draw_color, -1,
+            )
+            cv2.putText(
+                small, label, (pill_x + 2, pill_y - 1),
+                cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), txt_thick, cv2.LINE_AA,
+            )
 
         # Return the fast 512px render directly — NO expensive upscale!
         return small
+
 
 
     @pyqtSlot(float)
