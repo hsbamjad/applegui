@@ -842,17 +842,24 @@ class MainWindow(QMainWindow):
         self, frame: np.ndarray, active: list, show_label: bool = True
     ) -> np.ndarray:
         """
-        Draw bounding boxes on a downscaled copy for speed.
+        Draw segmentation mask overlays on a downscaled copy for speed.
+
+        For each tracked apple, draws:
+          - Semi-transparent filled mask polygon (35% opacity)
+          - Solid 2px outline around the mask
+          - Label pill above the mask (grade/ID/lane info)
+
+        Falls back to a bounding rectangle if no mask polygon is available
+        (i.e. model is a detect-only model, not seg).
 
         Args:
             frame:      Source numpy frame (any channel layout).
             active:     List of active track dicts from AppleTracker.
-            show_label: If True, draw grade + ID pill above each box.
-                        If False, draw the coloured box only — used for
-                        the raw CH1/CH2/CH3 panels where grading info is
-                        shown exclusively in the AI Model Input panel.
+            show_label: If True, draw full grade label (AI Model Input panel).
+                        If False, draw ID + lane only (raw CH1/CH2/CH3 panels).
         """
         import cv2
+        import numpy as np
 
         if frame is None:
             return frame
@@ -867,15 +874,14 @@ class MainWindow(QMainWindow):
 
         h, w = out.shape[:2]
 
-        # ── Downscale for fast drawing ─────────────────────────────────────
-        DRAW_W = 512
+        # Downscale for fast drawing — all coords scaled accordingly
+        DRAW_W  = 512
         scale_f = DRAW_W / w
         draw_h  = int(h * scale_f)
         small   = cv2.resize(out, (DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
 
         # Drawing params for 512px canvas
-        fs        = 0.55   # font scale
-        box_thick = 2
+        fs        = 0.55
         txt_thick = 1
 
         for t in active:
@@ -885,21 +891,36 @@ class MainWindow(QMainWindow):
             lane     = t["lane"]
             eligible = t.get("eligible", True)
             x1, y1, x2, y2 = t["box"]
-
-            # Scale box coords to draw canvas
-            sx1 = int(x1 * scale_f); sy1 = int(y1 * scale_f)
-            sx2 = int(x2 * scale_f); sy2 = int(y2 * scale_f)
+            mask_poly       = t.get("mask")   # (N, 2) float array or None
 
             color      = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
-            name       = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
             draw_color = color if eligible else (120, 120, 120)
 
-            # Box
-            cv2.rectangle(small, (sx1, sy1), (sx2, sy2), draw_color, box_thick)
+            # ── Mask or fallback rectangle ─────────────────────────────────
+            if mask_poly is not None and len(mask_poly) >= 3:
+                # Scale polygon to draw canvas
+                pts = (mask_poly * scale_f).astype(np.int32)
 
-            # Label pill ─────────────────────────────────────────────────────
-            # show_label=True  (AI Model Input panel): "#3 Fresh 87% L2"
-            # show_label=False (raw CH1/CH2/CH3):      "#3 L2"  — ID + lane only
+                # Semi-transparent filled mask (35% opacity)
+                overlay = small.copy()
+                cv2.fillPoly(overlay, [pts], draw_color)
+                cv2.addWeighted(overlay, 0.35, small, 0.65, 0, small)
+
+                # Solid outline
+                cv2.polylines(small, [pts], isClosed=True, color=draw_color, thickness=2)
+
+                # Anchor for label pill — top-left of bounding box
+                lx_anchor = int(x1 * scale_f)
+                ly_anchor = int(y1 * scale_f)
+            else:
+                # Fallback: plain rectangle (detect-only model)
+                sx1 = int(x1 * scale_f); sy1 = int(y1 * scale_f)
+                sx2 = int(x2 * scale_f); sy2 = int(y2 * scale_f)
+                cv2.rectangle(small, (sx1, sy1), (sx2, sy2), draw_color, 2)
+                lx_anchor = sx1
+                ly_anchor = sy1
+
+            # ── Label pill ─────────────────────────────────────────────────
             id_part = f"#{seq}" if seq is not None else "?"
             if show_label:
                 name  = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
@@ -908,16 +929,17 @@ class MainWindow(QMainWindow):
                 label = f"{id_part} L{lane}"
 
             (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, txt_thick)
-            lx = max(0, sx1)
-            ly = max(lh + 4, sy1 - 4)
+            lx = max(0, lx_anchor)
+            ly = max(lh + 4, ly_anchor - 4)
 
-            # Small filled pill behind text
+            # Filled pill background
             cv2.rectangle(small, (lx, ly - lh - 3), (lx + lw + 4, ly + 2), draw_color, -1)
             cv2.putText(small, label, (lx + 2, ly - 1),
                         cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), txt_thick, cv2.LINE_AA)
 
-        # Return the fast 512px render directly — NO expensive upscale!
+        # Return the 512px render directly — no expensive upscale
         return small
+
 
 
     @pyqtSlot(float)
