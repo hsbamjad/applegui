@@ -1,6 +1,6 @@
-# Apple Size Estimation — Research & Engineering Brainstorm
-**Michigan State University · ASABE AIM26 · 28 May 2026**
-**Meeting with Dr. Lu — Notes, Analysis & Plan**
+# Apple Size Estimation - Research & Engineering Brainstorm
+**Michigan State University · 28 May 2026**
+**Meeting with Dr. Lu - Notes, Analysis & Plan**
 
 ---
 
@@ -32,15 +32,15 @@ The diagram captures two key ideas:
 | # | Point | Key takeaway |
 |---|---|---|
 | 1 | "How may we calculate the size?" | Method discussion: bounding-box pixel width vs GT |
-| 2 | "We have GTs where size in D is given — we can build an LR model and need R²" | We have physical ground-truth diameters; fit pixel → mm regression and validate |
-| 3 | "A previous student did sizing but did NOT account for camera-position correction — apples on side lanes look different than center because camera is mounted right above center row" | Critical gap. We must derive and implement a per-lane (or per-pixel-position) perspective correction factor |
+| 2 | "We have GTs where size in D is given - we can build an LR model and need R²" | We have physical ground-truth diameters; fit pixel to mm regression and validate |
+| 3 | "A previous student did sizing but did NOT account for camera-position correction - apples on side lanes look different than center because camera is mounted right above center row" | Critical gap. We must derive and implement a per-lane (or per-pixel-position) perspective correction factor |
 
 ---
 
 ## 2. What We Have Right Now
 
 ### 2.1 Pipeline
-- **JAI FSFE-3200T-10GE** — 3-sensor prism camera, 2048 × 1536 px, 16 mm Edmund Optics VIS-NIR lens
+- **JAI FSFE-3200T-10GE** - 3-sensor prism camera, 2048 × 1536 px, 16 mm Edmund Optics VIS-NIR lens
 - **YOLO tracking** (`tracker.py`) → bounding box `(x1, y1, x2, y2)` per apple per frame, already committed
 - **`GradeRecord`** dataclass + CSV schema already has a reserved `diameter_px` column
 - **3-lane screw conveyor**, camera mounted **above the center lane** (lane 2)
@@ -103,7 +103,7 @@ Raw YOLO box (px)
 
 ---
 
-### STEP A — Per-Frame Pixel Diameter
+### STEP A - Per-Frame Pixel Diameter
 
 **Why `min(box_w, box_h)`?**
 
@@ -127,7 +127,7 @@ size_estimation:
 
 ---
 
-### STEP B — Perspective Correction Factor (THE CRITICAL NEW PART)
+### STEP B - Perspective Correction Factor (THE CRITICAL NEW PART)
 
 #### The physical setup
 
@@ -210,7 +210,7 @@ CF = 1.0 / cos(theta)
 D_px_corrected = D_px_raw * CF
 ```
 
-This is **fully general** — works for any apple position, not just lane centers.
+This is **fully general** - works for any apple position, not just lane centers.
 
 #### What we need to know to implement this
 
@@ -218,16 +218,16 @@ This is **fully general** — works for any apple position, not just lane center
 |---|---|---|
 | Camera height above conveyor | H (mm) | **Measure physically** (tape measure) |
 | Horizontal lane offset from center | X_lane (mm) | **Measure physically** (lane spacing) |
-| Focal length | f (mm) | **16 mm** (Edmund Optics lens — confirmed) |
+| Focal length | f (mm) | **16 mm** (Edmund Optics lens - confirmed) |
 | Pixel pitch | p (mm) | **3.45 µm** = 0.00345 mm (Sony IMX252) |
 | Focal length in pixels | f_px = f/p | 16 / 0.00345 ≈ **4,638 px** |
 | Image center | (cx0, cy0) | 2048/2, 1536/2 = **(1024, 768)** |
 
-**The only unknowns are H and X_lane — both physical measurements we take in the lab.**
+**The only unknowns are H and X_lane - both physical measurements we take in the lab.**
 
 ---
 
-### STEP C — Converting Pixels to mm
+### STEP C - Converting Pixels to mm
 
 Once corrected to the equivalent center-lane scale:
 ```
@@ -239,11 +239,11 @@ D_mm = D_px_corrected × S_center
 This collapses to a single scalar once H is measured.
 
 Alternatively, compute `mm_per_px` from GT calibration directly (Step E gives us this as the slope
-of the regression line — no need to measure H explicitly if the LR is good enough).
+of the regression line - no need to measure H explicitly if the LR is good enough).
 
 ---
 
-### STEP D — Aggregation Strategy
+### STEP D - Aggregation Strategy
 
 The apple rotates on the screw conveyor so its bounding box dimension changes frame by frame.
 Options:
@@ -261,7 +261,7 @@ Track per-frame sizes in `hist["box_sizes"]` list, compute at grade commit time.
 
 ---
 
-### STEP E — LR Model and R² Validation
+### STEP E - LR Model and R² Validation
 
 #### What we build
 
@@ -297,7 +297,7 @@ Then use it to predict GT from pixel measurements.
 
 ---
 
-### STEP F — Integration into GUI and CSV
+### STEP F - Integration into GUI and CSV
 
 #### CSV logging additions
 The config already has `diameter_px`. We add:
@@ -397,7 +397,7 @@ Phase F — Analysis script
 
 5. **Do we report diameter of the whole apple or just the cross-sectional equatorial diameter?**
    From a top-down camera, we're measuring the **maximum cross-section** (equatorial D), which is
-   the same as what calipers measure at the widest point — so they should match well.
+   the same as what calipers measure at the widest point - so they should match well.
 
 ---
 
@@ -435,5 +435,5 @@ R² = 1 - SS_res / SS_tot
 
 ---
 
-*Document created: 28 May 2026 — Haseeb Bajwa, MSU*
+*Document created: 28 May 2026 - Haseeb Bajwa, MSU*
 *Branch: feature/apple-size-estimation*
