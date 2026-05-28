@@ -121,9 +121,12 @@ class VideoWorker(QThread):
         )
         self._running = True
 
-        frame_count  = 0
-        fps_start    = time.perf_counter()
-        reported_fps = float(self._fps)
+        frame_count   = 0
+        fps_start     = time.perf_counter()
+        reported_fps  = float(self._fps)
+        # Diagnostic accumulators — reset every second
+        t_read_total  = 0.0
+        t_sleep_total = 0.0
 
         # Fix 2: shared executor — reused every frame, 3 worker threads (one per channel)
         with ThreadPoolExecutor(max_workers=3) as executor:
@@ -132,11 +135,13 @@ class VideoWorker(QThread):
                 min_interval = 1.0 / self._fps
 
                 # Fix 2: submit all 3 reads in parallel
+                t_read_start = time.perf_counter()
                 futures = [
                     executor.submit(_read_and_resize, cap, self._sim_height)
                     for cap in caps
                 ]
                 results = [f.result() for f in futures]  # preserves channel order
+                t_read_total += time.perf_counter() - t_read_start
 
                 # Check if any channel hit end-of-video
                 end_of_video = any(not ok for ok, _ in results)
@@ -159,14 +164,25 @@ class VideoWorker(QThread):
                 elapsed = time.perf_counter() - fps_start
                 if elapsed >= 1.0:
                     reported_fps = frame_count / elapsed
-                    frame_count  = 0
-                    fps_start    = time.perf_counter()
+                    log.info(
+                        "VideoWorker: %.1f FPS  |  read=%.0fms/frame  sleep=%.0fms/frame  "
+                        "frame_shape=%s",
+                        reported_fps,
+                        (t_read_total / frame_count) * 1000,
+                        (t_sleep_total / frame_count) * 1000,
+                        frames[0].shape if frames else "?",
+                    )
+                    frame_count   = 0
+                    fps_start     = time.perf_counter()
+                    t_read_total  = 0.0
+                    t_sleep_total = 0.0
 
                 self.sig_frame.emit(frames[0], frames[1], frames[2], reported_fps)
 
                 # Pace to target FPS
                 sleep = min_interval - (time.perf_counter() - t0)
                 if sleep > 0:
+                    t_sleep_total += sleep
                     time.sleep(sleep)
 
         for cap in caps:
