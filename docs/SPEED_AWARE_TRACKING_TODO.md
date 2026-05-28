@@ -112,9 +112,28 @@ running at fixed 1/2/3 apples/s.
 
 ---
 
-## Remaining Open Item
+## Remaining Open Item — Measure From Image
 
-- [ ] Confirm: how many screw pitches are in the camera's field of view?
+Mechanical engineer confirmed (2026-05-28):
+> "I didn't account that. You can account it through the image."
+
+**How to measure it (takes 30 seconds):**
+
+1. Run the app in simulation mode (`simulation.enabled: true` in `config.yaml`)
+2. Connect camera, look at the **CH1 raw channel display**
+3. Count how many apples are **simultaneously visible** in the frame
+4. That number = pitches in the camera's FOV
+
+**Then plug into:**
+```
+transit_time = pitches_in_FOV / apples_per_second
+frames_in_view = transit_time × inference_fps
+```
+
+As long as `frames_in_view ≥ 5` at the fastest speed (3 apples/s), current params are confirmed safe.
+
+- [ ] Run simulation, count visible apples in frame, record number here: `__`
+- [ ] Verify: `__ pitches / 3 apples/s × 15 FPS ≥ 5 frames` → ✅ confirmed
 
 ---
 
