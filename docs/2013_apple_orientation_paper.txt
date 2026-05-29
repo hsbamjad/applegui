@@ -1,0 +1,2142 @@
+ 
+ 
+ 
+Transactions of the ASABE 
+Vol. 56(3): 813-827 
+2013 American Society of Agricultural and Biological Engineers ISSN 2151-0032  
+813 
+A LOW-COST COLOR VISION SYSTEM FOR  
+AUTOMATIC ESTIMATION OF APPLE FRUIT ORIENTATION  
+AND MAXIMUM EQUATORIAL DIAMETER 
+A. Mizushima,  R. Lu 
+ABSTRACT. The overall objective of this research was to develop an in-field presorting and grading system to separate 
+undersized and defective fruit from fresh market-grade apples. To achieve this goal, a cost-effective machine vision 
+inspection prototype was built, which consisted of a low-cost color camera, LED lights, and a generic bi-cone conveyor. 
+Algorithms were developed for accurate estimation of pixels per unit dimension from images acquired under the close-
+range imaging configuration and for real-time estimation of apple orientation, shape, and maximum equatorial diameter. 
+The machine vision system was tested and evaluated for ‘Delicious’ (D), ‘Empire’ (EM), ‘Golden Delicious’ (GD), and 
+‘Jonagold’ (JG) apples at a speed of four fruit per second. The variable pixels per unit dimension method achieved 
+superior results for area estimation, compared to the conventional image distortion correction and area estimation 
+methods. The orientation estimation algorithm had 87.6% and 86.2% accuracies for D and GD apples, respectively, 
+within ±20° of actual fruit orientation, but it performed less satisfactorily for round-shaped EM and JG apples. The 
+machine vision system achieved good fruit maximum equatorial diameter estimations, with an overall root mean squared 
+error of 1.79 mm for the four varieties of apple, and it had a two-size grading error of 4.3%, versus 15.1% by a 
+mechanical sizing machine. The system provides a cost-effective means for sorting apples for size. 
+Keywords. Apple, Grading, In-field, Machine vision, Sizing, Sorting. 
+urrently, apples are still harvested manually using 
+the ladder and picking bag. After the picking bag 
+is filled with apples (weighing about 20 kg), the 
+worker carries it to a bin and carefully empties 
+the fruit into the bin, which can hold up to 400 to 500 kg of 
+apples. In the U.S., harvest bin trailers, which can carry up 
+to 5 to 6 bins, are now commonly used during the apple 
+harvest. Recently, some growers have begun to use mobile 
+orchard platforms and mechanical harvest aid machines to 
+improve the harvest efficiency. A harvest platform allows 
+workers to directly dump the harvested fruit from the 
+picking bag into a bin, while a harvest aid machine is 
+usually equipped with a conveyor and a bin filler. Two 
+commercial companies in the U.S. recently developed 
+vacuum-style harvest aid machines to assist apple harvest 
+(Warner, 2009; Luo et al., 2012). These machines have no 
+or limited in-field sorting capabilities. 
+In current harvest practice, all harvested fruit of different 
+quality grades are placed into the same fruit bins, and they 
+are then transported to the packinghouse. After storage, the 
+apples are graded, sorted, and packed. High-quality apples 
+are sold to the retailer as fresh, while culls (i.e., inferior and 
+defective) are sent to the fruit processor for making 
+processed products (i.e., juice, applesauce, canning, fresh 
+cut, etc.). This practice means that growers have to pay 
+almost the same cost for storing, grading, and sorting culls as 
+that for premium-quality fresh apples, even though the price 
+for processing apples is only a fraction of that for fresh 
+apples. Due to the high costs for packinghouse operations, 
+growers may not break even if a high percentage of culls are 
+present. Therefore, there is a need for in-field grading and 
+sorting technology to remove inferior and/or defective apples 
+in the orchard, so as to achieve savings in postharvest storage 
+and packing, reduce postharvest disease and pest problems, 
+and enhance inventory management (Mizushima and Lu, 
+2011). However, in-field presorting will incur machinery cost 
+and may also require additional labor cost for apple growers. 
+Mizushima and Lu (2011) did an economic analysis by 
+comparing the cost of presorting apples in the orchard with 
+that of directly storing and packing all harvested apples in 
+the packinghouse. They concluded that in-field presorting 
+will be beneficial for the average apple grower (~21 ha) in 
+the U.S. if the machinery cost is no more than $30,000 unit-1. 
+They also provided guidelines for the development of in-
+field presorting systems. 
+An in-field presorting system, whether it is built on an 
+autonomous, self-propelled vehicle or on a harvest trailer 
+hauled by a tractor, should have some basic functions, 
+ 
+ 
+ 
+ 
+Submitted for review in August 2011 as manuscript number PM 9343; 
+approved for publication by the Power & Machinery Division of ASABE
+in April 2013. Presented at the 2012 ASABE Annual Meeting as Paper No.
+1110723. 
+Mention of company or trade names is for description only and does
+not imply endorsement by the USDA. The USDA is an equal opportunity
+provider and employer. 
+The authors are Akira Mizushima, Research Agricultural Engineer, 
+and Renfu Lu, ASABE Member Engineer, Supervisory Research
+Agricultural Engineer, USDA-ARS, Michigan State University, East
+Lansing, Michigan. Corresponding author: Akira Mizushima, 524 S. 
+Shaw Lane, Michigan State University, East Lansing, MI 48824; phone:
+517-353-7793; e-mail: Akira.Mizushima@ars.usda.gov. 
+C 
+814 
+ 
+TRANSACTIONS OF THE ASABE 
+which include, but are not limited to, reception of fruit from 
+pickers, sorting and grading of each apple (i.e., juice, 
+processing, or fresh market), and delivery of the graded 
+fruit into specific bins without causing damage. To sort and 
+grade apples in the field, an appropriately designed 
+machine vision system needs to be developed. 
+In-line machine vision-based inspection systems are 
+now widely used in packinghouses. These systems are 
+designed for precision sorting of apples into as many 
+quality grades as customers desire at a high speed (i.e., 10 
+or more fruit s-1 for each lane). The systems are generally 
+expensive and require a large machine vision chamber. 
+Therefore they are not suitable for in-field presorting, 
+where cost, compactness, and/or mobility are paramount in 
+the system design. To reduce the imaging chamber size, 
+some machine vision systems have adopted reflective 
+mirrors for image acquisition (Cubero et al., 2010). 
+However, this design is not desirable or may not even be 
+practical in the field because mirrors are susceptible to dust 
+and dirt and would need frequent cleaning due to the 
+presence of dust and the rugged terrain in the orchard. 
+Another option is to use a wide field of view for the 
+camera, which, in turn, can cause considerable distortion in 
+the acquired images and increase the relative distance 
+variation from the camera to the fruit for different locations 
+of the image (i.e., the number of pixels per unit dimension 
+is not the same over the whole image). Moreover, the 
+image processing algorithm, including image acquisition, 
+segmentation, features extraction, and classification, must 
+be efficient and fast in order to meet the need of sorting 
+apples at an appropriate speed (e.g., 4 to 6 apples s-1) with 
+limited computer capacity. Furthermore, the machine vision 
+system should be energy efficient when it is operating in 
+the orchard. These factors, along with other system design 
+issues in fruit transport and handling, must be properly 
+addressed so that a cost-effective system can be developed 
+for in-field sorting and grading of apples. 
+Size is one of the most important factors in sorting 
+apples into different grades for the fresh market. Many 
+methods for fruit size determination have been proposed in 
+the past (Moreda et al., 2009). Throop et al. (2003) used the 
+major axis obtained from the fitted ellipse for an apple as 
+the fruit diameter. Pla et al. (2001) determined the fruit size 
+from the maximum and minimum diameters, which were 
+calculated based on the moment of inertia of the fruit. 
+However, few researchers have tried to estimate the fruit 
+size based on the maximum equatorial diameter of the 
+equatorial section, which is defined by USDA standards 
+(USDA, 2002). This is likely due to the difficulty of 
+accurately detecting the stem/calyx end orientation of 
+apples. Blasco et al. (2003) determined the equatorial 
+diameter of apples using acquired images in which the stem 
+was identified to be located nearest to the centroid of the 
+fruit. The method worked well when the stem was attached 
+to the fruit and was shown in the image. However, when 
+apples are rolling on a conveyor, they do not always orient 
+themselves in a way that allows the stem to appear in each 
+acquired image. Moreover, the stem may be detached from 
+some of the harvested apples. To comply with the USDA 
+standards for size measurement, it is necessary to detect the 
+stem or its location and determine the orientation of each 
+fruit in order to estimate the maximum equatorial diameter 
+of the equatorial section and differentiate the stem/calyx 
+ends from surface blemishes or defects, as the stem/calyx 
+ends often exhibit patterns and intensity values that are 
+similar to defects, thus resulting in false classifications. 
+Previous studies for size estimation have not considered 
+the effect of image distortion on fruit size estimation and 
+size measurement error caused by the variation of distance 
+to the fruit. This is probably because these studies adopted 
+a large distance between the camera and the inspected fruit 
+and also used sufficient lighting. Image distortion can be 
+minimized by using a camera with a narrow field of view 
+(or a long focal length), which would limit the imaging 
+area, reducing the system throughput rate. Alternatively, the 
+system may use a longer distance between the camera and 
+objects so that the number of pixels per unit dimension is 
+almost the same over the whole image, which, in turn, 
+would reduce the image resolution and require more 
+lighting or consume more energy because image brightness 
+is inversely proportional to the square of the distance. 
+These configurations are impractical or undesirable for an 
+in-field sorting system that needs to operate within the 
+limited spacing between rows of fruit trees in an orchard, as 
+well as be mobile and rugged in an outdoor environment 
+with a limited supply of energy. 
+This article reports on the development of a machine 
+vision inspection algorithm to estimate fruit orientation and 
+maximum diameter of the equatorial section using a low-cost 
+color camera in a close-range view for in-field presorting of 
+apples. The specific objectives of the research were to: 
+• Assemble a low-cost, compact machine vision system 
+suitable for in-field sorting and grading of apples. 
+• Develop a simple and fast method to estimate 
+variable pixels per unit dimension caused by the 
+image distortion and distance variation resulting from 
+a close-range view. 
+• Determine the orientation of each fruit using moment 
+and stem/symmetry detection algorithms. 
+• Develop and evaluate an estimation algorithm for the 
+maximum equatorial diameter of apples with both 
+elongated and round shape characteristics. 
+MATERIALS AND METHODS 
+MACHINE VISION INSPECTION TEST SYSTEM 
+A laboratory machine vision system (fig. 1) was built to 
+obtain images and evaluate the accuracy of the proposed 
+maximum equatorial diameter estimation algorithm for in-
+field sorting of apples. The system consisted of a low-cost 
+CCD color camera (Fire-I, Unibrain, Inc., San Ramon, 
+Cal.), LED lights, and a low-cost bi-cone roller conveyor. 
+The specifications of the machine vision system are shown 
+in table 1. The camera was installed 38 cm above the bi-
+cone roller conveyor. There were two lanes of bi-cone 
+rollers for the conveyor, with 2.54 cm space between the 
+lanes. The 2.4 m long conveyor was driven by a hydraulic 
+motor at a linear speed of 20 to 30 cm s-1, which would sort 
+4 to 6 apples s-1 to accommodate a harvest crew of 6 to 
+56(3): 813-827 
+ 
+815 
+ 
+8 people. As the fruit passed the imaging area, the bi-cone 
+rollers engaged with the plates mounted underneath to 
+rotate the apples for imaging. The camera captured color 
+images of the rotating fruit on both lanes, which covered a 
+30 cm × 22 cm area with an image size of 640 × 480 at 
+15 frames s-1. Approximately 15 images were captured for 
+different sections of each rotating apple. The shutter speed 
+of the camera was set at 5 ms, during which time the apple 
+moved approximately 1 mm. Color images were captured 
+and analyzed by a computer (Intel Pentium 4, 2.0 GHz, 
+735 MB memory, Windows XP) equipped with an IEEE 
+1394 card. Eight LED lights (BXRA-C0400, Bridgelux, 
+Inc., Livermore, Cal.) were installed in two lines inside the 
+imaging chamber to illuminate both lanes of bi-cone 
+rollers, as shown in figure 1. The total output power of the 
+LED lights was 14.4 W (1.8 W each). Diffusing caps 
+(C10271_LEDILSTAR-P-S, Ledil, Inc., Salo, Finland) 
+were attached to each LED to provide diffuse, uniform 
+lighting. The spectral response of the LED light is shown in 
+figure 2. Computer algorithms were developed and 
+integrated into the system for real-time estimation of fruit 
+shape, orientation, and maximum equatorial diameter. The 
+image 
+processing 
+and 
+analysis 
+algorithms 
+were 
+implemented in C++ using the OpenCV library (version 
+1.0). 
+VARIABLE PIXELS PER UNIT DIMENSION ESTIMATION 
+Estimating the actual maximum equatorial diameter of 
+an object in an image requires determining the number of 
+pixels per unit dimension (i.e., mm pixel-1) in the image. 
+There were two problems with obtaining the number of 
+pixels per unit dimension in the captured images. First, the 
+camera had considerable radial distortion because the lens 
+had a wide field of view (4.3 mm focal length) to cover the 
+required area in the compact machine vision chamber. 
+Second, even if radial distortion were zero, the number of 
+pixels per unit dimension would not be the same over the 
+whole image since the captured image is a perspective view 
+(i.e., a projection from the world coordinate to the image 
+coordinate system). Image distortion can be corrected using 
+the camera calibration method proposed by Zhang (2000). 
+After the radial distortion correction, the image was 
+transformed to a world coordinate image by the direct 
+linear 
+transformation 
+(DLT) 
+method 
+(Hartley 
+and 
+Zisserman, 2004), assuming that the z-coordinate is 
+constant and the fruit are flat. Conversion from the raw 
+captured image of a calibration checker board to a world 
+coordinate image by the DLT method after radial distortion 
+correction is shown in figure 3. The calibration checker 
+board was placed in the middle of the bi-cone roller 
+conveyor where the fruit were being transported. The root 
+mean square error of 54 (9 × 6) corner points inside the 
+checker board was 0.19 mm when a constant number of 
+pixels per unit dimension (i.e., 0.457 mm pixel-1) was 
+applied to the whole image. 
+Using this world coordinate image and the pixels per 
+unit dimension, the accuracy was evaluated for two 
+reference balls of 63.5 and 76.2 mm diameter, respectively, 
+which cover a typical size range of apples. Images were 
+captured for these balls moving on the bi-cone conveyor, 
+and the number of pixels and the position of the centroid of 
+the balls in the images were measured. The area of the balls 
+was then calculated for the raw captured image and world 
+coordinate image by the DLT method with radial distortion 
+correction. A constant number of pixels per unit dimension 
+(i.e., 0.49 mm pixel-1) was used for the whole raw image. 
+The area estimation results are shown in figure 4. The 
+horizontal axis in the figure shows the pixel location of the 
+centroid of the ball along the x-axis, and the vertical axis 
+shows the estimated area of the ball using 0.49 mm pixel-1 
+for the raw image and 0.457 mm pixel-1 for the corrected 
+image. The image segmentation and contour extraction 
+methods for measuring the area of the ball are described in 
+the next section. 
+As the centroid of the ball became farther away from the 
+center of the image, the estimated area from the raw image 
+became smaller. This is mainly because the distance 
+Figure 1. Laboratory machine vision system with a bi-cone roller 
+conveyor to evaluate the maximum equatorial diameter estimation
+algorithm for in-field presorting of apples. 
+Table 1. Specifications of the machine vision system. 
+Component 
+Description 
+Camera 
+IEEE 1394 
+ 
+Shutter speed 
+5 ms 
+ 
+Frame rate 
+15 frames s-1 
+ 
+Resolution 
+640 × 480 color image 
+ 
+Focal length 
+4.3 mm 
+Distance from camera to fruit 
+38 cm 
+Lighting 
+8 LEDs of 1.8 W each 
+Sorting capacity 
+4 fruit s-1 (for a crew  
+of 6 to 8 people) 
+Figure 2. Spectral response of the LED lights. 
+816 
+ 
+TRANSACTIONS OF THE ASABE 
+between the camera and fruit at the center of the image was 
+significantly different from the distance at the edge of the 
+image. On the other hand, as the centroid of the ball 
+became farther away from the center of the image, the 
+estimated area from the DLT method became slightly 
+larger. The DLT method assumes that the fruit is flat (or 
+two-dimensional) and moves on the same plane where the 
+calibration checker board was placed. However, the actual 
+fruit is three-dimensional, and the area estimation error 
+becomes larger when the fruit is seen at the edge of the 
+image, as illustrated in figure 5a, because of the close-range 
+view. Even when the fruit is located at the center of the 
+image, there is an error for area estimation if the projected 
+plane of the fruit is different from the calibration plane. 
+In addition, the center of the transporting plane of each 
+fruit is different when the size of the fruit is different. As 
+shown in figure 5b, the estimated area for the small ball is 
+smaller than the true area because the center of its 
+transporting plane is lower than the calibration plane, while 
+the estimated area for the large ball is slightly larger than 
+the true area because the center of its transporting plane is 
+higher than the calibration plane. Clearly, the conventional 
+approach, i.e., world coordinate transformation by the DLT 
+method with radial distortion correction, has failed to 
+accurately estimate the size of fruit due to the camera’s 
+close-range view. Therefore, we propose a new estimation 
+method for variable pixels per unit dimension without 
+correcting radial distortion of the image and using a world 
+coordinate transformation by the DLT method. 
+The number of variable pixels per unit dimension was 
+estimated for the small (63.5 mm diameter) and large 
+(76.2 mm diameter) reference balls based on the fruit 
+ 
+(a) 
+ 
+(b) 
+ 
+Figure 3. Conversion from (a) raw captured image of the calibration checker board to (b) world coordinate image by DLT method after radial 
+distortion correction. 
+ 
+(a) 
+ 
+(b) 
+ 
+Figure 4. Area estimation result for (a) small and (b) large balls from the original raw image and direct linear transformation (DLT) image with
+radial distortion correction. 
+4000
+4500
+5000
+100
+200
+300
+400
+500
+Estimated area (mm2)
+Centroid of x (pixels)
+2500
+3000
+3500
+100
+200
+300
+400
+500
+Estimated area (mm2)
+Centroid of x (pixels)
+Raw image 
+DLT method 
+True area 
+Raw image 
+DLT method 
+True area 
+56(3): 813-827 
+ 
+817 
+location and size in the original raw image. A relationship 
+was established between the number of pixels for the ball 
+images calculated from the original raw image and the 
+location of the ball along the conveyor’s moving direction, 
+which is shown in figure 6. The horizontal axis in the figure 
+shows the pixel location of the centroid of the ball along 
+the x-axis, and the vertical axis shows the total number of 
+pixels determined from the images of the ball. Because the 
+distance between the camera and the ball varied with the 
+position of the ball on the x-axis (or the conveyor’s moving 
+direction), the measured area, expressed as the number of 
+pixels, for each image also varied. As the centroid of the 
+ball became farther away from the center of the image, the 
+measured area became smaller because the distance to the 
+ball became longer. A quadratic equation was used to fit the 
+measured areas (number of pixels) as a function of position 
+x for the centroid of the ball (fig. 6). The variable pixels per 
+unit dimension function (r) was then calculated as follows: 
+ 
+( )
+2
+2
+2
+d
+r x
+ax
+bx
+c
+
+
+π
+
+
+
+=
++
++
+ 
+(1) 
+where r(x) is the variable pixels per unit dimension 
+function, which is calculated as the square root of the ratio 
+of the actual projected area of the ball (mm2) to the 
+ 
+(a) 
+(b) 
+ 
+Figure 5. (a) Error of area estimation by the direct linear transformation (DLT) method with radial distortion, and (b) center of transporting 
+plane for small and large balls on the bi-cone roller. 
+Figure 6. Relationship between the number of pixels calculated from the images of the small (63.5 mm) and large (76.2 mm) calibration balls 
+and their centroid position (x). 
+y = -0.040x2+ 28.330x + 15,131.219
+R² = 0.979
+y = -0.029x2+ 20.462x + 9,542.257
+R² = 0.972
+10000
+12000
+14000
+16000
+18000
+20000
+0
+100
+200
+300
+400
+500
+600
+Number of pixels
+X-axis position (pixels)
+Large ball 
+2.
+76
+5.
+63
+B
+A
+B
+B
+A
+A
+r
+r
+rY
++
++
++
+=
+Small ball 
+Z 
+Y 
+X 
+V 
+W 
+Calibration 
+plane 
+Camera 
+Center
+Edge 
+Edge 
+True size 
+Estimated size 
+with error 
+Center of 
+transporting 
+plane for 
+small ball 
+Center of transporting 
+plane for large ball 
+Bi-cone roller 
+Estimated size 
+with error 
+Estimated size 
+without error 
+818 
+ 
+TRANSACTIONS OF THE ASABE 
+measured number of pixels for the ball image at centroid 
+location x (mm pixel-1); x is the x position of the centroid of 
+the object in the image (pixels); a, b, and c are coefficients 
+of the quadratic equation obtained for the calibration ball; 
+and d is the measured or actual diameter of the calibration 
+ball (mm). 
+Four variable pixels per unit dimension functions were 
+established for the two calibration balls for the two lanes of 
+the machine vision system. If the number of pixels was 
+greater than that of the large (76.2 mm) ball (point X in 
+fig. 6), the variable pixels per unit dimension function for 
+the large ball was used. If the number of pixels was smaller 
+than that of the small (63.5 mm) ball (point Z in fig. 6), the 
+variable pixels per unit dimension function for the small 
+ball was used. If the number of pixels fell between the 
+small and large balls (point Y in fig. 6), the variable pixels 
+per unit dimension function was calculated based on the 
+ratio of distance between VY (A in fig. 6) and YW (B in 
+fig. 6), i.e.: 
+ 
+A
+B
+A
+B
+A
+B
+Y
+small
+large
+r
+r
+r
+=
++
++
++
+ 
+ 
+where rY, rsmall, and rlarge are variable pixels per unit 
+dimension functions for point Y, the small ball, and the 
+large ball, respectively. 
+IMAGE PROCESSING PROCEDURE 
+The image processing for the maximum equatorial dia-
+meter estimation of apples was composed of regions of 
+interest detection, segmentation of apples from the 
+background, features extraction, apple shape and rotational 
+axis 
+detection, 
+and 
+maximum 
+equatorial 
+diameter 
+estimation (fig. 7). Four algorithms, including moment, 
+contour extraction, stem detection, and symmetry detection, 
+were developed to extract 12 features from the 15 images 
+acquired for each apple. Apple shape and rotational axis 
+were then calculated from the 12 extracted features of all 
+15 images. Finally, maximum equatorial diameter was 
+estimated using 12 features of the 15 images, along with 
+apple shape and rotational axis information. 
+REGIONS OF INTEREST DETECTION 
+AND TRACKING OF FRUIT 
+Because the images were acquired continuously without 
+synchronization, regions of interest for image processing 
+were calculated after image acquisition. An example image 
+is shown in figure 8. The shafts of the bi-cone rollers were 
+painted white to help find the region of interest for image 
+processing. The rectangular region, where the shafts were 
+located, was converted to a grayscale image. Then the 
+intensity profile was obtained by the projection of column 
+(or x-axis) intensities in the image onto the horizontal axis, 
+as shown in the lower part of figure 8. The intensity profile 
+was normalized to between 0 and 1.0 by dividing the 
+maximum intensity profile. The shafts positions were 
+estimated by detecting the peaks of the intensity profile. 
+Peaks were detected using a threshold of 0.3, which was 
+decided by the trial-and-error method. Because the shafts 
+were lower than the center of the fruit’s transporting plane, 
+the position of the shaft locations (peaks) in the image had 
+an offset from the position of the fruit plane. This 
+perspective error was corrected by a weight function 
+proportional to the distance from the center of the image in 
+the x-axis, as follows: 
+ 
+pcorrect = pmeasure + w(pmeasure – Iwidth/2) 
+(2) 
+where pcorrect is the corrected position of the peak, pmeasure is 
+the peak position calculated from the intensity profile, w is 
+the weight for correction, and Iwidth is the width of the 
+image. A value of w = 0.136 was selected manually for this 
+research. The number of regions of interest is limited to 
+two for each lane. To obtain two regions of interest, three 
+continuous peaks were selected. If there were four peaks, as 
+shown in figure 8, then either peak p1 or p4 was discarded, 
+whichever had a shorter distance to the edge of the image. 
+In the case of figure 8, peak p4 was discarded because the 
+distance to the edge of the image (e4) was shorter than 
+distance e1. The corresponding regions of interest for 
+continuous images were tracked by comparing the peaks 
+between the continuous images. 
+SEGMENTATION 
+After the regions of interest were selected, linear 
+discriminant analysis (LDA) was used for segmentation for 
+each region of interest. LDA (or Bayesian discriminant 
+model) is widely used to separate apples from the 
+background using red, green, and blue (RGB) color space 
+(Blasco et al., 2003; Ruiz et al., 1996). In this research, 
+Figure 7. Image processing steps for fruit maximum equatorial
+diameter estimation. 
+Image capture 
+Regions of interest detection 
+Segmentation 
+Feature extraction (12 features) 
+•
+Moment algorithm 
+•
+Contour extraction 
+•
+Stem detection 
+•
+Symmetry detection 
+ 
+Maximum equatorial diameter  
+estimation using all 15 images 
+Apple shape and rotational axis  
+detection using all 15 images 
+ 
+15 images? 
+Yes 
+No 
+56(3): 813-827 
+ 
+819 
+instead of using RGB color channels, RGS (red, green, and 
+saturation) color channels were used for segmentation. 
+Since the camera provided RGB images, the saturation was 
+calculated using the standard RGB to HSV (hue, saturation, 
+and value) conversion with an OpenCV library. These color 
+channels were chosen because they provided better results 
+in accuracy and processing time than the combinations of 
+red, green, blue, hue, saturation, and value color channels. 
+After segmentation, a 3×3 median filter was applied to 
+remove noise. 
+FEATURES EXTRACTION 
+A total of 12 features were extracted from each image 
+using the moment, contour extraction, stem detection, and 
+symmetry detection algorithms described in the following 
+subsections: 
+Moment Algorithm 
+A moment of the object is often used to estimate the 
+principal axis and mass center (Guo et al., 2008; Pla et al., 
+2001). In this research, a moment of the apple was 
+calculated from the segmented binary image to determine 
+the centroid position, approximate area, and major and 
+minor axes of the apple. They are calculated using the 
+following equations: 
+ 
+(
+)
+l w m h
+x l y m
+S
+I x,y
++
++
+=
+=
+= 
+ 
+(3) 
+ 
+(
+)
+(
+)
+(
+)
+0
+0
+l w m h
+l w m h
+x l y m
+x l y m
+xI x,y
+yI x,y
+x ,y
+,
+S
+S
++
++
++
++
+=
+=
+=
+=
+
+
+
+
+
+
+= 
+
+
+
+
+
+
+
+
+
+
+
+ 
+(4) 
+where S is the area of the apple in pixels, I(x, y) is the 
+binary value (0 or 1) at position (x, y), (x0, y0) is the 
+coordinate position of the centroid of the apple, (l, m) is the 
+top left corner of the region of interest, and w and h are the 
+width and height of the region of interest. 
+The major orientation (θMajor) and minor orientation 
+(θMinor) of the apple are calculated as follows: 
+ 
+1
+11
+20
+02
+20
+02
+1
+11
+20
+02
+2
+1 tan
+if
+2
+2
+1 tan
+otherwise
+2
+2
+Major
+M
+,
+M
+M
+M
+M
+M
+,
+M
+M
+−
+−
+
+
+
+≤
+
+
+
+−
+
+
+
+= 
+
+
+π
+
++
+
+
+
+−
+
+
+
+θ
+ 
+(5) 
+ 
+2
+Minor
+Major
+π
+=
++
+θ
+θ
+ 
+(6) 
+where 
+ 
+(
+)
+11
+0 0
+l w m h
+x l y m
+xyI x, y
+M
+x y
+S
++
++
+=
+=
+
+
+
+
+
+
+=
+−
+
+
+
+
+
+
+
+
+
+
+
+ 
+(7) 
+Figure 8. Example of captured image and detection of regions of interests. 
+Region of interest for 
+image processing 
+Shafts 
+Region to calculate 
+intensity profile 
+Moving direction 
+ROI 1 
+ROI 2 
+ROI 3 
+ROI 4 
+0
+0.5
+1
+0
+100
+200
+300
+400
+500
+600
+Intensity profile
+X axis
+p1 
+p2 
+p3 
+p4 
+e1 
+e4 
+820 
+ 
+TRANSACTIONS OF THE ASABE 
+ 
+(
+)
+2
+20
+0 0
+l w m h
+x l y m
+x I x,y
+M
+x y
+S
++
++
+=
+=
+
+
+
+
+
+
+=
+−
+
+
+
+
+
+
+
+
+
+
+
+ 
+(8) 
+ 
+(
+)
+2
+02
+0 0
+l w m h
+x l y m
+y I x,y
+M
+x y
+S
++
++
+=
+=
+
+
+
+
+
+
+=
+−
+
+
+
+
+
+
+
+
+
+
+
+ 
+(9) 
+The area S was used to decide whether there was an apple 
+in the region. If S was greater than the threshold, then there 
+was an apple in the region and image processing proceeded. 
+If S was less than the threshold, it was assumed that there 
+was no apple in the region and image processing stopped. 
+Contour Extraction Algorithm 
+The contour of the apple was extracted using the 
+OpenCV function “cvFindContour,” based on the border-
+following algorithm developed by Suzuki and Abe (1985). 
+Approximately 300 to 400 edge points were obtained from 
+each apple depending on the size and shape. If multiple 
+contours 
+were 
+obtained 
+because 
+of 
+noise 
+after 
+segmentation, then the largest contour was selected as the 
+apple contour. From the extracted apple contour, the apple 
+area and the diameter from the area were extracted, 
+assuming that the apple is a perfect sphere. The extracted 
+contour was also used for stem detection and symmetry 
+detection, as explained in the following subsections. 
+Stem Detection Algorithm 
+The stem detection algorithm was developed using a 
+radius function. The radius function is a function of the 
+number of contour points and the distance between the 
+contour points and centroid (fig. 9). If the stem was 
+detected, the orientation of the apple was calculated based 
+on the stem location. If the stem was not detected, then the 
+orientation obtained based on the symmetry detection 
+algorithm (described in the next subsection) was used to 
+estimate the maximum equatorial diameter of the apple. 
+When the stem was present in the contour of the apple, a 
+spike or peak was observed in the radius function (fig. 9b). 
+To find the peak, the moving average of the radius function 
+is calculated as follows: 
+ 
+( )
+( )
+16
+16
+1
+8
+n
+i
+n
+k i
+d k
+m i
+n
++
+= −
+=
++
+
+ 
+(10) 
+where m(i) is the moving average of the radius function, 
+d(k) is the radius function, and n is the total number of 
+contour points. First, the difference between the moving 
+average of the radius function and the original is calculated 
+as follows: 
+ 
+( )
+( )
+( )
+c k
+d k
+m k
+=
+−
+ 
+(11) 
+where m(k) is the moving average, and d(k) is the original 
+radius function. If the maximum value for c(k) is more than 
+the threshold value T, then local minimum points to the left 
+and right of the peak point of c(k) are searched, as shown in 
+figure 10. The area of the stem contour is calculated using 
+the maximum, the right local minimum, and the left local 
+minimum points. If the stem area is smaller than threshold 
+U, the contour points are selected as stem. After the stem 
+has been detected, the apple orientation is calculated using 
+the stem information as follows: 
+ 
+
+
+
+
+
+
+−
+−
+=
+−
+0
+0
+1
+)
+(
+)
+(
+tan
+x
+s
+x
+y
+s
+y
+θStem
+ 
+(12) 
+ 
+(a) 
+ 
+(b) 
+ 
+Figure 9. Contour extraction: (a) contour points and (b) radius function. 
+40
+60
+80
+100
+0
+50
+100
+150
+200
+Radius (pixels)
+Number of countour points
+250
+300
+350
+400
+450
+350
+400
+450
+500
+550
+y (pixels)
+x (pixels)
+Radius 
+Centroid 
+Radius function 
+Moving average 
+Travel direction 
+0° 
+90°
+-90° 
+Stem orientation 
++ 
+– 
+56(3): 813-827 
+ 
+821 
+ 
+( )
+( )
+( )
+2
+x a
+x b
+x s
++
+=
+, ( )
+( )
+( )
+2
+y a
+y b
+y s
++
+=
+ 
+(13) 
+where (x0, y0) is the centroid of the apple calculated by 
+equation 4, and a and b are the number of contour points 
+corresponding to the number of the left and right minima of 
+c(k), respectively (fig. 10). Finally, the apple diameter 
+perpendicular to the stem orientation is calculated. In this 
+research, the origin of the orientation angle is perpendicular 
+to the traveling direction of the apple (i.e., coincident with 
+the y-axis), and the range of the orientation angle is ±90° 
+(fig. 9a). If all of c(k) are less than the threshold value T, 
+then the apple image does not include a stem in the contour 
+and the apple is designated as “no stem found.” 
+Symmetry Detection Algorithm 
+The reflectional symmetry of the apple was also 
+estimated for more accurate estimation of the maximum 
+equatorial diameter in the event that no stem was detected 
+for the apple. Many natural objects are reflectionally 
+symmetric. Reflectional symmetry has a reflectional line, 
+for which the half space is a mirror image of the other half. 
+If the reflectional line is detected, it will help to estimate 
+the orientation of the apple. Sun (1995) and Sun and Si 
+(1999) developed a symmetry detection algorithm using the 
+gradient orientation histogram from the grayscale and 
+binary images. Li et al. (2006) proposed a fast reflectional 
+symmetry detection algorithm using a Hough transform. 
+Even though these algorithms were developed to reduce 
+computational time, their computational cost for a 
+presorting system was still too high (more than 16 ms 
+apple-1) based on the preliminary test results. 
+In this research, a symmetry detection algorithm using 
+the radius function was developed. If the radius function is 
+divided into two halves at position x, then the right radius 
+function [d(x+k) (k = 1, 2,…, n/2)] covers the right half of 
+the radius function from x, and the left radius function [d(x-
+k) (k = 1, 2,…, n/2)] covers the left half of the radius 
+function from x (fig. 11). Using the right and left radius 
+functions, cross-correlation is calculated by the following 
+equation: 
+( )
+(
+)
+(
+)
+{
+}
+(
+)
+(
+)
+2
+0
+2
+2
+2
+2
+0
+0
+n
+R
+L
+k
+n
+n
+R
+L
+k
+k
+d x
+k
+d
+d x
+k
+d
+h x
+d x
+k
+d
+d x
+k
+d
+=
+=
+=
+
+
+
++
+−
+−
+−
+
+
+
+=
+
+
+
+
++
+−
+−
+−
+
+
+
+
+
+
+
+ (14) 
+where h(x) is the cross-correlation function between the left 
+radius function [d(x-k)] and the right radius function 
+[d(x+k)], 
+R
+d
+ is the mean of the right radius function, 
+L
+d  is 
+the mean of the left radius function, and n is the total 
+number of contour points. 
+The orientation of the symmetry axis is estimated using 
+the value of x that gives the maximum value for h(x). An 
+example of calculating the reflectional line and cross-
+correlation is shown in figure 11. The fruit maximum 
+equatorial diameter is then determined by calculating its 
+diameter perpendicular to the symmetry orientation line. 
+With this algorithm, the computational time was reduced to 
+0.5 ms apple-1. 
+Figure 10. Selection of the stem from contour points. 
+Figure 11. Example of determining the reflectional symmetry line and cross-correlation. 
+-15
+-10
+-5
+0
+5
+10
+15
+20
+25
+50
+60
+70
+80
+90
+100
+ck
+number of contour point
+Maximum of ck 
+Right minimum of ck 
+Left minimum of ck 
+-0.8
+-0.4
+0
+0.4
+0.8
+1.2
+1.6
+2
+20
+30
+40
+50
+60
+70
+80
+90
+0
+100
+200
+300
+400
+Cross correlatoin
+Radius finction (mm)
+Number of contour points
+Reflectional line 
+Cross-correlation h(x) 
+Radius function 
+Right function h(x+k) 
+Left function h(x-k) 
+x
+822 
+ 
+TRANSACTIONS OF THE ASABE 
+Extracted Features from a Single Image 
+Example 
+results 
+from 
+implementing 
+the 
+image 
+processing algorithms for a ‘Golden Delicious’ apple are 
+shown in figure 12. Extracted orientations by the moment, 
+contour extraction, stem detection, and symmetry detection 
+algorithms are shown in figure 12c. A total of 12 features 
+were extracted from the single image. Table 2 lists the list 
+of extracted features from the single image. 
+APPLE SHAPE AND ROTATIONAL AXIS DETECTION 
+After five orientations and six diameters were extracted 
+from each of the 15 images (table 2), the correct orientation 
+and diameter were then selected for the final estimation of 
+maximum equatorial diameter. This requires determining 
+the shape of the apple (i.e., elongated or round) and its 
+rotational axis (oriented and not oriented). Herein, 
+“oriented” means that the rotational axis coincides with the 
+stem-calyx end axis of the apple (i.e., less than ±20° from 
+the stem-calyx end axis), whereas “not oriented” means 
+that the rotational axis is greater than ±20° from the stem-
+calyx end axis. An apple detected as elongated may be 
+further classified into “long” or “wide” depending on its 
+variety. The “long” elongation class refers to apples that are 
+elongated along the stem/calyx end axis, such as ‘Golden 
+Delicious’ and ‘Delicious’, while the “wide” elongation 
+class is mostly of round shape, but with some fruit in the 
+class (e.g., ‘Empire’ and ‘Jonagold’) being elongated in a 
+direction perpendicular to the stem/calyx end axis. The 
+shape and rotational axis of the apple are estimated based 
+on the difference between the major and minor orientation 
+maximum equatorial diameters: 
+ 
+100
+major
+minor
+diff
+major
+s
+s
+s
+s
+−
+=
+×
+ 
+(15) 
+where smajor is the maximum equatorial diameter of the 
+major orientation, and sminor is the maximum equatorial 
+diameter of the minor orientation. The following algorithm 
+was used to determine the shape and rotational axis of each 
+fruit from the 15 images: 
+1. If there is no image with sdiff greater than 5%, the apple 
+is round. The rotational axis is not estimated for the 
+apple. 
+2. Else if there are more than ten images with sdiff being 
+greater than 5%, the apple is elongated. If the average of 
+the major orientation (or minor orientation for the 
+“wide” elongation variety) is less than 20°, the rotational 
+axis is detected as oriented. If the average of the major 
+orientation is greater than 20°, the rotational axis is 
+detected as not oriented. 
+3. Else if the maximum sdiff is greater than 10%, the apple 
+ 
+ 
+ 
+ 
+(a) 
+ 
+(b) 
+ 
+ 
+(c) 
+ 
+Figure 12. Results from the image processing of a ‘Golden Delicious’ apple: (a) original image captured by the camera, (b) image segmented by 
+linear discriminant analysis (LDA), and (c) processed image with extracted parameters (major and minor orientations calculated by the
+moment algorithm, first and second symmetry orientations calculated by symmetry detection, and stem point and contour of the apple). 
+Table 2. Extracted features from a single image. 
+Moment algorithm: 
+ 
+Major orientation 
+ 
+Maximum diameter perpendicular to major orientation 
+ 
+Minor orientation (perpendicular to major orientation) 
+ 
+Maximum diameter perpendicular to minor orientation 
+Contour extraction algorithm: 
+ 
+Area 
+ 
+Diameter estimated from area 
+Stem detection algorithm: 
+ 
+Stem orientation 
+ 
+Maximum diameter perpendicular to stem orientation 
+Symmetry detection algorithm: 
+ 
+First symmetry orientation 
+ 
+Maximum diameter perpendicular to first symmetry orientation 
+ 
+Second symmetry orientation 
+ 
+Maximum diameter perpendicular to second symmetry orientation 
+Stem point 
+(x(s), y(s)) 
+Second symmetry 
+orientation 
+First symmetry 
+orientation 
+Major 
+orientation 
+Minor 
+orientation 
+Centroid 
+Contour 
+56(3): 813-827 
+ 
+823 
+is elongated and its rotational axis is not oriented. 
+4. Otherwise, the apple is round. 
+These thresholds were decided based on the trial-and error-
+method using preliminary test samples. 
+MAXIMUM EQUATORIAL DIAMETER ESTIMATION 
+The maximum equatorial diameter of an apple was 
+estimated using the information extracted from the 
+15 images. The overall maximum equatorial diameter 
+estimation flowchart is shown in figure 13 and explained 
+below: 
+1. If the number of images with an identified stem is more 
+than 10, the maximum equatorial diameter of the apple 
+is the average of the maximum equatorial diameters 
+calculated from those images with the presence of the 
+stem. 
+2. Else if the apple is detected as round, the maximum 
+equatorial diameter is the average diameter calculated 
+for all 15 images based on their areas. 
+3. Else if the apple is detected as oriented, the maximum 
+equatorial diameter is the average maximum equatorial 
+diameter calculated from the symmetry orientation. The 
+maximum equatorial diameter is selected as follows:  
+3a. If |θMajor – θsym1| < |θMajor – θsym2| for the “long” 
+elongation variety (or |θMinor – θsym1| < |θMinor – θsym2| 
+for the “wide” elongation variety), the maximum 
+equatorial diameter of the apple is the diameter 
+perpendicular to the first symmetry orientation (θMajor, 
+θMinor, θsym1, and θsym2 are orientations calculated from 
+the major moment orientation, minor moment 
+orientation, first symmetry orientation, and second 
+symmetry orientation, respectively). 
+3b. Else the maximum equatorial diameter of the apple is 
+the diameter perpendicular to the second symmetry 
+orientation. 
+4. Otherwise, the maximum equatorial diameter is the 
+average 
+maximum 
+equatorial 
+diameter 
+of 
+the 
+combination of the symmetry maximum equatorial 
+diameter closer to the major orientation for the “long” 
+elongation variety (or minor orientation for the “wide” 
+elongation variety) and the maximum equatorial 
+diameter calculated from the area. The maximum 
+equatorial diameter calculated by the symmetry 
+algorithm is used if sdiff of the image is greater than 5%. 
+Otherwise, the maximum equatorial diameter calculated 
+from the area is used for the image. 
+EXPERIMENTAL PROCEDURE 
+The machine vision system was tested for estimating the 
+maximum equatorial diameter of ‘Delicious’ (D), ‘Empire’ 
+(EM), ‘Golden Delicious’ (GD), and ‘Jonagold’ (JG) apples 
+during the 2009 harvest season. GD and D were predefined 
+as the “long” elongation variety, while EM and JG were 
+predefined as the “wide” elongation variety in this research. 
+One hundred apples each of D, EM, and GD and 70 apples 
+of JG were selected for the experiment. These apples were 
+in the range of 30 to 90 mm diameter. The apples were 
+placed in random orientations on the conveyor running at a 
+speed of 30 cm s-1. 
+The performance of the orientation estimation methods 
+was evaluated by comparing the estimation methods with 
+the orientation determined by visual observation. An 
+orientation line of the apple in the image was visually 
+decided by locating the stem/calyx ends of the apple from 
+the image, and this was used as the true orientation. 
+To 
+evaluate 
+the 
+maximum 
+equatorial 
+diameter 
+estimation accuracy of the machine vision system, the true 
+or reference maximum equatorial diameter of the apples 
+was required. Since apples are not perfectly symmetrical or 
+round around the stem/calyx axis, it is difficult to 
+accurately measure the maximum equatorial diameter 
+(e.g., major and minor diameter) of each apple using a 
+manual method (e.g., a caliper). Therefore, an in-house 
+developed benchtop machine vision system was used to 
+measure the true maximum equatorial diameter of these 
+apples. The benchtop system consisted of a camera (the 
+same as the one installed in the presorting machine vision 
+system), a fruit handling device with one end attached to a 
+DC motor and the other end adjustable to hold the test 
+apple on its stem and calyx ends, and two fluorescent lights 
+Figure 13. Overall maximum equatorial diameter estimation flowchart. 
+No. of images 
+with stem >10?
+Calculate the maximum diameter 
+using the stem information. 
+Calculate maximum equatorial diameter 
+using the size from the symmetry 
+orientation closer to the major (minor) 
+orientation of the moment. 
+Round shape?
+Calculate the maximum diameter 
+using the area. 
+Oriented? 
+Calculate maximum equatorial diameter using  
+the maximum diameter from the symmetry orientation  
+closer to the major (minor) orientation of the moment  
+and the maximum diameter from the area. 
+Yes 
+Yes 
+No 
+No 
+Yes 
+No 
+824 
+ 
+TRANSACTIONS OF THE ASABE 
+arranged on both sides of the camera with a 30° angle from 
+the vertical position. The camera was installed 20 cm above 
+the test apple. 
+Each apple was placed manually on the fruit handling 
+device. As the apple was rotated 360° on its stem/calyx 
+axis, the camera captured about 100 images in 10 s. 
+Equatorial diameters were calculated from each of the 
+100 images, and their average was used as the true 
+maximum equatorial diameter of the apple. Red values 
+were used to segment the image based on a threshold that 
+was chosen manually by visual observation. The captured 
+images were 640 × 480 pixels, with a spatial resolution of 
+0.187 mm pixel-1. This spatial resolution was calibrated 
+using the small (63.5 mm diameter) and large (76.2 mm 
+diameter) round balls. We measured the maximum 
+equatorial diameters of the small and large balls ten times 
+with the benchtop system and calculated the maximum, 
+minimum, average, and standard deviation from the ten 
+measurements. We also measured both balls ten times 
+manually using a caliper to 0.01 mm accuracy. Each 
+manual measurement gave the diameter of the ball at eight 
+different locations in 180° rotation (we manually tried to 
+select locations 22.5° apart), and their average was 
+calculated. 
+Table 3 summarizes the performance of the benchtop 
+system and the manual measurements. The benchtop 
+system was more consistent or precise, with a standard 
+deviation (SD) of 0.0132 mm for the small ball and 
+0.0389 mm for the large ball, compared with the manual 
+measurements, which had SD of 0.0318 mm and 
+0.0507 mm, respectively. These results demonstrate that the 
+benchtop imaging system was appropriate for providing 
+ground truth information about the maximum equatorial 
+diameter of each test apple. The machine vision system was 
+also compared with a commercial mechanical sizer for 
+estimation accuracy of maximum equatorial diameter. The 
+mechanical sizer had a 46 cm (18 in.) long chain (J&L 
+Orchard Supply LLC, South Haven, Mich.) and was 
+designed to eliminate apples smaller than 64 mm in 
+diameter. 
+RESULT AND DISCUSSION 
+VARIABLE PIXELS PER UNIT ESTIMATION 
+Figure 14 shows the estimated areas of the small and 
+large calibration balls for various x positions, obtained 
+using the DLT method after radial distortion correction and 
+the proposed variable pixels per unit dimension estimation 
+method. The true area of the balls was calculated from the 
+diameter measured manually with the caliper (i.e., the solid 
+line shown in the figure). As shown in figure 14a, the DLT 
+method with radial distortion correction underestimated the 
+actual area of the small ball since the center of its 
+transporting plane was lower than the calibration plane. 
+The root mean square error (RMSE) with the DLT method 
+for the small ball was 112 mm2 (i.e., 3.5% of the true area). 
+Meanwhile, the estimated areas obtained by the variable 
+pixels per unit dimension method matched the true area 
+well, with an RMSE of 15.9 mm2 (i.e., 0.5% of the true 
+area) for the small ball. On the other hand, the DLT method 
+overestimated the area of the large ball due to the higher 
+center of its transporting plane compared to the calibration 
+plane. The areas estimated by the DLT method varied with 
+ 
+(a) 
+ 
+(b) 
+ 
+Figure 14. Comparison of area estimations in various x positions obtained from the world coordinate images using the direct linear
+transformation (DLT) method after distortion correction and the variable pixels per unit dimension estimation method for (a) small and
+(b) large calibration balls. 
+Table 3. Comparison of manual measurement (with a caliper) and the 
+benchtop imaging system for maximum equatorial diameter
+estimation of two ball sizes (all values based on ten measurements). 
+Diameter 
+(mm) 
+Manual Measurement 
+ 
+Benchtop System 
+Small 
+Ball 
+Large 
+Ball 
+Small 
+Ball 
+Large 
+Ball 
+Maximum 
+63.116 
+75.509 
+ 
+63.104 
+75.531 
+Minimum 
+63.019 
+75.316 
+ 
+63.068 
+75.413 
+Average 
+63.071 
+75.403 
+ 
+63.089 
+75.476 
+SD 
+0.0318 
+0.0507 
+ 
+0.0132 
+0.0389 
+4000
+4500
+5000
+100
+200
+300
+400
+500
+Estimated area (mm2)
+Centroid of x (pixels)
+2500
+3000
+3500
+100
+200
+300
+400
+500
+Estimated area (mm2)
+Centroid of x (pixels)
+DLT method 
+DLT method 
+Proposed method 
+Proposed method 
+True size 
+True size 
+56(3): 813-827 
+ 
+825 
+the position of the balls because the fruit are not two-
+dimensional under the close-range view, as explained in 
+figure 5a. The RMSE with the DLT method for the large 
+ball was 92 mm2 (i.e., 2.0% of the true area). The error for 
+the large ball was slightly smaller than that for the small 
+ball, probably because the center of the transporting plane 
+of the large ball was closer to the calibration plane than that 
+of the small ball. In contrast, the areas estimated by the 
+variable pixels per unit dimension estimation method were 
+nearly constant for the whole images and were distributed 
+around the true area line with an RMSE of 17.9 mm2 
+(i.e., 0.4% of the true area). These results demonstrate that 
+the variable pixels per unit dimension estimation method 
+was effective in correcting the variation of distance 
+between the camera and objects, and the variation of 
+distance due to the size difference. 
+ORIENTATION ESTIMATION 
+Table 4 shows the number and percentage of images in 
+which the fruit orientation was correctly estimated using 
+the stem orientation and symmetry orientation algorithms at 
+error levels of ±10° and ±20° when they were compared 
+with visual observations for each of the four varieties. The 
+success rates for stem orientation estimation within ±20° 
+error for D and GD apples were 95.5% and 94.6%, 
+respectively. For EM apples, no images were used for stem 
+orientation estimation. For JG, only 32 images were 
+selected for stem orientation estimation, with a success rate 
+of 78.1%. This is because D and GD apples had long and 
+straight stems that were easier to detect, while EM and JG 
+had shorter and curved stems, which did not appear 
+distinctly on the contour. Moreover, D and GD apples were 
+more likely to be oriented (i.e., the stem/calyx axis was 
+horizontally perpendicular to the moving direction) on the 
+bi-cone roller conveyor due to their elongated shape. 
+Consequently, these apples were rotating well during the 
+imaging, greatly increasing the probability of the stem 
+being observed in more than ten images for each apple. 
+The symmetry orientation algorithm had the best success 
+rate of 77.7% for D apples at the ±20° error level. Most of 
+the estimation errors for symmetry orientation occurred for 
+apples that had an abnormal elongation direction (i.e., D 
+and GD were elongated perpendicular to the stem/calyx end 
+axis, and EM and JG were elongated along the stem/calyx 
+end orientation). The errors mostly occurred for smaller D 
+and GD apples with diameters of less than 63.5 mm. In 
+contrast, the rate of incorrect elongation estimations for EM 
+and JG was irrelevant to the fruit size. There was no 
+consistent pattern for the fruit orientation, even when an 
+EM fruit was detected as elongated. The proposed 
+orientation estimation method using the moment and 
+symmetry detection algorithms was based on the 
+assumption that D and GD apples are elongated along the 
+stem/calyx end axis, while EM and JG are elongated 
+perpendicular to the stem/calyx end axis if they are 
+detected as elongated. Poor orientation estimations did not 
+greatly affect the result of maximum equatorial diameter 
+estimations for EM and JG (see details in the next section) 
+since maximum equatorial diameters for most of the EM 
+and JG apples were estimated based on the image areas. 
+MAXIMUM EQUATORIAL DIAMETER ESTIMATION 
+Table 5 presents the results of maximum equatorial 
+diameter estimation for the four varieties of apple, which 
+includes RMSE, maximum error, and percentage of apples 
+within ±5 mm error. The results of maximum equatorial 
+diameter estimation for the four varieties are also shown in 
+figure 15, in which the two dotted lines show the error of 
+±5 mm from the true measurement. The lowest RMSE of 
+1.54 mm was obtained for GD, followed by D with 1.60 
+mm. The worst result was observed for EM with an RMSE 
+of 2.34 mm. The poor orientation estimations for EM and 
+JG apples did not greatly affect the result of maximum 
+equatorial diameter estimation when compared with D and 
+GD apples. This is because the maximum equatorial 
+diameters for most of the EM and JG apples were estimated 
+based on the image areas, without using the orientation 
+information. It was observed that the machine vision 
+system generally underestimated the maximum equatorial 
+diameter of EM apples, which was also the case for D 
+apples. This was because the hard red color of EM and D 
+apples caused poor segmentation, resulting in under-
+estimation of the actual fruit maximum equatorial diameter. 
+On the other hand, the bright yellow (or green) color of GD 
+apples resulted in better segmentation. Hence the maximum 
+equatorial diameter estimation of GD was better than that 
+of D, even though the orientation estimation of GD was not 
+as good as that of D. Good segmentation results were also 
+obtained for JG because of their brighter red color 
+Table 4. Accuracy of orientation estimations using the stem and symmetry orientation algorithms for four varieties of apple for two error levels 
+(i.e., ±20° and ±10°).[a] 
+Apple 
+Variety 
+Stem Orientation 
+ 
+Symmetry Orientation
+ 
+Overall
+Total 
+Images 
+±20° 
+Error 
+±10° 
+Error 
+Total 
+Images 
+±20° 
+Error 
+±10° 
+Error 
+Total 
+Images 
+±20° 
+Error 
+±10° 
+Error 
+Delicious 
+758 
+724 (95.5%) 
+555 (73.2%) 
+ 
+610 
+474 (77.7%) 
+342 (56.1%) 
+ 
+1368 
+1198 (87.6%)
+897 (65.6%) 
+Golden Delicious 
+690 
+653 (94.6%) 
+528 (76.5%) 
+ 
+282 
+185 (65.6%) 
+126 (44.7%) 
+ 
+972 
+838 (86.2%) 
+654 (67.3%) 
+Empire 
+0 
+0 
+0 
+ 
+522 
+263 (50.4%) 
+168 (32.2%) 
+ 
+522 
+263 (50.4%) 
+168 (32.2%) 
+Jonagold 
+32 
+25 (78.1%) 
+13 (40.6%) 
+ 
+326 
+210 (64.4%) 
+128 (39.3%) 
+ 
+358 
+235 (65.6%) 
+141 (39.4%) 
+[a] The values in the ±20° and ±10° error columns are the numbers of images correctly estimated for orientation at a given error level; the values in 
+parentheses are the percentages of correctly estimated images. 
+Table 5. Results of maximum equatorial diameter estimation for four 
+varieties of apple. 
+Variety 
+RMSE 
+(mm) 
+Maximum 
+Error 
+(mm) 
+Fruit within 
+±5 mm Error 
+(%) 
+Delicious 
+1.60 
+5.83 
+99% 
+Golden Delicious 
+1.54 
+5.17 
+99% 
+Empire 
+2.34 
+6.53 
+98% 
+Jonagold 
+1.65 
+4.92 
+100% 
+Overall 
+1.79 
+6.53 
+98.9% 
+826 
+ 
+TRANSACTIONS OF THE ASABE 
+compared with D and EM. Hence, the results of maximum 
+equatorial diameter estimation for JG were nearly the same 
+as that for D and GD in spite of the lower accuracy of the 
+orientation estimation for JG. The USDA standards 
+(USDA, 2002) allow 10% of apples in a container to vary 
+in a diameter range of 12.7 mm (0.5 in.) between the 
+smallest and largest fruit when the size is designated by the 
+numerical count for the container. Hence, the RMSE of 
+2.34 mm for 99% of the EM apples far exceeded the USDA 
+standards. In summary, the machine vision system had an 
+overall RMSE of 1.79 mm for the four varieties of apple, 
+with 98% or more of the fruit estimated within 5 mm error. 
+Table 6 shows the size classification results for the 
+mechanical sizer and the machine vision system. There were 
+84 undersized apples (i.e., diameter less than 63.5 mm) out 
+of 370 apples tested. The mechanical sizer had a 15% global 
+classification error (or 56 out of 370 fruit), compared with 
+9.2% for the machine vision system. By adjusting the 
+threshold to 65.5 mm, the machine vision system had a 
+global classification error of only 4.3%. These results 
+showed that the machine vision system outperformed the 
+mechanical sizer. With the machine vision system, users can 
+easily adjust the size threshold to meet different customers’ 
+requirements. Accuracy and flexibility are the primary 
+reasons why machine vision technology is widely adopted by 
+the horticultural industry for size sorting. 
+The 
+maximum 
+equatorial 
+diameter, 
+shape, 
+and 
+orientation algorithms were implemented efficiently, with a 
+total computational time of 20 ms image-1 (each image had 
+up to four apples) for the hardware configuration described 
+earlier. With an image capture time of 12 ms, the total 
+processing time for measurement of maximum equatorial 
+diameter is 32 ms image-1 This processing time would meet 
+the required sorting speed of 4 to 6 apples s-1 for an in-field 
+presorting system, and it will allow further implementation 
+of additional sorting functions, e.g., color grading and 
+defect detection. 
+Figure 15. Results of maximum equatorial diameter estimation for ‘Delicious’, ‘Golden Delicious’, ‘Empire’, and ‘Jonagold’ apples. Dotted lines
+indicate ±5 mm errors from the 1:1 line (solid line). 
+Table 6. Size classification results for the mechanical sizer and
+machine vision system. 
+Sorting System 
+Performance Category 
+Cull 
+(84) 
+Good 
+(286) 
+Mechanical sizer 
+Cull (<63.5 mm) 
+31 
+53 
+ 
+Good (≥63.5 mm) 
+3 
+283 
+ 
+Classification error 
+3.6% 
+18.5% 
+ 
+Global classification error 
+15.1% 
+Machine vision 
+Cull (<63.5 mm) 
+53 
+31 
+ 
+Good (≥63.5 mm) 
+3 
+283 
+ 
+Classification error 
+3.6% 
+10.8% 
+ 
+Global classification error 
+9.2% 
+40
+50
+60
+70
+80
+90
+40
+50
+60
+70
+80
+90
+True size (mm)
+Estimated size (mm)
+Jonagold
+40
+50
+60
+70
+80
+90
+40
+50
+60
+70
+80
+90
+True size (mm)
+Estimated size (mm)
+Empire
+40
+50
+60
+70
+80
+90
+40
+50
+60
+70
+80
+90
+True size (mm)
+Estimated size (mm)
+Golden Delicious
+40
+50
+60
+70
+80
+90
+40
+50
+60
+70
+80
+90
+True size (mm)
+Estimated size (mm)
+Delicious
+56(3): 813-827 
+ 
+827 
+CONCLUSION 
+A prototype machine vision system consisting of a low-
+cost CCD camera, coupled with energy-saving LED lights 
+and a two-lane conveyor with generic bi-cone rollers, was 
+built as the first step toward achieving the goal of 
+presorting apples in the orchard. A simple and fast method 
+was developed for accurate estimation of pixels per unit 
+dimension from apple images acquired under the close-
+range view configuration. Image processing algorithms 
+were developed to estimate apple orientation and maximum 
+equatorial diameter. Laboratory tests were conducted for 
+‘Delicious’ (D), ‘Empire’ (EM), ‘Golden Delicious’ (GD), 
+and ‘Jonagold’ (JG) apples at the speed of four fruit per 
+second. 
+The variable pixels per unit dimension estimation 
+method was effective in obtaining accurate spatial 
+resolutions based on the fruit’s moving position in the 
+images. The orientation estimation algorithm achieved 
+87.6% and 86.2% success rates for D and GD apples, 
+respectively, at an error level of ±20°, although it 
+performed poorly for round-shaped EM and JG apples 
+because the orientation of the elongation axis for these 
+varieties was inconsistent and could not be estimated 
+correctly. The machine vision system was able to estimate 
+the fruit maximum equatorial diameter with an overall 
+RMSE equal to or less than 1.79 mm for the four varieties 
+of apple; it achieved 98% or higher success rate with an 
+error of less than ±5 mm. The system had 4.3% 
+classification error for undersized apples (i.e., maximum 
+equatorial diameter less than 63.5 mm) versus 15.1% for a 
+mechanical sizing machine. With the low-cost hardware 
+configuration, only 20 ms were needed to process each 
+image containing up to four apples. This would be 
+sufficient to meet the required presorting speed of 4 to 
+6 apples per second and allow implementation of additional 
+functions, such as color grading and defect detection, for 
+the in-field presorting system that is currently being 
+developed. 
+ACKNOWLEDGEMENTS 
+The research was supported in part by funds from the 
+Michigan Apple Committee under Trust Fund Cooperative 
+Agreement No. 58-3635-9-570 between the Michigan 
+Apple Committee and the USDA Agricultural Research 
+Service. The authors acknowledge the technical support 
+provided by Mr. Benjamin B. Bailey in designing and 
+constructing the machine vision prototype. 
+REFERENCES 
+Blasco, J., N. Aleixos, and E. Molto. 2003. Machine vision system 
+for automatic quality grading of fruit. Biosystems Eng. 85(4): 
+415-423. 
+Cubero, S., E. Molto, A. Gutierrez, N. Aleixos, O. Garcia-
+Navarrete, F. Juste, and J. Blasco. 2010. Real-time inspection of 
+fruit on a mobile harvesting platform in field conditions using 
+computer vision. Progress in Agric. Eng. Sci. 6(1): 1-16. 
+Guo, F., Q. Cao, and M. Nagata. 2008. Fruit detachment and 
+classification method for strawberry harvesting robot. Intl. J. 
+Advanced Robotic Systems 5(1): 41-48. 
+Hartley, R., and A. Zisserman. 2004. Multiple View Geometry in 
+Computer Vision. 2nd ed. Cambridge, U.K.: Cambridge 
+University Press. 
+Li, H. W., A. M. Zhang, and L. Kleeman. 2006. Real-time detection 
+and segmentation of reflectionally symmetric objects in digital 
+images. In Proc. IEEE/RSJ Intl. Conf. on Intelligent Robots and 
+Systems, 4867-4873. Piscataway, N.J.: IEEE. 
+Luo, R., K. M. Lewis, Q. Zhang, and S. Wang. 2012. Assessment of 
+bruise damage by vacuum apple harvester using an impact 
+recording device. ASABE Paper No. 121338094. St. Joseph, 
+Mich.: ASABE. 
+Mizushima, A., and R. Lu. 2011. Cost benefits analysis of in-field 
+presorting for the apple industry. Applied Eng. in Agric. 27(1): 
+22-40. 
+Moreda, G. P., J. Ortiz-Canavate, F. J. Garcia-Ramos, and M. Ruiz-
+Altisent. 2009. Non-destructive technologies for fruit and 
+vegetable size determination: A review. J. Food Eng. 92(2): 119-
+136. 
+Pla, F., J. Sanchiz, and J. S. Sánchez. 2001. An integral automation 
+of industrial fruit and vegetable sorting by machine vision. In 
+Proc. 8th IEEE Intl. Conf. on Emerging Technologies and 
+Factory Automation, 2: 541-546. Piscataway, N.J.: IEEE. 
+Ruiz, L. A., E. Molto, F. Juste, F. Pla, and R. Valiente. 1996. 
+Location and characterization of the stem-calyx area on oranges 
+by computer vision. J. Agric. Eng. Res. 64(3): 165-172. 
+Sun, C. 1995. Symmetry detection using gradient information. 
+Pattern Recog. Letters 16(9): 987-996. 
+Sun, C., and D. Si. 1999. Fast reflectional symmetry detection using 
+orientation histograms. Real-Time Imaging 5(1): 63-74. 
+Suzuki, S., and K. Abe. 1985. Topological structural analysis of 
+digital binary images by border following. Computer Vision, 
+Graphics, and Image Proc. 30(1): 32-46. 
+Throop, J. A., W. C. Anger, and D. Peterson. 2003. Quality 
+evaluation of apples based on surface defects: An inspection 
+station design. ASAE Paper No. 036161. St. Joseph, Mich.: 
+ASABE. 
+USDA. 2002. United States Standards for Grades of Apples. 
+Washington, D.C.: USDA. 
+Warner, G. 2009. Super-efficient picking system. Good Fruit 
+Grower 60(2): 28-29. 
+Zhang, Z. 2000. A flexible new technique for camera calibration. 
+IEEE Trans. Pattern Analysis and Machine Intell. 22(11): 1330-
+1334. 
+ 
+ 
+ 
