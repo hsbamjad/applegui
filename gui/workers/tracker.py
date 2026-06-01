@@ -26,7 +26,8 @@ from __future__ import annotations
 import math
 import logging
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ class GradeRecord:
     class_name:  str
     confidence:  float
     frames_seen: int
+    size_px:     Optional[float] = None   # peak bounding-box min-side (pixels)
+    size_mm:     Optional[float] = None   # estimated equatorial diameter (mm)
 
 
 class AppleTracker:
@@ -57,7 +60,7 @@ class AppleTracker:
         n_lanes:              int   = 3,
         orientation:          str   = "BT",    # see module docstring
         exit_frac:            float = 0.85,    # exit band centre (fraction of travel axis)
-        band_half_frac:       float = 0.025,   # ± 2.5 % of travel axis
+        band_half_frac:       float = 0.025,   # +/- 2.5 % of travel axis
         entry_frac:           float = 0.35,    # first detection must be < this (travel axis)
         min_frames:           int   = 5,
         max_lost_frames:      int   = 10,
@@ -67,6 +70,7 @@ class AppleTracker:
         cull_weight:          float = 1.5,
         hit_threshold:        int   = 20,
         cull_ratio_threshold: float = 0.55,
+        size_calibrator                = None, # SizeCalibrator | None
     ) -> None:
         assert orientation in ORIENTATIONS, \
             f"orientation must be one of {ORIENTATIONS}, got '{orientation}'"
@@ -84,6 +88,7 @@ class AppleTracker:
         self._cull_weight         = cull_weight
         self._hit_threshold       = hit_threshold
         self._cull_ratio_thresh   = cull_ratio_threshold
+        self._calibrator          = size_calibrator   # SizeCalibrator | None
 
         self._history:  dict[int, dict] = defaultdict(self._new_history)
         self._lost:     dict[int, dict] = {}
@@ -123,14 +128,15 @@ class AppleTracker:
     @staticmethod
     def _new_history() -> dict:
         return {
-            "votes":       defaultdict(float),
-            "hit_cull":    0,
-            "frames_seen": 0,
-            "first_travel": -1,   # travel_pos at very first detection
-            "last_pos":    (0, 0),
-            "last_frame":  0,
-            "committed":   False,
-            "lane":        1,
+            "votes":         defaultdict(float),
+            "hit_cull":      0,
+            "frames_seen":   0,
+            "first_travel":  -1,   # travel_pos at very first detection
+            "last_pos":      (0, 0),
+            "last_frame":    0,
+            "committed":     False,
+            "lane":          1,
+            "d_px_samples":  [],   # list of (cx, D_px) per frame; used for size estimation
         }
 
     @staticmethod
@@ -218,6 +224,12 @@ class AppleTracker:
             hist["last_frame"]  = self._frame_no
             hist["lane"]        = lane
 
+            # Accumulate bounding-box size sample for this frame
+            bw   = x2 - x1
+            bh   = y2 - y1
+            D_px = min(bw, bh)   # min-side approximates equatorial diameter
+            hist["d_px_samples"].append((cx, D_px))
+
             # Weighted vote accumulation
             weight = self._cull_weight if cls_id == 2 else 1.0
             hist["votes"][cls_id] += conf * weight
@@ -286,6 +298,19 @@ class AppleTracker:
                     hist["committed"] = True
                     cls_name = (self.CLASS_NAMES[best_cls]
                                 if best_cls < len(self.CLASS_NAMES) else str(best_cls))
+
+                    # Size estimation
+                    size_px: Optional[float] = None
+                    size_mm: Optional[float] = None
+                    samples = hist["d_px_samples"]
+                    if samples:
+                        # Peak D_px across all frames = best equatorial diameter proxy
+                        cx_peak, size_px = max(samples, key=lambda s: s[1])
+                        if self._calibrator is not None:
+                            r = self._calibrator.r(cx_peak, size_px)
+                            if r is not None:
+                                size_mm = round(size_px * r, 1)
+
                     rec = GradeRecord(
                         seq_id      = seq_id,
                         lane        = lane,
@@ -293,10 +318,17 @@ class AppleTracker:
                         class_name  = cls_name,
                         confidence  = float(best_conf),
                         frames_seen = hist["frames_seen"],
+                        size_px     = size_px,
+                        size_mm     = size_mm,
                     )
                     graded.append(rec)
-                    log.info("Grade #%d  lane=%d  %s  conf=%.2f  frames=%d",
-                             seq_id, lane, cls_name, best_conf, hist["frames_seen"])
+                    log.info(
+                        "Grade #%d  lane=%d  %s  conf=%.2f  frames=%d  "
+                        "size_px=%.0f  size_mm=%s",
+                        seq_id, lane, cls_name, best_conf, hist["frames_seen"],
+                        size_px or 0,
+                        f"{size_mm:.1f}" if size_mm is not None else "N/A",
+                    )
 
             # Live display grade
             if hist["votes"]:
