@@ -207,11 +207,19 @@ def load_gt(gt_path):
     return result
 
 
-def extract_detections(video_paths, model_path):
-    """Run YOLO on sampled frames. Returns list of {cx, D_px, channel}."""
+def extract_detections(video_paths, model_path, min_dpx=100, x_margin=150):
+    """
+    Run YOLO on sampled frames.
+    min_dpx  : min bounding-box min-side (px). Excludes partial / tiny detections.
+    x_margin : ignore detections whose centroid is within this many px of the
+               left or right image edge. Partial apples there have wrong D_px.
+    Returns list of {cx, D_px, channel}.
+    """
     from ultralytics import YOLO
     model = YOLO(model_path)
     detections = []
+    x_lo = x_margin
+    x_hi = IMAGE_WIDTH_PX - x_margin
 
     for ch_idx, vp in enumerate(video_paths):
         if not os.path.exists(vp):
@@ -223,8 +231,10 @@ def extract_detections(video_paths, model_path):
         print(f"\n  Channel {ch_idx+1}: {Path(vp).name}  "
               f"({total} frames @ {fps:.1f} fps)")
 
-        step    = max(1, int(fps))   # 1 frame per second
-        sampled = 0
+        step     = max(1, int(fps))
+        sampled  = 0
+        kept     = 0
+        filtered = 0
         n_before = len(detections)
 
         idx = 0
@@ -238,15 +248,20 @@ def extract_detections(video_paths, model_path):
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
                     D_px = min(x2 - x1, y2 - y1)
                     cx   = (x1 + x2) / 2.0
-                    if D_px >= 20:
+                    if D_px >= min_dpx and x_lo <= cx <= x_hi:
                         detections.append({"cx": cx, "D_px": D_px, "ch": ch_idx+1})
+                        kept += 1
+                    else:
+                        filtered += 1
             sampled += 1
             idx     += step
 
         cap.release()
-        print(f"    Sampled {sampled} frames, "
-              f"{len(detections) - n_before} detections")
+        print(f"    Sampled {sampled} frames | kept {kept} | "
+              f"filtered {filtered} (partial/edge/tiny)")
 
+    print(f"\n  Filter: min_dpx={min_dpx} px, x_margin={x_margin} px")
+    print(f"  Total usable detections: {len(detections)}")
     return detections
 
 
@@ -291,7 +306,8 @@ def estimate_focal_length(detections, gt):
         return None
 
 
-def geometric_estimation(video_paths, gt_path, model_path, output_path):
+def geometric_estimation(video_paths, gt_path, model_path, output_path,
+                         min_dpx=100, x_margin=150):
     print("\n" + "="*60)
     print("METHOD 2: Geometric focal length estimation")
     print("="*60)
@@ -302,7 +318,8 @@ def geometric_estimation(video_paths, gt_path, model_path, output_path):
         print("\n  [YOLO model not found - skipping detection]")
         return
 
-    detections = extract_detections(video_paths, model_path)
+    detections = extract_detections(video_paths, model_path,
+                                    min_dpx=min_dpx, x_margin=x_margin)
     f_px_est   = estimate_focal_length(detections, gt)
 
     print("\n" + "-"*60)
@@ -330,9 +347,9 @@ def geometric_estimation(video_paths, gt_path, model_path, output_path):
 
                 d_median = float(np.median(list(gt.values())))
                 xs = np.array([d["cx"] - CX_IMAGE
-                               for d in detections if d["D_px"] >= 30])
+                               for d in detections if d["D_px"] >= min_dpx])
                 ys = np.array([d["D_px"] / d_median
-                               for d in detections if d["D_px"] >= 30])
+                               for d in detections if d["D_px"] >= min_dpx])
 
                 fig, ax = plt.subplots(figsize=(10, 5))
                 ax.scatter(xs, ys, alpha=0.25, s=8,
@@ -375,6 +392,12 @@ def main():
                         help="YOLO .pt model path")
     parser.add_argument("--output", default="docs/lens_estimate.png",
                         help="Output plot path")
+    parser.add_argument("--min-dpx", type=int, default=100,
+                        help="Min bounding-box min-side in px (default 100). "
+                             "Increase to exclude more partial detections.")
+    parser.add_argument("--x-margin", type=int, default=150,
+                        help="Ignore detections within this many px of image "
+                             "left/right edge (default 150).")
     args = parser.parse_args()
 
     print("\n" + "#"*60)
@@ -387,7 +410,8 @@ def main():
     check_metadata(args.videos)
 
     if args.model:
-        geometric_estimation(args.videos, args.gt, args.model, args.output)
+        geometric_estimation(args.videos, args.gt, args.model, args.output,
+                             min_dpx=args.min_dpx, x_margin=args.x_margin)
     else:
         print("\n" + "="*60)
         print("METHOD 2: Geometric estimation  [SKIPPED - no --model given]")
