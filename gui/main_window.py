@@ -46,6 +46,7 @@ from gui.workers.camera_worker import CameraWorker
 from gui.workers.video_worker  import VideoWorker
 from gui.workers.inference_worker import MockInferenceWorker, RealInferenceWorker
 from gui.workers.tracker import AppleTracker as ConveyorTracker
+from gui.workers.size_calibration import SizeCalibrator
 
 log = logging.getLogger(__name__)
 
@@ -586,6 +587,16 @@ class MainWindow(QMainWindow):
         inf_tracking = inf_cfg.get("tracking", {})
         conv_cfg     = self._cfg.get("conveyor", {})
         self._exit_x_frac = inf_tracking.get("exit_frac", 0.85)
+        # ── Size calibrator (pixel-only mode until coefficients are set) ──
+        size_cfg  = self._cfg.get("size_estimation", {})
+        calibrator = None
+        if size_cfg.get("enabled", False):
+            calibrator = SizeCalibrator.from_config(size_cfg)
+            if calibrator.is_ready():
+                log.info("SizeCalibrator loaded from config (calibrated)")
+            else:
+                log.info("SizeCalibrator: pixel-only mode (coefficients pending)")
+
         self._tracker = ConveyorTracker(
             n_lanes              = conv_cfg.get("lanes", 3),
             orientation          = conv_cfg.get("orientation", "BT"),
@@ -600,6 +611,7 @@ class MainWindow(QMainWindow):
             cull_weight          = inf_tracking.get("cull_weight",          1.5),
             hit_threshold        = inf_tracking.get("hit_threshold",        20),
             cull_ratio_threshold = inf_tracking.get("cull_ratio_threshold", 0.55),
+            size_calibrator      = calibrator,
         )
 
 
