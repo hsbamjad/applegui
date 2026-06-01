@@ -159,6 +159,42 @@ inference:
     cull_ratio_threshold: 0.55
 
 # ══════════════════════════════════════════════════════════════
+# SIZE ESTIMATION
+# Empirical position-aware scale calibration (Mizushima & Lu 2013)
+# Lens: JAI 0824-C3  f=8mm  pixel_pitch=3.45um  TV distortion=-0.86%
+# Status: coefficients PENDING calibration session
+# ══════════════════════════════════════════════════════════════
+size_estimation:
+  enabled: true
+
+  # Camera hardware
+  img_width:        2048
+  img_height:       1536
+  pixel_pitch_mm:   0.00345   # Sony IMX252 pixel pitch (mm)
+  focal_length_mm:  8.0       # JAI 0824-C3 nominal focal length (mm)
+
+  # Detection size sanity bounds (pixels)
+  # Detections outside this range are skipped for size estimation
+  min_diameter_px:  40        # Below = partial detection or noise
+  max_diameter_px:  500       # Above = likely tracking error
+
+  # Quadratic calibration coefficients
+  # N_px(x) = a*x^2 + b*x + c   (x = centroid column, pixels from left)
+  # r(x)    = d_mm / N_px(x)    (scale in mm/pixel at position x)
+  #
+  # How to populate:
+  #   python scripts/calibrate_size.py --method primary \
+  #       --videos <ch1> <ch2> <ch3> --gt data/gt.xlsx --model models/best.pt
+  #
+  # small group = apples below median GT diameter
+  # large group = apples above median GT diameter
+  calibration:
+    small_ball_mm:  63.5      # Representative GT diameter for small group (mm)
+    small_coeffs:   null      # [a, b, c] — populate after calibration run
+    large_ball_mm:  76.2      # Representative GT diameter for large group (mm)
+    large_coeffs:   null      # [a, b, c] — populate after calibration run
+
+# ══════════════════════════════════════════════════════════════
 # DATA LOGGING
 # ══════════════════════════════════════════════════════════════
 logging:
@@ -172,7 +208,9 @@ logging:
     - lane
     - grade
     - confidence
-    - diameter_px
+    - size_px          # raw peak bounding-box min-side (pixels)
+    - size_mm          # estimated equatorial diameter (mm) — null until calibrated
+    - size_cf          # scale factor r(x) applied (mm/px) — null until calibrated
     - conveyor_speed_aps
     - outlet_fired
 
