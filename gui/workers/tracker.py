@@ -45,6 +45,7 @@ class GradeRecord:
     frames_seen: int
     size_px:     Optional[float] = None   # peak bounding-box min-side (pixels)
     size_mm:     Optional[float] = None   # estimated equatorial diameter (mm)
+    cx_peak:     Optional[float] = None   # centroid column (px) at the peak D_px frame
 
 
 class AppleTracker:
@@ -320,6 +321,7 @@ class AppleTracker:
                         frames_seen = hist["frames_seen"],
                         size_px     = size_px,
                         size_mm     = size_mm,
+                        cx_peak     = float(cx_peak) if size_px is not None else None,
                     )
                     graded.append(rec)
                     log.info(
