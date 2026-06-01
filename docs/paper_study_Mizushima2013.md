@@ -27,7 +27,7 @@ Their goal was an **in-field presorting system** — light, cheap, fast enough t
 | Frame rate | 15 frames/s |
 | Images per apple | ~15 per apple as it passes through |
 
-Key difference from our setup: they used a **very wide-angle 4.3 mm lens at only 38 cm height**. This caused serious distortion. Our setup uses a **16 mm lens** (much narrower angle), so our distortion will be significantly less severe.
+Key difference from our setup: they used a **very wide-angle 4.3 mm lens at only 38 cm height**. This caused serious distortion. Our setup uses the **JAI 0824-C3 lens (8 mm focal length, f/2.4-16, prism-optimized, -0.86% distortion)** - narrower angle and far less distortion, but the empirical correction is still important because of perspective scale variation across lanes.
 
 ---
 
@@ -121,13 +121,14 @@ They beat a mechanical sizer: **4.3% classification error vs 15.1% for mechanica
 
 | Aspect | Mizushima & Lu 2013 | Our Planned Approach |
 |---|---|---|
-| **Camera** | Low-cost CCD, 4.3 mm wide-angle | JAI multispectral, 16 mm narrow-angle |
-| **Distortion severity** | HIGH (wide angle, close range) | LOWER (narrow angle) |
-| **Scale correction method** | Empirical: roll calibration balls, fit quadratic curve per X position | Geometric: physics-based 1/cos(theta) from camera height H + lane offset X_lane |
-| **Needs physical measurements?** | NO (calibration is self-contained from the balls) | YES (need to measure H and X_lane in lab) |
-| **Works for any apple size?** | Yes (interpolates between two ball curves) | Yes (correction depends only on position, not size) |
-| **Accounts for radial lens distortion?** | YES (absorbed into empirical fit) | PARTIALLY (assumes no radial distortion; our 16 mm lens likely OK) |
-| **Accounts for apple height (3D sphere)?** | YES (interpolates by apple pixel count = proxy for size) | NOT YET (we correct for lateral position, not for apple height variation) |
+| **Camera** | Low-cost CCD, 4.3 mm wide-angle | JAI multispectral + JAI 0824-C3 lens (8 mm, f/2.4) |
+| **Lens distortion** | HIGH (-wide angle, close range) | Very low (-0.86% TV distortion, prism-optimized) |
+| **Perspective scale variation** | Severe (4.3 mm at 38 cm) | Moderate (8 mm, but 3-lane width still causes variation) |
+| **Scale correction method** | Empirical: roll calibration balls, fit quadratic curve per X position | Empirical (adopted from paper) + geometric 1/cos(theta) as cross-check |
+| **Needs physical measurements?** | NO (calibration is self-contained from the balls) | Only ball diameters (balls are the calibration) |
+| **Works for any apple size?** | Yes (interpolates between two ball curves) | Yes (same interpolation approach) |
+| **Accounts for radial lens distortion?** | YES (absorbed into empirical fit) | YES (empirical fit absorbs it; 0.86% is negligible anyway) |
+| **Accounts for apple height (3D sphere)?** | YES (interpolates by apple pixel count = proxy for size) | YES (adopting their two-ball interpolation) |
 | **Ground truth validation** | Benchtop imaging system (rotate apple 360° + camera) | Physical calipers + LR model, R² target > 0.99 |
 | **Orientation detection?** | YES (stem, symmetry, moment algorithms) | NOT planned (screw conveyor handles this differently) |
 
@@ -147,13 +148,15 @@ They beat a mechanical sizer: **4.3% classification error vs 15.1% for mechanica
 
 ### What we are doing that is better or different
 
-1. **Our camera is far superior.** 16 mm lens vs 4.3 mm - our perspective distortion is much smaller to begin with. Their correction was critical for them; ours is a refinement.
+1. **Our lens is far superior for this task.** The JAI 0824-C3 (8 mm, -0.86% distortion) is a prism-optimized industrial lens designed specifically for the JAI camera. Their 4.3 mm wide-angle lens had significant radial distortion; ours is essentially distortion-free. The perspective scale variation we still need to correct is purely geometric (not lens distortion).
 
-2. **We are using YOLO tracking** - we get robust multi-frame tracking automatically. They had to build their own region-of-interest tracking from scratch.
+2. **8 mm vs 4.3 mm = ~half the perspective scale variation.** With a longer focal length, the angular FOV is narrower, so the scale difference between center and edge of frame is smaller. Their correction was large and critical; ours is a smaller but still necessary refinement.
 
-3. **We have multispectral data** - future scope for internal quality + size combined.
+3. **We are using YOLO tracking** - we get robust multi-frame tracking automatically. They had to build their own region-of-interest tracking from scratch.
 
-4. **We target R² > 0.99 with a formal LR model** - they did not frame it this way. We are more rigorous in the validation methodology (something Dr. Lu is clearly adding based on your meeting).
+4. **We have multispectral data** - future scope for internal quality + size combined.
+
+5. **We target R² > 0.99 with a formal LR model** - they did not frame it this way. We are more rigorous in the validation methodology (something Dr. Lu is clearly adding based on your meeting).
 
 ### What we should borrow (concrete ideas)
 
@@ -207,8 +210,12 @@ We still keep the geometric model in the doc for theoretical justification.
 | Number | Source | Meaning |
 |---|---|---|
 | 1.79 mm | Paper (RMSE overall) | Their accuracy - our target to match or beat |
-| 4.3 mm | Their focal length | Why they had bad distortion (ours is 16 mm - 4x less distortion) |
-| 38 cm | Their camera height | (ours TBD, likely similar or higher) |
+| 4.3 mm | Their focal length | Why they had bad distortion |
+| **8 mm** | **Our lens (JAI 0824-C3)** | **Our focal length - confirmed from lens markings** |
+| **-0.86%** | **JAI 0824-C3 spec** | **Our TV distortion - nearly zero, prism-optimized** |
+| **f/2.4 - f/16** | **JAI 0824-C3 spec** | **Our aperture range (adjustable ring on lens)** |
+| **2,319 px** | **f_px = 8 mm / 0.00345 mm** | **Our focal length in pixels (Sony IMX252 pixel pitch)** |
+| 38 cm | Their camera height | (ours TBD, likely similar or higher - measure in lab) |
 | 15 images/apple | Their frame count | We should get similar or more with YOLO tracking |
 | 63.5 mm / 76.2 mm | Their calibration ball sizes | Good reference for choosing our own calibration balls |
 
