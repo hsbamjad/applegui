@@ -47,6 +47,7 @@ from gui.workers.video_worker  import VideoWorker
 from gui.workers.inference_worker import MockInferenceWorker, RealInferenceWorker
 from gui.workers.tracker import AppleTracker as ConveyorTracker
 from gui.workers.size_calibration import SizeCalibrator
+from core.logging.grade_logger import GradeLogger
 
 log = logging.getLogger(__name__)
 
@@ -437,6 +438,7 @@ class MainWindow(QMainWindow):
         self._total        = 0
         self._total_graded = 0             # running count for model input panel badge
         self._wb_reverting = False   # True while a revert_white_balance() call is in flight
+        self._logger: GradeLogger | None = None
 
         self._setup_window()
         self._build_ui()
@@ -635,6 +637,9 @@ class MainWindow(QMainWindow):
         if self._cam_w:
             self._cam_w.stop()
             self._cam_w = None
+        if self._logger:
+            self._logger.close()
+            self._logger = None
 
         self._left.set_camera_connected(False)
         self._center.channel_display.reset_all()
@@ -822,9 +827,12 @@ class MainWindow(QMainWindow):
             self._right.grade_summary.record(rec.class_name)
             self._right.metrics_group.record_grade(self._left.conveyor_speed)
             self.statusBar().showMessage(
-                f"#{rec.seq_id}  Lane {rec.lane}  →  {rec.class_name}  "
+                f"#{rec.seq_id}  Lane {rec.lane}  ->  {rec.class_name}  "
                 f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
             )
+            # Log to CSV if logger is active
+            if self._logger and self._logger.is_open:
+                self._logger.write(rec, outlet, self._left.conveyor_speed)
 
         # ── Annotate all 3 channels with same boxes ───────────────
         ann_ch1 = self._annotate_tracked(self._last_ch1, active, show_label=False)
@@ -962,6 +970,16 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(bool)
     def _on_logging_toggle(self, enabled: bool) -> None:
+        if enabled:
+            log_cfg = self._cfg.get("logging", {})
+            self._logger = GradeLogger(log_cfg)
+            self._logger.open()
+            path_str = str(self._logger.path) if self._logger.path else "?"
+            self.statusBar().showMessage(f"Logger: recording to {path_str}")
+        else:
+            if self._logger:
+                self._logger.close()
+                self._logger = None
         self._right.status_group.set_status(
             "Logger",
             "online" if enabled else "idle",
