@@ -338,6 +338,16 @@ class AppleTracker:
             else:
                 disp_cls, disp_conf = cls_id, conf
 
+            # Live size estimate for overlay (peak D_px seen so far this track)
+            live_size_px: Optional[float] = None
+            live_size_mm: Optional[float] = None
+            if hist["d_px_samples"]:
+                live_cx_pk, live_size_px = max(hist["d_px_samples"], key=lambda s: s[1])
+                if self._calibrator is not None:
+                    live_r = self._calibrator.r(live_cx_pk, live_size_px)
+                    if live_r is not None:
+                        live_size_mm = round(live_size_px * live_r, 1)
+
             active.append({
                 "track_id":  tid,
                 "seq_id":    seq_id,
@@ -348,6 +358,8 @@ class AppleTracker:
                 "lane":      lane,
                 "frames":    hist["frames_seen"],
                 "eligible":  entered_start,
+                "size_px":   live_size_px,
+                "size_mm":   live_size_mm,
             })
 
         # ── Step 3: Move disappeared tracks to lost buffer ────────────────────

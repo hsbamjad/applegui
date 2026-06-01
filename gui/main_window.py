@@ -920,10 +920,18 @@ class MainWindow(QMainWindow):
             # Label pill ─────────────────────────────────────────────────────
             # show_label=True  (AI Model Input panel): "#3 Fresh 87% L2"
             # show_label=False (raw CH1/CH2/CH3):      "#3 L2"  — ID + lane only
-            id_part = f"#{seq}" if seq is not None else "?"
+            id_part  = f"#{seq}" if seq is not None else "?"
+            size_px  = t.get("size_px")
+            size_mm  = t.get("size_mm")
             if show_label:
-                name  = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
-                label = f"{id_part} {name} {conf*100:.0f}% L{lane}"
+                name = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
+                if size_mm is not None:
+                    size_str = f"  o {size_mm:.0f}mm"
+                elif size_px is not None:
+                    size_str = f"  o {size_px:.0f}px"
+                else:
+                    size_str = ""
+                label = f"{id_part} {name} {conf*100:.0f}% L{lane}{size_str}"
             else:
                 label = f"{id_part} L{lane}"
 
