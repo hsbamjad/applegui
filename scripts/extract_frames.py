@@ -45,7 +45,9 @@ sessions/{session_name}.pkl  contains:
                   "cx_px":      812,          # centroid x in full-res image
                   "cy_px":      400,          # centroid y in full-res image
                   "bbox":       [x1,y1,x2,y2],# in full-res pixels
-                  "mask":       np.ndarray,   # binary uint8, same shape as YOLO input
+                  "crop_rect":  [mx1,my1,mx2,my2], # bbox + MASK_PAD in full-res pixels
+                  "mask":       np.ndarray,   # binary uint8, cropped to crop_rect size
+                                              # NOT full-frame — use crop_rect to locate
                   "conf":       0.87,         # YOLO detection confidence
                   "class_id":   1,            # 0=Cull 1=Fresh 2=Processing
               },
@@ -83,6 +85,8 @@ APPLES_PER_SESSION = 18   # Each session has 18 apples
 CONF_THRESHOLD     = 0.40
 IOU_THRESHOLD      = 0.45
 INPUT_MODE         = "RB-nir1"  # Channel composite: R+B from Source0, NIR1 from Source1
+MASK_PAD           = 20         # Pixels of padding around bbox when cropping mask
+                                 # Crop mask stored instead of full-frame mask (~60x smaller)
 
 # Tracker settings (mirror config.yaml)
 ENTRY_FRAC         = 0.35   # Apple must first appear in left 35% of frame
@@ -345,7 +349,8 @@ def load_gt(gt_path: str, session: str) -> list:
 #   4. Assign GT indices sequentially: gt_idx = group * LANES + lane_rank
 # ─────────────────────────────────────────────────────────────────────────────
 LANES               = 3          # Number of conveyor lanes
-COLUMN_GAP_FRAMES  = 20         # If two exits are > this many frames apart, new column group
+COLUMN_GAP_FRAMES  = 150        # If two exits are > this many frames apart, new column group
+                                 # Increased from 20: lanes in same column may exit 50-100 frames apart
 
 
 def assign_gt_by_column(committed_tracks: list, gt_list: list) -> list:
@@ -463,8 +468,8 @@ def process_session(session: str, data_root: str, model: YOLO,
                 x1, y1, x2, y2 = map(int, box.xyxy.cpu().numpy()[0])
                 cx = (x1 + x2) // 2
                 cy = (y1 + y2) // 2
-                conf    = float(box.conf.cpu().numpy())
-                cls_id  = int(box.cls.cpu().numpy())
+                conf    = float(box.conf.cpu().numpy().item())
+                cls_id  = int(box.cls.cpu().numpy().item())
 
                 # Get binary mask at YOLO output resolution, resize to img size
                 if masks is not None and i < len(mask_data):
@@ -478,13 +483,21 @@ def process_session(session: str, data_root: str, model: YOLO,
                     r_px = min((x2 - x1), (y2 - y1)) // 2
                     cv2.circle(m, (cx, cy), r_px, 1, -1)
 
+                # Crop mask to bbox + padding (avoids storing 3MB full-frame masks)
+                mx1 = max(0, x1 - MASK_PAD)
+                my1 = max(0, y1 - MASK_PAD)
+                mx2 = min(img_w, x2 + MASK_PAD)
+                my2 = min(img_h, y2 + MASK_PAD)
+                m_crop = m[my1:my2, mx1:mx2]   # typically ~200-400px square
+
                 detections.append({
                     "frame_no":  frame_no,
                     "frame_idx": frame_idx,
                     "bbox":      [x1, y1, x2, y2],
+                    "crop_rect": [mx1, my1, mx2, my2],
                     "cx_px":     cx,
                     "cy_px":     cy,
-                    "mask":      m,
+                    "mask":      m_crop,    # cropped binary mask, NOT full-frame
                     "conf":      conf,
                     "class_id":  cls_id,
                 })
