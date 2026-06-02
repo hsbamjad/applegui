@@ -335,62 +335,62 @@ def load_gt(gt_path: str, session: str) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GT ASSIGNMENT  (column-group + lane ordering)
+# GT ASSIGNMENT  (y-centroid lane assignment + interleave)
 #
-# Apples are numbered in the GT by column group then lane:
-#   Column group 1 exits first:  apple 1 (top), 2 (mid), 3 (bottom)
-#   Column group 2 exits next:   apple 4 (top), 5 (mid), 6 (bottom)
-#   ...up to apple 18 (group 6, bottom lane)
+# Physical conveyor has 3 fixed lanes at different vertical positions.
+# Lane is determined purely from mean y-centroid (stable, not timing-dependent):
+#   Lane 0 (top):    mean_cy in [0,         img_h/3)
+#   Lane 1 (middle): mean_cy in [img_h/3,   2*img_h/3)
+#   Lane 2 (bottom): mean_cy in [2*img_h/3, img_h)
 #
-# Algorithm:
-#   1. Sort all committed tracks by exit_frame_idx (time of exit)
-#   2. Group consecutive exits that are close in time (same column)
-#   3. Within each group, sort by mean_cy ascending (top lane = smallest y)
-#   4. Assign GT indices sequentially: gt_idx = group * LANES + lane_rank
+# GT numbering order:
+#   Apple 1  = lane0, 1st to exit    Apple 2  = lane1, 1st to exit
+#   Apple 3  = lane2, 1st to exit    Apple 4  = lane0, 2nd to exit  ...
+#
+# GT index = (position_within_lane) * LANES + lane_id
 # ─────────────────────────────────────────────────────────────────────────────
-LANES               = 3          # Number of conveyor lanes
-COLUMN_GAP_FRAMES  = 150        # If two exits are > this many frames apart, new column group
-                                 # Increased from 20: lanes in same column may exit 50-100 frames apart
+LANES = 3   # Number of physical conveyor lanes
 
 
-def assign_gt_by_column(committed_tracks: list, gt_list: list) -> list:
+def assign_gt_by_column(committed_tracks: list, gt_list: list,
+                        img_h: int = 1536) -> list:
     """
-    Sort committed tracks by (column_group, lane) and assign GT values.
+    Assign GT values using y-centroid lane detection + per-lane exit order.
     Returns a list of dicts ready for the output pickle.
     """
     if not committed_tracks:
         return []
 
-    # Sort by exit frame (ascending)
-    sorted_tracks = sorted(committed_tracks, key=lambda t: (t.exit_frame_idx or 0))
+    lane_h = img_h / LANES   # pixel height of each lane band
 
-    # Group into column groups by time gap
-    groups = []
-    current_group = [sorted_tracks[0]]
-    for t in sorted_tracks[1:]:
-        prev_exit = current_group[-1].exit_frame_idx or 0
-        curr_exit = t.exit_frame_idx or 0
-        if (curr_exit - prev_exit) > COLUMN_GAP_FRAMES:
-            groups.append(current_group)
-            current_group = [t]
-        else:
-            current_group.append(t)
-    groups.append(current_group)
+    # Assign lane_id to each track from its mean y-centroid
+    for t in committed_tracks:
+        t.lane_id = min(LANES - 1, int(t.mean_cy / lane_h))
 
-    # Build output: within each group sort by y-centroid (top lane = smallest y)
+    # Bucket tracks into lanes, sorted by exit frame within each lane
+    lanes = [[] for _ in range(LANES)]
+    for t in committed_tracks:
+        lanes[t.lane_id].append(t)
+    for lane in lanes:
+        lane.sort(key=lambda t: t.exit_frame_idx or 0)
+
+    # Interleave: lane0[0], lane1[0], lane2[0], lane0[1], lane1[1], lane2[1]...
+    max_per_lane = max(len(lane) for lane in lanes)
     apples = []
     apple_idx = 0
-    for grp in groups:
-        grp_sorted = sorted(grp, key=lambda t: t.mean_cy)
-        for t in grp_sorted:
+    for pos in range(max_per_lane):       # position within each lane
+        for lane_id in range(LANES):      # top → mid → bottom
+            if pos >= len(lanes[lane_id]):
+                continue                  # this lane has fewer apples (fell off conveyor)
+            t = lanes[lane_id][pos]
             gt_mm = gt_list[apple_idx] if apple_idx < len(gt_list) else None
             apples.append({
-                "apple_idx": apple_idx,
-                "gt_mm":     gt_mm,
-                "lane":      grp_sorted.index(t),        # 0=top, 1=mid, 2=bot
-                "column":    groups.index(grp),          # 0-based column group
+                "apple_idx":      apple_idx,
+                "gt_mm":          gt_mm,
+                "lane":           lane_id,          # 0=top 1=mid 2=bot
+                "pos_in_lane":    pos,              # 0-based order within this lane
                 "exit_frame_idx": t.exit_frame_idx,
-                "frames":    t.frames,
+                "frames":         t.frames,
             })
             apple_idx += 1
 
@@ -516,14 +516,14 @@ def process_session(session: str, data_root: str, model: YOLO,
 
     # ── Assign GT using column-group + lane ordering
     gt_list = load_gt(gt_path, session) if gt_path else [None] * APPLES_PER_SESSION
-    committed_apples = assign_gt_by_column(tracker.committed, gt_list)
+    committed_apples = assign_gt_by_column(tracker.committed, gt_list, img_h)
 
     # Print summary
     for a in committed_apples:
         gt_mm  = a["gt_mm"]
         gt_str = f"{gt_mm:.1f}mm" if gt_mm is not None else "None"
         print(f"    Apple {a['apple_idx']+1:2d}  "
-              f"col={a['column']} lane={a['lane']}  "
+              f"lane={a['lane']} pos={a['pos_in_lane']}  "
               f"frames={len(a['frames']):3d}  gt={gt_str}")
 
     print(f"  Total matched: {len(committed_apples)}  (expected {APPLES_PER_SESSION})")
