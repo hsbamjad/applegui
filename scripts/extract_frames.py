@@ -106,13 +106,27 @@ def natural_key(s: str):
 # ─────────────────────────────────────────────────────────────────────────────
 def build_composite(src0_path: str, src1_path: str, mode: str = "RB-nir1") -> np.ndarray:
     """Return H×W×3 uint8 composite suitable for YOLO."""
-    img0 = cv2.imread(src0_path)   # BGR from Source0 (color)
-    img1 = cv2.imread(src1_path, cv2.IMREAD_GRAYSCALE)  # mono from Source1 (NIR1)
+    img0 = cv2.imread(src0_path)          # BGR from Source0 (color)
+    img1 = cv2.imread(src1_path)          # read Source1 as-is (may be mono or BGR)
 
     if img0 is None:
         raise FileNotFoundError(f"Cannot read Source0 image: {src0_path}")
     if img1 is None:
         raise FileNotFoundError(f"Cannot read Source1 image: {src1_path}")
+
+    # Ensure img0 is 3-channel
+    if img0.ndim == 2:
+        img0 = cv2.cvtColor(img0, cv2.COLOR_GRAY2BGR)
+
+    # Ensure img1 is single-channel grayscale
+    if img1.ndim == 3:
+        img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
+
+    h, w = img0.shape[:2]
+
+    # Safety: resize img1 if dimensions don't match (rare frame corruption)
+    if img1.shape != (h, w):
+        img1 = cv2.resize(img1, (w, h), interpolation=cv2.INTER_LINEAR)
 
     if mode == "RB-nir1":
         # R from Source0, B from Source0, NIR1 from Source1
