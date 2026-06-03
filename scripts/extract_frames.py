@@ -89,11 +89,13 @@ MASK_PAD           = 20         # Pixels of padding around bbox when cropping ma
                                  # Crop mask stored instead of full-frame mask (~60x smaller)
 
 # Tracker settings (mirror config.yaml)
-ENTRY_FRAC         = 0.35   # Apple must first appear in left 35% of frame
-EXIT_FRAC          = 0.85   # Apple is committed when centroid crosses this x-fraction
-MIN_FRAMES         = 5      # Minimum frames to consider a valid track
+ENTRY_FRAC         = 0.35   # Entry-gate line: apples registered here (left 35% of frame)
+EXIT_FRAC          = 0.85   # Apple finalized when centroid crosses this x-fraction
+MIN_FRAMES         = 5      # Minimum frames before a track is registered at entry gate
 MAX_LOST           = 10     # Frames before track is dropped
 MAX_RECOVER_DIST   = 80     # Pixels — max movement between frames for same track
+STARTUP_FRAMES     = 400    # First N frames: track apples anywhere in frame
+                             # (catches apples already on conveyor when recording starts)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -164,17 +166,25 @@ def iou(a, b):
     return inter / (ua + ub - inter)
 
 
+
 class Track:
-    def __init__(self, tid: int, frame_record: dict, img_w: int):
-        self.tid           = tid
-        self.lost          = 0
-        self.age           = 1
-        self.committed     = False
-        self.img_w         = img_w
-        self.frames        = [frame_record]
-        self.last_bbox     = frame_record["bbox"]
-        self.last_cx       = frame_record["cx_px"]
-        self.exit_frame_idx = None   # frame index when this track was committed
+    def __init__(self, tid: int, frame_record: dict, img_w: int,
+                 is_startup: bool = False):
+        self.tid             = tid
+        self.lost            = 0
+        self.age             = 1
+        self.is_startup      = is_startup  # True if created during STARTUP_FRAMES
+        self.img_w           = img_w
+        self.frames          = [frame_record]
+        self.last_bbox       = frame_record["bbox"]
+        self.last_cx         = frame_record["cx_px"]
+        # ── Two-phase lifecycle ──────────────────────────────────────────────
+        # Phase 1: REGISTERED at entry gate after MIN_FRAMES → gets GT slot
+        #          even if the apple later falls off or is lost mid-conveyor
+        # Phase 2: COMMITTED at exit → frame collection finalized
+        self.registered      = False  # Phase 1 complete
+        self.committed       = False  # Phase 2 complete (exit reached)
+        self.exit_frame_idx  = None   # set at exit OR end-of-session flush
 
     def update(self, frame_record: dict):
         self.frames.append(frame_record)
@@ -192,39 +202,38 @@ class Track:
     def cx_frac(self):
         return self.last_cx / self.img_w
 
-    def should_commit(self) -> bool:
-        return (not self.committed
-                and self.age >= MIN_FRAMES
-                and self.cx_frac >= EXIT_FRAC)
+    def should_register(self) -> bool:
+        """Phase 1: register at entry gate after MIN_FRAMES seen."""
+        return not self.registered and self.age >= MIN_FRAMES
 
-    def valid_entry(self, img_w: int) -> bool:
-        """True if the track’s FIRST frame was in the entry zone."""
-        if not self.frames:
-            return False
-        first_cx = self.frames[0]["cx_px"]
-        return (first_cx / img_w) < ENTRY_FRAC
+    def should_commit(self) -> bool:
+        """Phase 2: finalize frame collection when apple reaches exit zone."""
+        return (self.registered
+                and not self.committed
+                and self.cx_frac >= EXIT_FRAC)
 
 
 class SimpleTracker:
     def __init__(self, img_w: int, img_h: int):
         self.img_w      = img_w
         self.img_h      = img_h
-        self.tracks     = []
-        self.committed  = []    # list of committed Track objects, in order
+        self.tracks     = []   # currently active tracks
+        self.registered = []   # tracks registered at entry gate (in registration order)
+        self.committed  = []   # alias: same objects, finalized at exit
         self._next_id   = 0
 
     def update(self, detections: list, frame_idx: int) -> list:
         """
         detections: list of dicts with keys bbox, cx_px, cy_px, mask, conf, class_id
-        frame_idx:  current frame index (used to record exit timing)
-        Returns list of newly committed tracks this frame.
+        frame_idx:  current frame index (used to record entry/exit timing)
+        Returns list of newly registered tracks this frame.
         """
-        # Predict / age out lost tracks
+        # ── Age out lost tracks ───────────────────────────────────────────────
         for t in self.tracks:
             t.lost += 1
         self.tracks = [t for t in self.tracks if t.lost <= MAX_LOST]
 
-        # Match detections to tracks by IoU
+        # ── Match detections to tracks by IoU ─────────────────────────────────
         matched_track_ids = set()
         matched_det_ids   = set()
 
@@ -244,7 +253,6 @@ class SimpleTracker:
                     break
                 if i in matched_track_ids or j in matched_det_ids:
                     continue
-                # Also check centroid distance as sanity
                 cx_det = detections[j]["cx_px"]
                 if abs(cx_det - self.tracks[i].last_cx) > MAX_RECOVER_DIST:
                     continue
@@ -253,30 +261,38 @@ class SimpleTracker:
                 matched_track_ids.add(i)
                 matched_det_ids.add(j)
 
-        # Create new tracks for unmatched detections in entry zone
+        # ── Create new tracks for unmatched detections ────────────────────────
+        # During STARTUP_FRAMES: accept apples anywhere in frame
+        #   (catches apples already on conveyor at session start)
+        # After startup: only accept apples entering from the entry-gate zone
+        in_startup = frame_idx < STARTUP_FRAMES
         for j, d in enumerate(detections):
             if j in matched_det_ids:
                 continue
             cx_frac = d["cx_px"] / self.img_w
-            if cx_frac < ENTRY_FRAC:
-                t = Track(self._next_id, d, self.img_w)
+            if in_startup or cx_frac < ENTRY_FRAC:
+                t = Track(self._next_id, d, self.img_w, is_startup=in_startup)
                 self._next_id += 1
                 self.tracks.append(t)
 
-        # Check for tracks ready to commit
-        newly_committed = []
-        still_active = []
+        # ── Phase 1: Register tracks at entry gate ────────────────────────────
+        # An apple is registered (gets its GT slot) as soon as it has been
+        # seen for MIN_FRAMES.  After registration it stays active so we
+        # keep collecting frame data until it exits or is lost.
+        newly_registered = []
+        for t in self.tracks:
+            if t.should_register():
+                t.registered = True
+                self.registered.append(t)
+                newly_registered.append(t)
+
+        # ── Phase 2: Finalize tracks that reached the exit zone ───────────────
         for t in self.tracks:
             if t.should_commit():
                 t.committed = True
-                t.exit_frame_idx = frame_idx    # record when this apple exited
-                self.committed.append(t)
-                newly_committed.append(t)
-            else:
-                still_active.append(t)
-        self.tracks = still_active
+                t.exit_frame_idx = frame_idx
 
-        return newly_committed
+        return newly_registered
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -542,18 +558,28 @@ def process_session(session: str, data_root: str, model: YOLO,
         # Update tracker (pass frame_idx for exit time recording)
         newly_committed = tracker.update(detections, frame_idx)
 
-    # ── End-of-session flush: mop up tracks still active at last frame
+    # ── End-of-session flush: mop up tracks still active at last frame ────────
+    # Include any registered track that never exited (apple still on belt
+    # when session ended, or fell off before reaching EXIT_FRAC).
+    last_frame = len(src0_files) - 1
     for t in tracker.tracks:
-        if t.age >= MIN_FRAMES and t.valid_entry(img_w):
-            if t.exit_frame_idx is None:
-                t.exit_frame_idx = len(src0_files) - 1
-            tracker.committed.append(t)
+        if t.registered and t.exit_frame_idx is None:
+            t.exit_frame_idx = last_frame
 
-    print(f"  Raw committed tracks: {len(tracker.committed)}  (expected {APPLES_PER_SESSION})")
+    # Also register any track that was still accumulating frames at session end
+    # (handles startup-tracked apples that never crossed EXIT_FRAC)
+    for t in tracker.tracks:
+        if not t.registered and t.age >= MIN_FRAMES:
+            t.registered = True
+            t.exit_frame_idx = last_frame
+            tracker.registered.append(t)
 
-    # ── Assign GT using column-group + lane ordering
+    print(f"  Gate-registered tracks: {len(tracker.registered)}  "
+          f"(expected {APPLES_PER_SESSION})")
+
+    # ── Assign GT using entry-gate ordering (registered tracks)
     gt_list = load_gt(gt_path, session) if gt_path else [None] * APPLES_PER_SESSION
-    committed_apples = assign_gt_by_column(tracker.committed, gt_list, img_h)
+    committed_apples = assign_gt_by_column(tracker.registered, gt_list, img_h)
 
     # Print summary
     for a in committed_apples:
