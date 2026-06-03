@@ -69,52 +69,97 @@ def load_gt(gt_path: str, session: str) -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 def reassign_gt(apples: list, gt_list: list, img_h: int) -> list:
     """
-    Recompute lane assignment from cy_px and reassign gt_mm.
-    Input `apples` is the raw list from the pkl (any lane labeling, may be wrong).
-    Returns a new list with corrected lane, pos_in_lane, apple_idx, gt_mm.
+    Recompute lane + GT assignment from stored frame data.
+    Uses robust gap detection — handles missing apples at START, MIDDLE, END.
     """
+    LANES = 3
+    GAP_MULTIPLIER = 1.6
     lane_h = img_h / LANES
 
-    # Compute mean_cy and lane_id for each apple from its stored frame data
-    enriched = []
-    for a in apples:
-        cy_values = [f["cy_px"] for f in a["frames"] if "cy_px" in f]
-        mean_cy = float(np.mean(cy_values)) if cy_values else img_h / 2
-        lane_id = min(LANES - 1, int(mean_cy / lane_h))
-        enriched.append({
-            "original": a,
-            "mean_cy": mean_cy,
-            "lane_id": lane_id,
-            "exit_frame_idx": a.get("exit_frame_idx", 0) or 0,
-        })
+    # Build stub objects with exit_frame_idx, mean_cy, lane_id, and original dict
+    class Stub:
+        def __init__(self, apple_dict):
+            self.exit_frame_idx = apple_dict.get("exit_frame_idx", 0) or 0
+            cy_vals = [f["cy_px"] for f in apple_dict["frames"] if "cy_px" in f]
+            self.mean_cy = float(np.mean(cy_vals)) if cy_vals else img_h / 2
+            self.lane_id = min(LANES - 1, int(self.mean_cy / lane_h))
+            self._data = apple_dict
 
-    # Bucket into lanes, sort within each lane by exit frame
+    stubs = [Stub(a) for a in apples]
+
+    # Bucket into lanes, sort by exit time
     lanes = [[] for _ in range(LANES)]
-    for e in enriched:
-        lanes[e["lane_id"]].append(e)
+    for s in stubs:
+        lanes[s.lane_id].append(s)
     for lane in lanes:
-        lane.sort(key=lambda e: e["exit_frame_idx"])
+        lane.sort(key=lambda s: s.exit_frame_idx)
 
-    # Interleave: lane0[0], lane1[0], lane2[0], lane0[1], lane1[1], lane2[1]...
-    max_per_lane = max(len(lane) for lane in lanes) if any(lanes) else 0
+    # Compute typical inter-apple gap (cross-lane median)
+    all_gaps = []
+    for lane in lanes:
+        exits = [s.exit_frame_idx for s in lane]
+        for i in range(1, len(exits)):
+            all_gaps.append(exits[i] - exits[i - 1])
+    typical_gap = float(np.median(all_gaps)) if all_gaps else 300.0
+    print(f"  Typical inter-apple gap: {typical_gap:.0f} frames")
+
+    # Expand each lane — insert None for mid/end missing apples
+    def expand_lane(tracks):
+        if not tracks:
+            return []
+        slots = [tracks[0]]
+        for i in range(1, len(tracks)):
+            gap = tracks[i].exit_frame_idx - tracks[i - 1].exit_frame_idx
+            n_missing = max(0, round(gap / typical_gap) - 1)
+            slots.extend([None] * n_missing)
+            slots.append(tracks[i])
+        return slots
+
+    expanded = [expand_lane(lane) for lane in lanes]
+
+    # Detect leading missing apples (compare first exits across lanes)
+    first_exits = [lane[0].exit_frame_idx for lane in lanes if lane]
+    if first_exits:
+        earliest = min(first_exits)
+        for lane_id, lane in enumerate(lanes):
+            if not lane:
+                continue
+            first_t = lane[0].exit_frame_idx
+            n_leading = max(0, round((first_t - earliest) / typical_gap))
+            if n_leading > 0:
+                expanded[lane_id] = [None] * n_leading + expanded[lane_id]
+                print(f"  Lane {lane_id}: {n_leading} missing apple(s) at start")
+
+    # Pad all lanes to same length
+    max_len = max((len(e) for e in expanded), default=0)
+    for e in expanded:
+        while len(e) < max_len:
+            e.append(None)
+
+    # Print per-lane summary
+    for lid, slots in enumerate(expanded):
+        n_ok   = sum(1 for s in slots if s is not None)
+        n_miss = sum(1 for s in slots if s is None)
+        print(f"  Lane {lid}: {n_ok} present, {n_miss} missing  (slots={len(slots)})")
+
+    # Interleave and assign GT
     corrected = []
     apple_idx = 0
-    for pos in range(max_per_lane):
+    for pos in range(max_len):
         for lane_id in range(LANES):
-            if pos >= len(lanes[lane_id]):
-                continue
-            e = lanes[lane_id][pos]
-            gt_mm = gt_list[apple_idx] if apple_idx < len(gt_list) else None
-
-            # Build corrected apple dict (keep all original frame data)
-            new_apple = dict(e["original"])   # copy all original fields
-            new_apple["apple_idx"]      = apple_idx
-            new_apple["gt_mm"]          = gt_mm
-            new_apple["lane"]           = lane_id
-            new_apple["pos_in_lane"]    = pos
-            new_apple["mean_cy_px"]     = e["mean_cy"]    # store for reference
-            corrected.append(new_apple)
-            apple_idx += 1
+            slot = expanded[lane_id][pos] if pos < len(expanded[lane_id]) else None
+            if slot is None:
+                apple_idx += 1    # consume GT slot for missing apple
+            else:
+                gt_mm = gt_list[apple_idx] if apple_idx < len(gt_list) else None
+                new_apple = dict(slot._data)
+                new_apple["apple_idx"]      = apple_idx
+                new_apple["gt_mm"]          = gt_mm
+                new_apple["lane"]           = lane_id
+                new_apple["pos_in_lane"]    = pos
+                new_apple["mean_cy_px"]     = slot.mean_cy
+                corrected.append(new_apple)
+                apple_idx += 1
 
     return corrected
 
