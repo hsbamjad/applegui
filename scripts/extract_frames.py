@@ -96,6 +96,9 @@ MAX_LOST           = 10     # Frames before track is dropped
 MAX_RECOVER_DIST   = 80     # Pixels — max movement between frames for same track
 STARTUP_FRAMES     = 400    # First N frames: track apples anywhere in frame
                              # (catches apples already on conveyor when recording starts)
+MIN_CX_TRAVEL      = 200    # Min pixels a track's centroid must travel (left→right)
+                             # across all its frames.  Stationary background detections
+                             # (smudges, reflections) score 0 and are discarded.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -412,22 +415,36 @@ def assign_gt_by_column(committed_tracks: list, gt_list: list,
 
     # Step 2b: select top EXPECTED_PER_LANE tracks per lane by frame count
     # -----------------------------------------------------------------------
-    # The startup period (and occasional YOLO noise) can produce many more
-    # than 6 tracks per lane.  Real apple tracks span hundreds of frames;
-    # spurious blips have only a handful.  Ranking by frame count and keeping
-    # the top N robustly discards all noise without needing a hard threshold.
+    # First, drop stationary tracks (background smudges / YOLO false positives
+    # that persist for the whole session but never move across the belt).
+    # A real apple must travel at least MIN_CX_TRAVEL pixels left→right.
+    # Then rank remaining candidates by frame count and keep top N.
     # After selection, sort by entry time to recover GT arrival order.
     lanes = []
     for lid, all_tracks in enumerate(lanes_all):
-        best = sorted(all_tracks,
+        # Motion filter: keep only tracks that actually moved across the belt
+        mobile = []
+        static = []
+        for t in all_tracks:
+            cx_vals  = [f["cx_px"] for f in t.frames if "cx_px" in f]
+            cx_range = (max(cx_vals) - min(cx_vals)) if cx_vals else 0
+            if cx_range >= MIN_CX_TRAVEL:
+                mobile.append(t)
+            else:
+                static.append(t)
+        if static:
+            print(f"    Lane {lid}: dropped {len(static)} stationary track(s) "
+                  f"(cx travel < {MIN_CX_TRAVEL}px)")
+
+        best = sorted(mobile,
                       key=lambda t: len(t.frames), reverse=True)[:EXPECTED_PER_LANE]
         best.sort(key=lambda t: t.frames[0]["frame_idx"] if t.frames else 0)
-        if len(all_tracks) > len(best):
+        if len(mobile) > len(best):
             best_ids    = {id(t) for t in best}
-            discarded   = [t for t in all_tracks if id(t) not in best_ids]
+            discarded   = [t for t in mobile if id(t) not in best_ids]
             max_discard = max((len(t.frames) for t in discarded), default=0)
             min_kept    = min((len(t.frames) for t in best), default=0)
-            print(f"    Lane {lid}: {len(all_tracks)} candidates → "
+            print(f"    Lane {lid}: {len(mobile)} mobile candidates → "
                   f"kept top {len(best)} by frame count "
                   f"(min kept: {min_kept} frames, "
                   f"max discarded: {max_discard} frames)")
