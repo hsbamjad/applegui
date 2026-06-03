@@ -259,35 +259,40 @@ def build_model_input(src0_bgr: np.ndarray, src1_gray: np.ndarray) -> np.ndarray
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MASK PROCESSING
+# MASK PROCESSING  (ellipse-fit based — smooth, round, physically correct)
 # ─────────────────────────────────────────────────────────────────────────────
 def make_smooth_mask(
-    poly:    np.ndarray,    # YOLO masks.xy contour  (N×2 float, image coords)
+    poly:    np.ndarray,    # YOLO masks.xy contour  (N x 2 float, image coords)
     x1: int, y1: int,
     x2: int, y2: int,
     img_w: int, img_h: int,
 ) -> tuple:
     """
-    Convert a YOLO polygon contour to a smooth convex-hull binary mask.
+    Fit an ellipse to the YOLO polygon and return a smooth ellipse mask.
+
+    Why ellipse?
+      - Apples are spherical -> 2-D silhouette IS an ellipse.
+      - cv2.fitEllipse averages all polygon vertices -> robust to YOLO noise.
+      - Ellipse axes (axis_a, axis_b) are directly the two diameters D1, D2.
+      - No straight edges: perfectly smooth boundary (unlike convexHull polygon).
 
     Steps:
-      1. Render the raw YOLO polygon → binary mask in crop coordinates.
-      2. Apply cv2.convexHull() → fills all concavities and eliminates sharp
-         corners that appear due to mask quantisation.
-      3. Compute a quality score:
-           quality = circularity × completeness
-           circularity  : how round (1.0 = perfect circle)
-           completeness : 1.0 if mask doesn't touch any frame edge, else 0.5
+      1. Compute convex hull of YOLO polygon (removes any concavities/jaggies).
+      2. Fit an ellipse to the hull points using cv2.fitEllipse().
+      3. Draw the filled ellipse as the binary mask.
+      4. Quality = circularity of the resulting ellipse mask x completeness.
 
     Returns:
-      smooth_mask  : uint8 binary crop (crop_h × crop_w), 255 = apple
-      crop_rect    : [mx1, my1, mx2, my2]  in full-frame pixel coords
+      smooth_mask  : uint8 binary crop (crop_h x crop_w), 255 = apple
+      crop_rect    : [mx1, my1, mx2, my2] in full-frame pixel coords
       quality      : float in [0, 1]
+      ellipse_abs  : (center_x, center_y, axis_a, axis_b, angle) in full-frame
+                     coords — or None if fitting failed
     """
-    if poly is None or len(poly) < 3:
-        return None, None, 0.0
+    if poly is None or len(poly) < 5:          # fitEllipse needs >= 5 points
+        return None, None, 0.0, None
 
-    # ── Crop region: bbox + padding ──
+    # ── Crop region: bbox + padding ──────────────────────────────────────────
     mx1 = max(0,     x1 - MASK_PAD)
     my1 = max(0,     y1 - MASK_PAD)
     mx2 = min(img_w, x2 + MASK_PAD)
@@ -295,36 +300,130 @@ def make_smooth_mask(
     crop_w = mx2 - mx1
     crop_h = my2 - my1
 
-    # ── Shift polygon to crop coordinates ──
-    poly_int  = poly.astype(np.int32)
-    poly_crop = poly_int - np.array([[mx1, my1]])
+    # ── Convex hull in full-frame coords (removes concavities / jaggies) ─────
+    poly_int = poly.astype(np.int32)
+    hull     = cv2.convexHull(poly_int)         # still in full-frame coords
 
-    # ── Raw YOLO mask ──
-    raw_mask = np.zeros((crop_h, crop_w), dtype=np.uint8)
-    cv2.fillPoly(raw_mask, [poly_crop], 255)
+    # ── Fit ellipse in full-frame coords ─────────────────────────────────────
+    try:
+        ellipse_full = cv2.fitEllipse(hull)     # ((cx,cy), (ma,mi), angle)
+    except cv2.error:
+        # Degenerate polygon — fall back to bbox circle
+        cx_f = (x1 + x2) / 2.0
+        cy_f = (y1 + y2) / 2.0
+        r    = max((x2 - x1), (y2 - y1)) / 2.0
+        ellipse_full = ((cx_f, cy_f), (r * 2, r * 2), 0.0)
 
-    # ── Convex hull mask (smooth, no sharp corners) ──
-    hull = cv2.convexHull(poly_crop)
+    (cx_f, cy_f), (axis_ma, axis_mi), angle = ellipse_full
+    # axis_ma = major axis length (full diameter), axis_mi = minor axis length
+
+    # ── Draw filled ellipse in crop coordinates ───────────────────────────────
+    cx_crop = cx_f - mx1
+    cy_crop = cy_f - my1
+    ell_crop = ((cx_crop, cy_crop), (axis_ma, axis_mi), angle)
+
     smooth_mask = np.zeros((crop_h, crop_w), dtype=np.uint8)
-    cv2.fillPoly(smooth_mask, [hull], 255)
+    try:
+        cv2.ellipse(smooth_mask, ell_crop, 255, -1)   # filled ellipse
+    except cv2.error:
+        return None, None, 0.0, None
 
-    # ── Circularity ──
-    area = float(np.count_nonzero(smooth_mask))
-    cnts, _ = cv2.findContours(smooth_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if cnts and area > 0:
-        cnt   = max(cnts, key=cv2.contourArea)
-        perim = cv2.arcLength(cnt, True)
-        circ  = (4.0 * np.pi * area) / (perim ** 2 + 1e-6) if perim > 0 else 0.0
-        circ  = float(min(circ, 1.0))
-    else:
-        circ = 0.0
+    if not np.any(smooth_mask):
+        return None, None, 0.0, None
 
-    # ── Completeness: penalise masks touching frame boundary ──
+    # ── Quality = circularity x completeness ─────────────────────────────────
+    # For a true ellipse circularity = pi*a*b / perimeter^2 * 4*pi
+    # Simpler: axis ratio. Perfect circle = ratio 1.0
+    ratio   = float(min(axis_ma, axis_mi) / (max(axis_ma, axis_mi) + 1e-6))
+    circ    = ratio                     # 1.0 = perfect circle, <1 = elongated
+
     touches_edge = (x1 <= 2) or (x2 >= img_w - 2) or (y1 <= 2) or (y2 >= img_h - 2)
     completeness = 0.5 if touches_edge else 1.0
 
     quality = circ * completeness
-    return smooth_mask, [mx1, my1, mx2, my2], quality
+
+    # ── Return full-frame ellipse params ─────────────────────────────────────
+    ellipse_abs = (cx_f, cy_f, axis_ma, axis_mi, angle)
+
+    return smooth_mask, [mx1, my1, mx2, my2], quality, ellipse_abs
+
+
+def compute_consensus_ellipse(
+    frame_ellipses: list,   # list of (cx, cy, axis_ma, axis_mi, angle) per frame
+    img_w: int,
+    img_h: int,
+    completeness_mask: list = None,   # parallel bool list: True = full frame
+) -> tuple:
+    """
+    Compute a robust consensus ellipse from all per-frame ellipse fits.
+
+    Strategy:
+      - Use the MEDIAN of each ellipse parameter across all valid frames.
+      - Median is robust: a few bad YOLO frames (occlusion, glare) won't skew it.
+      - Only use frames with completeness=1.0 (apple not touching frame edge)
+        if there are enough; otherwise fall back to all frames.
+
+    Returns:
+      consensus ellipse as (cx, cy, axis_ma, axis_mi, angle)
+      rendered binary mask (padded crop around median center)
+      crop_rect [mx1, my1, mx2, my2]
+    """
+    if not frame_ellipses:
+        return None, None, None
+
+    # Filter to full-frame detections if available
+    if completeness_mask is not None:
+        full_ells = [e for e, ok in zip(frame_ellipses, completeness_mask) if ok]
+    else:
+        full_ells = frame_ellipses
+
+    # Fall back to all frames if < 10 full-frame detections
+    if len(full_ells) < 10:
+        full_ells = frame_ellipses
+
+    arr = np.array(full_ells, dtype=np.float32)  # (N, 5)
+    cx_med    = float(np.median(arr[:, 0]))
+    cy_med    = float(np.median(arr[:, 1]))
+    ma_med    = float(np.median(arr[:, 2]))
+    mi_med    = float(np.median(arr[:, 3]))
+    # Angle: circular median (angles wrap at 180 deg)
+    angles_rad = np.deg2rad(arr[:, 4])
+    ang_med    = float(np.rad2deg(np.arctan2(
+        np.median(np.sin(2 * angles_rad)),
+        np.median(np.cos(2 * angles_rad))
+    ) / 2.0))
+
+    # ── Render the consensus ellipse into a padded crop ───────────────────────
+    pad   = MASK_PAD
+    mx1   = max(0,     int(cx_med - ma_med / 2) - pad)
+    my1   = max(0,     int(cy_med - ma_med / 2) - pad)
+    mx2   = min(img_w, int(cx_med + ma_med / 2) + pad)
+    my2   = min(img_h, int(cy_med + ma_med / 2) + pad)
+    crop_w = mx2 - mx1
+    crop_h = my2 - my1
+
+    if crop_w <= 0 or crop_h <= 0:
+        return None, None, None
+
+    cx_crop = cx_med - mx1
+    cy_crop = cy_med - my1
+
+    mask = np.zeros((crop_h, crop_w), dtype=np.uint8)
+    try:
+        cv2.ellipse(mask, ((cx_crop, cy_crop), (ma_med, mi_med), ang_med), 255, -1)
+    except cv2.error:
+        return None, None, None
+
+    consensus_params = {
+        "cx":     cx_med,
+        "cy":     cy_med,
+        "axis_a": ma_med,          # major axis (pixels, full diameter)
+        "axis_b": mi_med,          # minor axis (pixels, full diameter)
+        "angle":  ang_med,
+        "n_frames_used": len(full_ells),
+    }
+    return consensus_params, mask, [mx1, my1, mx2, my2]
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -533,21 +632,23 @@ def process_session(
             else:
                 poly = None
 
-            smooth_mask, crop_rect, quality = make_smooth_mask(
+            smooth_mask, crop_rect, quality, ellipse_abs = make_smooth_mask(
                 poly, x1, y1, x2, y2, img_w, img_h
             )
 
             # ── Update accumulator ────────────────────────────────────────────
             if tid not in track_data:
                 track_data[tid] = {
-                    "frames":        [],
-                    "cx_min":        cx,
-                    "cx_max":        cx,
-                    "entry_cx":      cx,
-                    "entry_frame":   frame_no,
-                    "best_quality":  -1.0,
-                    "best_mask":     None,
-                    "best_rect":     None,
+                    "frames":         [],
+                    "ellipses":       [],   # per-frame ellipse params (full-frame)
+                    "completeness":   [],   # per-frame: True = apple fully in frame
+                    "cx_min":         cx,
+                    "cx_max":         cx,
+                    "entry_cx":       cx,
+                    "entry_frame":    frame_no,
+                    "best_quality":   -1.0,
+                    "best_mask":      None,
+                    "best_rect":      None,
                 }
             else:
                 td = track_data[tid]
@@ -556,7 +657,13 @@ def process_session(
 
             td = track_data[tid]
 
-            # Keep the highest-quality frame's mask as the consensus
+            # Collect per-frame ellipse for consensus
+            if ellipse_abs is not None:
+                td["ellipses"].append(ellipse_abs)
+                touches = (x1 <= 2) or (x2 >= img_w-2) or (y1 <= 2) or (y2 >= img_h-2)
+                td["completeness"].append(not touches)
+
+            # Keep best single-frame mask as backup
             if quality > td["best_quality"] and smooth_mask is not None:
                 td["best_quality"] = quality
                 td["best_mask"]    = smooth_mask.copy()
