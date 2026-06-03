@@ -361,38 +361,51 @@ def make_smooth_mask(
 
 def compute_consensus_ellipse(
     frame_ellipses: list,   # list of (cx, cy, axis_ma, axis_mi, angle) per frame
+    frame_cx_vals:  list,   # parallel list of per-frame cx_px values
+    cx_min: float,          # track cx_min (left-most centroid)
+    cx_max: float,          # track cx_max (right-most centroid)
     img_w: int,
     img_h: int,
-    completeness_mask: list = None,   # parallel bool list: True = full frame
+    central_frac: float = 0.20,  # exclude first+last 20% of traversal each side
 ) -> tuple:
     """
-    Compute a robust consensus ellipse from all per-frame ellipse fits.
+    Compute a robust consensus ellipse using only frames where the apple is
+    fully in view — defined as frames where cx is within the CENTRAL portion
+    of the apple's traversal.
 
-    Strategy:
-      - Use the MEDIAN of each ellipse parameter across all valid frames.
-      - Median is robust: a few bad YOLO frames (occlusion, glare) won't skew it.
-      - Only use frames with completeness=1.0 (apple not touching frame edge)
-        if there are enough; otherwise fall back to all frames.
+    Why cx-based rather than bbox-edge-based?
+    -----------------------------------------
+    Apple 14 enters gradually: its bbox x1 is never 0 (YOLO clips to the
+    visible portion), so the old 'touches edge' check failed to exclude its
+    957 entry frames where only a slice was visible, corrupting the median.
+
+    With cx-range filtering:
+      cx_low  = cx_min + 0.20 * cx_range  →  skip first 20% of traversal
+      cx_high = cx_max - 0.20 * cx_range  →  skip last 20% of traversal
+    This robustly excludes partial-entry and partial-exit frames for ALL apples.
 
     Returns:
-      consensus ellipse as (cx, cy, axis_ma, axis_mi, angle)
-      rendered binary mask (padded crop around median center)
-      crop_rect [mx1, my1, mx2, my2]
+      consensus_params dict, rendered binary mask, crop_rect [mx1,my1,mx2,my2]
     """
     if not frame_ellipses:
         return None, None, None
 
-    # Filter to full-frame detections if available
-    if completeness_mask is not None:
-        full_ells = [e for e, ok in zip(frame_ellipses, completeness_mask) if ok]
+    cx_range = cx_max - cx_min
+    if cx_range > 0 and len(frame_cx_vals) == len(frame_ellipses):
+        cx_low  = cx_min + central_frac * cx_range
+        cx_high = cx_max - central_frac * cx_range
+        central_ells = [
+            e for e, cxv in zip(frame_ellipses, frame_cx_vals)
+            if cx_low <= cxv <= cx_high
+        ]
     else:
-        full_ells = frame_ellipses
+        central_ells = frame_ellipses
 
-    # Fall back to all frames if < 10 full-frame detections
-    if len(full_ells) < 10:
-        full_ells = frame_ellipses
+    # Fall back to all frames if too few central frames
+    if len(central_ells) < 10:
+        central_ells = frame_ellipses
 
-    arr = np.array(full_ells, dtype=np.float32)  # (N, 5)
+    arr = np.array(central_ells, dtype=np.float32)  # (N, 5)
     cx_med    = float(np.median(arr[:, 0]))
     cy_med    = float(np.median(arr[:, 1]))
     ma_med    = float(np.median(arr[:, 2]))
@@ -431,7 +444,7 @@ def compute_consensus_ellipse(
         "axis_a": ma_med,          # major axis (pixels, full diameter)
         "axis_b": mi_med,          # minor axis (pixels, full diameter)
         "angle":  ang_med,
-        "n_frames_used": len(full_ells),
+        "n_frames_used": len(central_ells),
     }
     return consensus_params, mask, [mx1, my1, mx2, my2]
 
@@ -748,9 +761,19 @@ def process_session(
         gt_mm  = td.get("gt_mm")
         gt_str = f"{gt_mm:.1f}mm" if gt_mm is not None else "None"
 
-        # ── Consensus ellipse (median over all frames) ────────────────────────
+        # ── Consensus ellipse: median over CENTRAL traversal frames ──────────
+        # Use cx values from per-frame records to filter to the central 60%
+        # of the apple's traversal. This robustly excludes entry/exit frames
+        # where only a partial apple is visible (fixes Apple 14 issue).
+        frame_cx_list = [fr["cx_px"] for fr in td["frames"]
+                         if fr.get("ell_a") is not None]  # only frames with ellipse
         consensus_params, consensus_mask, consensus_rect = compute_consensus_ellipse(
-            td["ellipses"], img_w, img_h, completeness_mask=td["completeness"]
+            td["ellipses"],
+            frame_cx_list,
+            td["cx_min"],
+            td["cx_max"],
+            img_w,
+            img_h,
         )
 
         # Fall back to best single-frame mask if consensus failed
@@ -758,28 +781,21 @@ def process_session(
             consensus_mask = td["best_mask"]
             consensus_rect = td["best_rect"]
 
-        # Quality: median of COMPLETE-frame quality values only
-        # (excludes edge frames where apple is partially visible -> ratio < 1)
-        complete_flags = [f["quality"] >= 0.5 * 2 - 0.01
-                          for f in td["frames"]]  # rough: complete frames have quality>0.5
-        # Better: use the completeness list we stored per ellipse
-        # Use same center-radius logic to identify complete frames
-        complete_qualities = []
-        for fr in td["frames"]:
-            bb = fr["bbox"]; bx1,by1,bx2,by2 = bb
-            bcx = (bx1+bx2)/2; bcy = (by1+by2)/2
-            bhw = (bx2-bx1)/2; bhh = (by2-by1)/2
-            margin = 10
-            if (bcx-bhw > margin and bcx+bhw < img_w-margin and
-                bcy-bhh > margin and bcy+bhh < img_h-margin
-                and fr["quality"] > 0):
-                complete_qualities.append(fr["quality"])
-        if complete_qualities:
-            best_q = float(np.median(complete_qualities))
-        elif frame_qualities := [f["quality"] for f in td["frames"] if f["quality"] > 0]:
-            best_q = float(np.median(frame_qualities))
+        # Quality: median of CENTRAL-traversal frame quality values only
+        # (same 20-80% cx filter — excludes partial entry/exit frames)
+        cx_range_td = td["cx_max"] - td["cx_min"]
+        cx_low_q  = td["cx_min"] + 0.20 * cx_range_td
+        cx_high_q = td["cx_max"] - 0.20 * cx_range_td
+        central_qualities = [
+            fr["quality"] for fr in td["frames"]
+            if cx_low_q <= fr["cx_px"] <= cx_high_q and fr["quality"] > 0
+        ]
+        if central_qualities:
+            best_q = float(np.median(central_qualities))
         else:
-            best_q = td["best_quality"]
+            best_q = float(np.median([f["quality"] for f in td["frames"] if f["quality"] > 0])) \
+                     if any(f["quality"] > 0 for f in td["frames"]) else td["best_quality"]
+
 
         ell_a = consensus_params["axis_a"] if consensus_params else None
         ell_b = consensus_params["axis_b"] if consensus_params else None
