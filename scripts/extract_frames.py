@@ -331,6 +331,10 @@ def make_smooth_mask(
     if not np.any(smooth_mask):
         return None, None, 0.0, None
 
+    # ── Quality = axis_ratio × completeness ──────────────────────────────────
+    # axis ratio: 1.0 = perfect circle, <1 = elongated
+    circ = float(min(axis_ma, axis_mi) / (max(axis_ma, axis_mi) + 1e-6))
+
     # ── Completeness: apple fully in frame = center is at least half-width from edge ──
     # Old check: x1<=2 fails for Apple 14 which enters very gradually
     # (its bbox x1 stays > 2 even when only a sliver is visible).
@@ -347,6 +351,7 @@ def make_smooth_mask(
     completeness = 1.0 if is_complete else 0.5
 
     quality = circ * completeness
+
 
     # ── Return full-frame ellipse params ─────────────────────────────────────
     ellipse_abs = (cx_f, cy_f, axis_ma, axis_mi, angle)
