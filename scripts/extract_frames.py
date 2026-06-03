@@ -331,14 +331,20 @@ def make_smooth_mask(
     if not np.any(smooth_mask):
         return None, None, 0.0, None
 
-    # ── Quality = circularity x completeness ─────────────────────────────────
-    # For a true ellipse circularity = pi*a*b / perimeter^2 * 4*pi
-    # Simpler: axis ratio. Perfect circle = ratio 1.0
-    ratio   = float(min(axis_ma, axis_mi) / (max(axis_ma, axis_mi) + 1e-6))
-    circ    = ratio                     # 1.0 = perfect circle, <1 = elongated
-
-    touches_edge = (x1 <= 2) or (x2 >= img_w - 2) or (y1 <= 2) or (y2 >= img_h - 2)
-    completeness = 0.5 if touches_edge else 1.0
+    # ── Completeness: apple fully in frame = center is at least half-width from edge ──
+    # Old check: x1<=2 fails for Apple 14 which enters very gradually
+    # (its bbox x1 stays > 2 even when only a sliver is visible).
+    # New check: center must be at least one apple-radius from every edge.
+    half_w = (x2 - x1) / 2.0
+    half_h = (y2 - y1) / 2.0
+    margin = 10   # small pixel buffer
+    is_complete = (
+        cx_f - half_w > margin and
+        cx_f + half_w < img_w - margin and
+        cy_f - half_h > margin and
+        cy_f + half_h < img_h - margin
+    )
+    completeness = 1.0 if is_complete else 0.5
 
     quality = circ * completeness
 
@@ -660,8 +666,17 @@ def process_session(
             # Collect per-frame ellipse for consensus
             if ellipse_abs is not None:
                 td["ellipses"].append(ellipse_abs)
-                touches = (x1 <= 2) or (x2 >= img_w-2) or (y1 <= 2) or (y2 >= img_h-2)
-                td["completeness"].append(not touches)
+                # Same center-radius completeness logic as make_smooth_mask
+                half_w = (x2 - x1) / 2.0
+                half_h = (y2 - y1) / 2.0
+                margin = 10
+                complete = (
+                    cx - half_w > margin and
+                    cx + half_w < img_w - margin and
+                    cy - half_h > margin and
+                    cy + half_h < img_h - margin
+                )
+                td["completeness"].append(complete)
 
             # Keep best single-frame mask as backup
             if quality > td["best_quality"] and smooth_mask is not None:
@@ -738,9 +753,28 @@ def process_session(
             consensus_mask = td["best_mask"]
             consensus_rect = td["best_rect"]
 
-        # Quality: median of per-frame quality values (more robust than single best)
-        frame_qualities = [f["quality"] for f in td["frames"] if f["quality"] > 0]
-        best_q = float(np.median(frame_qualities)) if frame_qualities else td["best_quality"]
+        # Quality: median of COMPLETE-frame quality values only
+        # (excludes edge frames where apple is partially visible -> ratio < 1)
+        complete_flags = [f["quality"] >= 0.5 * 2 - 0.01
+                          for f in td["frames"]]  # rough: complete frames have quality>0.5
+        # Better: use the completeness list we stored per ellipse
+        # Use same center-radius logic to identify complete frames
+        complete_qualities = []
+        for fr in td["frames"]:
+            bb = fr["bbox"]; bx1,by1,bx2,by2 = bb
+            bcx = (bx1+bx2)/2; bcy = (by1+by2)/2
+            bhw = (bx2-bx1)/2; bhh = (by2-by1)/2
+            margin = 10
+            if (bcx-bhw > margin and bcx+bhw < img_w-margin and
+                bcy-bhh > margin and bcy+bhh < img_h-margin
+                and fr["quality"] > 0):
+                complete_qualities.append(fr["quality"])
+        if complete_qualities:
+            best_q = float(np.median(complete_qualities))
+        elif frame_qualities := [f["quality"] for f in td["frames"] if f["quality"] > 0]:
+            best_q = float(np.median(frame_qualities))
+        else:
+            best_q = td["best_quality"]
 
         ell_a = consensus_params["axis_a"] if consensus_params else None
         ell_b = consensus_params["axis_b"] if consensus_params else None
