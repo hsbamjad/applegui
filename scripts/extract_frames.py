@@ -99,6 +99,10 @@ STARTUP_FRAMES     = 400    # First N frames: track apples anywhere in frame
 MIN_CX_TRAVEL      = 200    # Min pixels a track's centroid must travel (left→right)
                              # across all its frames.  Stationary background detections
                              # (smudges, reflections) score 0 and are discarded.
+MIN_GOOD_FRAMES    = 100    # Min frames with a complete (non-edge-cut) view to mark
+                             # an apple as usable for ML training.
+                             # Apples that entered from the left edge of the recording
+                             # frame and never had a full view are marked unusable.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -636,6 +640,34 @@ def process_session(session: str, data_root: str, model: YOLO,
 
     print(f"  Total matched: {len(committed_apples)}  (expected {APPLES_PER_SESSION})")
 
+    # ── Post-process: annotate each apple with usability info ─────────────────
+    # Problem: apples that were already at the left edge of the frame when
+    # recording started have their left half cut off by the frame boundary.
+    # These frames are physically missing data — no algorithm can recover them.
+    # We mark each frame with a 'left_cut' flag and each apple with 'usable'.
+    #
+    # 'left_cut' = True when the mask's crop starts at/near the left frame edge
+    # AND the mask has foreground pixels in its leftmost column (apple is cut).
+    LEFT_EDGE_MARGIN = 10   # pixels: crop within this distance of left frame edge
+    for a in committed_apples:
+        good = 0
+        for fr in a["frames"]:
+            crop_x1  = fr["crop_rect"][0]         # left x of crop in full frame
+            mask_arr = np.asarray(fr["mask"], dtype=np.uint8)
+            left_cut = bool(
+                crop_x1 <= LEFT_EDGE_MARGIN        # crop starts at left frame edge
+                and mask_arr[:, 0].any()            # AND apple touches left edge
+            )
+            fr["left_cut"] = left_cut
+            if not left_cut:
+                good += 1
+        a["good_frames"] = good
+        a["usable"]      = good >= MIN_GOOD_FRAMES
+        if not a["usable"]:
+            print(f"    *** Apple {a['apple_idx']+1:2d} UNUSABLE: "
+                  f"{good}/{len(a['frames'])} clean frames "
+                  f"(apple entered from left edge, never fully visible)")
+
     # Save
     os.makedirs(output_dir, exist_ok=True)
     out_path = Path(output_dir) / f"{session}.pkl"
@@ -647,7 +679,8 @@ def process_session(session: str, data_root: str, model: YOLO,
     }
     with open(out_path, "wb") as f:
         pickle.dump(payload, f)
-    print(f"  ✔ Saved → {out_path}")
+    print(f"  Saved -> {out_path}")
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
