@@ -356,8 +356,14 @@ def select_and_order_tracks(
     For each lane:
       1. If more candidates than expected (apples_per_lane), keep the top-N
          by frame count (longest-tracked = most likely real apples).
-      2. Sort kept tracks by entry_frame ascending → position in lane.
-    Returns a flat list of track dicts, each augmented with lane/pos_in_lane.
+      2. Sort kept tracks by entry_frame ascending → pos_in_lane within lane.
+
+    apple_idx is assigned by GLOBAL ENTRY ORDER across all lanes:
+      - Apple 0 = first apple to enter the frame (any lane)
+      - Apple 1 = second to enter (any lane)
+      - ...
+    This matches the user's visual counting and the GT file ordering.
+    lane and pos_in_lane remain correct structural metadata.
     """
     assigned = []
     for lane_idx in range(n_lanes):
@@ -369,20 +375,21 @@ def select_and_order_tracks(
             discarded = lane_tracks[apples_per_lane:]
             lane_tracks = lane_tracks[:apples_per_lane]
             print(f"    Lane {lane_idx}: {len(lane_tracks)+len(discarded)} candidates "
-                  f"→ kept top {apples_per_lane} by frame count "
+                  f"-> kept top {apples_per_lane} by frame count "
                   f"(discarded {len(discarded)})")
         elif len(lane_tracks) < apples_per_lane:
             print(f"    Lane {lane_idx}: only {len(lane_tracks)} tracks "
-                  f"(expected {apples_per_lane}) — missing apples?")
+                  f"(expected {apples_per_lane}) -- missing apples?")
 
-        # Sort by entry frame → positional order
+        # Sort by entry frame within lane -> positional order
         lane_tracks.sort(key=lambda t: t["entry_frame"])
         for pos, td in enumerate(lane_tracks):
             td["pos_in_lane"] = pos
         assigned.extend(lane_tracks)
 
-    # Global apple index: sort by lane first, then position
-    assigned.sort(key=lambda t: (t["lane"], t["pos_in_lane"]))
+    # apple_idx = GLOBAL ENTRY ORDER (interleaved across lanes)
+    # This is how the user counts apples visually, and matches the GT file.
+    assigned.sort(key=lambda t: t["entry_frame"])
     for idx, td in enumerate(assigned):
         td["apple_idx"] = idx
     return assigned
@@ -390,17 +397,15 @@ def select_and_order_tracks(
 
 def assign_gt(assigned_tracks: list, gt_list: list) -> None:
     """
-    Assign GT caliper measurements to apples by entry-gate order.
-    GT ordering in the Excel: apple 1..18 in the order they crossed the entry
-    gate (lane 0 pos 0, lane 1 pos 0, lane 2 pos 0, lane 0 pos 1, ...).
+    Assign GT caliper measurements to apples.
 
-    We mirror the original assignment logic: sort all apples by entry_frame
-    → that is the GT index order.
+    apple_idx is already in global entry order (assigned by select_and_order_tracks),
+    so GT value at index i belongs to the apple with apple_idx == i.
+    The GT file (Sheet1) lists apples 1-18 in the same global entry order.
     """
-    # Sort by actual entry_frame (the order the apples physically appeared)
-    ordered = sorted(assigned_tracks, key=lambda t: t["entry_frame"])
-    for gt_idx, td in enumerate(ordered):
-        td["gt_mm"] = gt_list[gt_idx] if gt_idx < len(gt_list) else None
+    for td in assigned_tracks:
+        idx = td["apple_idx"]
+        td["gt_mm"] = gt_list[idx] if idx < len(gt_list) else None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
