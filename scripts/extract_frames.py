@@ -669,7 +669,7 @@ def process_session(
                 td["best_mask"]    = smooth_mask.copy()
                 td["best_rect"]    = crop_rect
 
-            # Lightweight per-frame record (no mask image stored here)
+            # Lightweight per-frame record
             td["frames"].append({
                 "frame_no":  frame_no,
                 "frame_idx": frame_idx,
@@ -679,6 +679,10 @@ def process_session(
                 "conf":      conf,
                 "cls_id":    cls,
                 "quality":   quality,
+                # Per-frame ellipse axes (pixels) — for frame-by-frame analysis
+                "ell_a":     ellipse_abs[2] if ellipse_abs else None,
+                "ell_b":     ellipse_abs[3] if ellipse_abs else None,
+                "ell_angle": ellipse_abs[4] if ellipse_abs else None,
             })
 
         if frame_idx % 200 == 0 and frame_idx > 0:
@@ -718,31 +722,51 @@ def process_session(
     gt_list = load_gt(gt_path, session) if gt_path else []
     assign_gt(assigned, gt_list)
 
-    # ── Build output records ──────────────────────────────────────────────────
+    # ── Build output records (compute consensus ellipse per apple) ─────────────
     committed_apples = []
     for td in assigned:
         gt_mm  = td.get("gt_mm")
         gt_str = f"{gt_mm:.1f}mm" if gt_mm is not None else "None"
+
+        # ── Consensus ellipse (median over all frames) ────────────────────────
+        consensus_params, consensus_mask, consensus_rect = compute_consensus_ellipse(
+            td["ellipses"], img_w, img_h, completeness_mask=td["completeness"]
+        )
+
+        # Fall back to best single-frame mask if consensus failed
+        if consensus_mask is None:
+            consensus_mask = td["best_mask"]
+            consensus_rect = td["best_rect"]
+
+        # Quality: median of per-frame quality values (more robust than single best)
+        frame_qualities = [f["quality"] for f in td["frames"] if f["quality"] > 0]
+        best_q = float(np.median(frame_qualities)) if frame_qualities else td["best_quality"]
+
+        ell_a = consensus_params["axis_a"] if consensus_params else None
+        ell_b = consensus_params["axis_b"] if consensus_params else None
+        ell_info = (f"ell={ell_a:.1f}x{ell_b:.1f}px" if ell_a else "no_ell")
+
         print(f"    Apple {td['apple_idx']+1:2d}  "
               f"lane={td['lane']} pos={td['pos_in_lane']}  "
               f"frames={td['n_frames']:4d}  cx_range={td['cx_range']:4d}px  "
-              f"Q={td['best_quality']:.3f}  gt={gt_str}")
+              f"Q={best_q:.3f}  {ell_info}  gt={gt_str}")
 
         committed_apples.append({
-            "apple_idx":      td["apple_idx"],
-            "lane":           td["lane"],
-            "pos_in_lane":    td["pos_in_lane"],
-            "gt_mm":          td.get("gt_mm"),
-            "track_id":       td["track_id"],
-            "entry_frame":    td["entry_frame"],
-            "n_frames":       td["n_frames"],
-            "cx_range":       td["cx_range"],
-            "best_quality":   td["best_quality"],
-            # Consensus mask: best-quality frame's convex-hull silhouette
-            "consensus_mask": td["best_mask"],
-            "consensus_rect": td["best_rect"],
-            # Lightweight per-frame metadata
-            "frames":         td["frames"],
+            "apple_idx":        td["apple_idx"],
+            "lane":             td["lane"],
+            "pos_in_lane":      td["pos_in_lane"],
+            "gt_mm":            td.get("gt_mm"),
+            "track_id":         td["track_id"],
+            "entry_frame":      td["entry_frame"],
+            "n_frames":         td["n_frames"],
+            "cx_range":         td["cx_range"],
+            "best_quality":     best_q,
+            # Consensus ellipse — median over all frames
+            "consensus_params": consensus_params,
+            "consensus_mask":   consensus_mask,
+            "consensus_rect":   consensus_rect,
+            # Per-frame lightweight metadata (includes ell_a, ell_b, ell_angle)
+            "frames":           td["frames"],
         })
 
     print(f"  Total assigned: {len(committed_apples)}  (expected {APPLES_PER_SESSION})")
