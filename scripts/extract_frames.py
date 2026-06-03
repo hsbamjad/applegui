@@ -356,14 +356,26 @@ def select_and_order_tracks(
     For each lane:
       1. If more candidates than expected (apples_per_lane), keep the top-N
          by frame count (longest-tracked = most likely real apples).
-      2. Sort kept tracks by entry_frame ascending → pos_in_lane within lane.
+      2. Sort kept tracks by entry_frame ascending -> pos_in_lane within lane.
 
-    apple_idx is assigned by GLOBAL ENTRY ORDER across all lanes:
-      - Apple 0 = first apple to enter the frame (any lane)
-      - Apple 1 = second to enter (any lane)
-      - ...
-    This matches the user's visual counting and the GT file ordering.
-    lane and pos_in_lane remain correct structural metadata.
+    apple_idx uses the FIXED POSITIONAL CONVENTION confirmed by the user:
+
+        apple_idx = pos_in_lane * n_lanes + lane
+
+    This means:
+        Apple 0 (displayed as #1) -> Lane 0, Pos 0
+        Apple 1 (displayed as #2) -> Lane 1, Pos 0
+        Apple 2 (displayed as #3) -> Lane 2, Pos 0
+        Apple 3 (displayed as #4) -> Lane 0, Pos 1
+        Apple 4 (displayed as #5) -> Lane 1, Pos 1
+        Apple 5 (displayed as #6) -> Lane 2, Pos 1
+        ...
+
+    This is INDEPENDENT of entry_frame order. Entry frame is only used to
+    determine which tracked apple occupies which belt position (pos_in_lane).
+    Even if lane 2 enters the camera before lane 1, lane 1 is always #5 and
+    lane 2 is always #6. If an apple falls off the belt mid-traversal, its
+    slot stays fixed and doesn't shift the numbering of others.
     """
     assigned = []
     for lane_idx in range(n_lanes):
@@ -381,30 +393,39 @@ def select_and_order_tracks(
             print(f"    Lane {lane_idx}: only {len(lane_tracks)} tracks "
                   f"(expected {apples_per_lane}) -- missing apples?")
 
-        # Sort by entry frame within lane -> positional order
+        # Sort by entry frame within lane -> positional order (first to enter = pos 0)
         lane_tracks.sort(key=lambda t: t["entry_frame"])
         for pos, td in enumerate(lane_tracks):
             td["pos_in_lane"] = pos
         assigned.extend(lane_tracks)
 
-    # apple_idx = GLOBAL ENTRY ORDER (interleaved across lanes)
-    # This is how the user counts apples visually, and matches the GT file.
-    assigned.sort(key=lambda t: t["entry_frame"])
-    for idx, td in enumerate(assigned):
-        td["apple_idx"] = idx
+    # apple_idx = POSITIONAL CONVENTION  (pos_in_lane * n_lanes + lane)
+    # This matches the GT Excel numbering and the physical labels on the video.
+    for td in assigned:
+        td["apple_idx"] = td["pos_in_lane"] * n_lanes + td["lane"]
+
+    # Sort for display: by apple_idx ascending
+    assigned.sort(key=lambda t: t["apple_idx"])
     return assigned
 
 
 def assign_gt(assigned_tracks: list, gt_list: list) -> None:
     """
-    Assign GT caliper measurements to apples.
+    Assign GT caliper measurements using the FIXED POSITIONAL CONVENTION.
 
-    apple_idx is already in global entry order (assigned by select_and_order_tracks),
-    so GT value at index i belongs to the apple with apple_idx == i.
-    The GT file (Sheet1) lists apples 1-18 in the same global entry order.
+    GT Excel ordering (confirmed by user):
+        Apple 1  = Lane 0, Pos 0   (gt_list[0])
+        Apple 2  = Lane 1, Pos 0   (gt_list[1])
+        Apple 3  = Lane 2, Pos 0   (gt_list[2])
+        Apple 4  = Lane 0, Pos 1   (gt_list[3])
+        ...
+        Apple N  = Lane (N-1)%3, Pos (N-1)//3
+
+    apple_idx = pos_in_lane * n_lanes + lane  (set by select_and_order_tracks)
+    This directly indexes into gt_list.
     """
     for td in assigned_tracks:
-        idx = td["apple_idx"]
+        idx = td["apple_idx"]          # pos_in_lane*3 + lane
         td["gt_mm"] = gt_list[idx] if idx < len(gt_list) else None
 
 
