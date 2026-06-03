@@ -136,16 +136,32 @@ def reassign_gt(apples: list, gt_list: list, img_h: int) -> list:
 
     # ── Sanity check: cap each lane at EXPECTED_PER_LANE slots ───────────────
     # If gap detection overcounts (natural spacing variability misread as gaps),
-    # fall back to sequential ordering with missing apples assumed at end.
+    # fall back to sequential ordering — but PRESERVE leading Nones that were
+    # already correctly detected by the first-exit comparison above.
     for lane_id in range(LANES):
         n_slots   = len(expanded[lane_id])
         n_present = sum(1 for s in expanded[lane_id] if s is not None)
         if n_slots > EXPECTED_PER_LANE:
+            # Count leading Nones already in expanded (from start-missing detection)
+            n_leading_nones = 0
+            for s in expanded[lane_id]:
+                if s is None:
+                    n_leading_nones += 1
+                else:
+                    break
+            # Cap leading Nones so we don't exceed budget
+            n_missing_total = EXPECTED_PER_LANE - n_present
+            n_leading_nones = min(n_leading_nones, n_missing_total)
+
             print(f"  Lane {lane_id}: gap detection overcounted "
-                  f"({n_slots} slots, {n_present} present) → sequential fallback")
-            fallback = list(lanes[lane_id])          # original order, no gaps
+                  f"({n_slots} slots, {n_present} present) → sequential fallback "
+                  f"(preserving {n_leading_nones} leading None(s))")
+
+            # Rebuild: leading Nones + sequential tracks + trailing Nones
+            fallback  = [None] * n_leading_nones
+            fallback += list(lanes[lane_id])          # all tracked, in exit order
             while len(fallback) < EXPECTED_PER_LANE:
-                fallback.append(None)                # pad missing at end
+                fallback.append(None)                 # trailing missing at end
             expanded[lane_id] = fallback[:EXPECTED_PER_LANE]
 
     # Pad all lanes to same length
