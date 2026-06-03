@@ -231,6 +231,14 @@ class SimpleTracker:
         # ── Age out lost tracks ───────────────────────────────────────────────
         for t in self.tracks:
             t.lost += 1
+        # Finalise registered tracks that are about to be dropped.
+        # An apple that fell off the conveyor mid-way is registered at the
+        # entry gate (Phase 1 complete) but never reaches EXIT_FRAC (Phase 2).
+        # Stamp exit_frame_idx now so the pkl records the last-seen frame
+        # instead of None.  last-seen ≈ frame_idx - t.lost (lost counts back).
+        for t in self.tracks:
+            if t.lost > MAX_LOST and t.registered and t.exit_frame_idx is None:
+                t.exit_frame_idx = max(0, frame_idx - t.lost)
         self.tracks = [t for t in self.tracks if t.lost <= MAX_LOST]
 
         # ── Match detections to tracks by IoU ─────────────────────────────────
