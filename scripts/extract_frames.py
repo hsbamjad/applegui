@@ -558,7 +558,7 @@ def main():
     parser.add_argument("--output_dir", default=DEFAULT_OUTPUT_DIR,
                         help="Directory to save .pkl files")
     parser.add_argument("--sessions",   nargs="+",
-                        default=[f"G{i}" for i in range(1, 12)],
+                        default=["G9", "G10", "G11"],
                         help="Sessions to process e.g. G1 G2 G10")
     parser.add_argument("--device",     default="cuda",
                         help="Inference device: cuda or cpu")
