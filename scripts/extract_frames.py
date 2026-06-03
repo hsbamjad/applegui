@@ -140,36 +140,89 @@ def natural_key(s: str):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
 
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GROUND TRUTH LOADER
 # ─────────────────────────────────────────────────────────────────────────────
 def load_gt(gt_path: str, session: str) -> list:
     """
     Load caliper GT measurements for one session from the Excel file.
-    Returns a list of floats in the order they appear in the sheet.
-    Falls back gracefully (prints warning, returns empty list) if the file
-    or sheet is missing.
+
+    File format (confirmed):
+      Sheet: 'Sheet1'  (single sheet, all sessions)
+      Columns: Session | Apple# | D1 | D2 | SurfaceClass | Average
+      'Session' column only has a value (e.g. 'G1') in the FIRST row of each
+      session block; remaining rows of that session have None in that column.
+      'Average' = (D1 + D2) / 2  in mm  — this is the GT diameter.
+
+    Returns a list of Average floats in the order they appear for the session.
+    Falls back gracefully (empty list + warning) on any error.
     """
     try:
-        wb  = openpyxl.load_workbook(gt_path, read_only=True, data_only=True)
-        wss = [s for s in wb.sheetnames if s.strip().upper() == session.upper()]
-        if not wss:
-            print(f"    [GT] No sheet named '{session}' in {gt_path}")
+        wb = openpyxl.load_workbook(gt_path, read_only=True, data_only=True)
+
+        # Find the sheet — prefer a sheet named after the session, fall back to Sheet1
+        target_sheet = None
+        for name in wb.sheetnames:
+            if name.strip().upper() == session.strip().upper():
+                target_sheet = name
+                break
+        if target_sheet is None and "Sheet1" in wb.sheetnames:
+            target_sheet = "Sheet1"
+        if target_sheet is None:
+            print(f"    [GT] No usable sheet found in {gt_path}  "
+                  f"(sheets: {wb.sheetnames})")
+            wb.close()
             return []
-        ws = wb[wss[0]]
-        vals = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            for cell in row:
-                if cell is not None:
-                    try:
-                        vals.append(float(cell))
-                    except (TypeError, ValueError):
-                        pass
+
+        ws = wb[target_sheet]
+        rows = list(ws.iter_rows(min_row=2, values_only=True))  # skip header row
         wb.close()
+
+        # ── Case 1: sheet is named after the session (old format) ─────────────
+        # All rows belong to this session; grab every numeric cell in order.
+        if target_sheet.strip().upper() == session.strip().upper():
+            vals = []
+            for row in rows:
+                for cell in row:
+                    if cell is not None:
+                        try:
+                            vals.append(float(cell))
+                        except (TypeError, ValueError):
+                            pass
+            print(f"    [GT] Loaded {len(vals)} values from sheet '{target_sheet}'")
+            return vals
+
+        # ── Case 2: Sheet1 multi-session format ───────────────────────────────
+        # Col 0 = session label (G1/G2/…, None for continuation rows)
+        # Col 1 = apple number (1-18)
+        # Col 5 = Average diameter (mm)  ← the GT value we want
+        AVERAGE_COL = 5
+        in_session = False
+        vals = []
+        for row in rows:
+            label = row[0]  # session column
+            if label is not None:
+                # New session starting — check if it matches our target
+                in_session = str(label).strip().upper() == session.strip().upper()
+            if not in_session:
+                continue
+            # Extract Average column
+            if len(row) > AVERAGE_COL and row[AVERAGE_COL] is not None:
+                try:
+                    vals.append(float(row[AVERAGE_COL]))
+                except (TypeError, ValueError):
+                    pass
+
+        print(f"    [GT] Loaded {len(vals)} values for session '{session}' "
+              f"from '{target_sheet}'  (D1+D2)/2 averages in mm")
         return vals
+
     except Exception as exc:
         print(f"    [GT] Failed to load {gt_path}: {exc}")
         return []
+
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
