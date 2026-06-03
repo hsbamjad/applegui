@@ -70,13 +70,16 @@ def load_gt(gt_path: str, session: str) -> list:
 def reassign_gt(apples: list, gt_list: list, img_h: int) -> list:
     """
     Recompute lane + GT assignment from stored frame data.
-    Uses robust gap detection — handles missing apples at START, MIDDLE, END.
+    Uses robust gap detection with EXPECTED_PER_LANE cap to prevent
+    false missing-apple detections from variable conveyor spacing.
     """
-    LANES = 3
-    GAP_MULTIPLIER = 1.6
+    LANES             = 3
+    GAP_MULTIPLIER    = 1.9   # conservative — only detect gaps ~2x typical
+    APPLES_PER_SESSION = 18
+    EXPECTED_PER_LANE = APPLES_PER_SESSION // LANES  # = 6
     lane_h = img_h / LANES
 
-    # Build stub objects with exit_frame_idx, mean_cy, lane_id, and original dict
+    # Build stub objects
     class Stub:
         def __init__(self, apple_dict):
             self.exit_frame_idx = apple_dict.get("exit_frame_idx", 0) or 0
@@ -100,7 +103,8 @@ def reassign_gt(apples: list, gt_list: list, img_h: int) -> list:
         exits = [s.exit_frame_idx for s in lane]
         for i in range(1, len(exits)):
             all_gaps.append(exits[i] - exits[i - 1])
-    typical_gap = float(np.median(all_gaps)) if all_gaps else 300.0
+    # Guard against zero or empty gaps (G7 bug: all exit_frame_idx=0)
+    typical_gap = max(1.0, float(np.median(all_gaps)) if all_gaps else 300.0)
     print(f"  Typical inter-apple gap: {typical_gap:.0f} frames")
 
     # Expand each lane — insert None for mid/end missing apples
@@ -130,6 +134,20 @@ def reassign_gt(apples: list, gt_list: list, img_h: int) -> list:
                 expanded[lane_id] = [None] * n_leading + expanded[lane_id]
                 print(f"  Lane {lane_id}: {n_leading} missing apple(s) at start")
 
+    # ── Sanity check: cap each lane at EXPECTED_PER_LANE slots ───────────────
+    # If gap detection overcounts (natural spacing variability misread as gaps),
+    # fall back to sequential ordering with missing apples assumed at end.
+    for lane_id in range(LANES):
+        n_slots   = len(expanded[lane_id])
+        n_present = sum(1 for s in expanded[lane_id] if s is not None)
+        if n_slots > EXPECTED_PER_LANE:
+            print(f"  Lane {lane_id}: gap detection overcounted "
+                  f"({n_slots} slots, {n_present} present) → sequential fallback")
+            fallback = list(lanes[lane_id])          # original order, no gaps
+            while len(fallback) < EXPECTED_PER_LANE:
+                fallback.append(None)                # pad missing at end
+            expanded[lane_id] = fallback[:EXPECTED_PER_LANE]
+
     # Pad all lanes to same length
     max_len = max((len(e) for e in expanded), default=0)
     for e in expanded:
@@ -149,15 +167,15 @@ def reassign_gt(apples: list, gt_list: list, img_h: int) -> list:
         for lane_id in range(LANES):
             slot = expanded[lane_id][pos] if pos < len(expanded[lane_id]) else None
             if slot is None:
-                apple_idx += 1    # consume GT slot for missing apple
+                apple_idx += 1
             else:
                 gt_mm = gt_list[apple_idx] if apple_idx < len(gt_list) else None
                 new_apple = dict(slot._data)
-                new_apple["apple_idx"]      = apple_idx
-                new_apple["gt_mm"]          = gt_mm
-                new_apple["lane"]           = lane_id
-                new_apple["pos_in_lane"]    = pos
-                new_apple["mean_cy_px"]     = slot.mean_cy
+                new_apple["apple_idx"]   = apple_idx
+                new_apple["gt_mm"]       = gt_mm
+                new_apple["lane"]        = lane_id
+                new_apple["pos_in_lane"] = pos
+                new_apple["mean_cy_px"]  = slot.mean_cy
                 corrected.append(new_apple)
                 apple_idx += 1
 
