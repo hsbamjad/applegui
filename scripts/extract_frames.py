@@ -335,7 +335,7 @@ def load_gt(gt_path: str, session: str) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GT ASSIGNMENT  —  Robust per-lane gap detection
+# GT ASSIGNMENT  —  Entry-gate ordering
 #
 # Lane 0 (top)    : mean_cy in [0,         img_h/3)
 # Lane 1 (middle) : mean_cy in [img_h/3,   2*img_h/3)
@@ -343,23 +343,34 @@ def load_gt(gt_path: str, session: str) -> list:
 #
 # Algorithm:
 #   1. Assign each apple to a lane from its mean y-centroid
-#   2. Sort each lane by exit frame
-#   3. Compute typical inter-apple gap = median across all consecutive pairs
-#   4. Scan each lane: if gap > GAP_MULTIPLIER x typical → insert None placeholder(s)
-#   5. Detect leading missing apples by comparing lanes' first exits
-#   6. Interleave lanes; None slots consume GT index (apple fell off conveyor)
+#   2. Sort each lane by ENTRY time (frames[0]["frame_idx"]) — the moment
+#      the apple first appeared in the entry zone
+#   3. Interleave lanes positionally; trailing None slots = missing apples
+#
+# Sorting by entry time (not exit time) makes the assignment robust against
+# apples that slow down, speed up, or fall off the conveyor after entry.
+# No gap detection is needed.
 #
 # GT index = pos * LANES + lane_id   (matches physical numbering scheme)
 # ─────────────────────────────────────────────────────────────────────────────
-LANES          = 3     # physical conveyor lanes
-GAP_MULTIPLIER = 1.6   # gap > this x median_gap → missing apple(s) in that gap
+LANES             = 3     # physical conveyor lanes
+EXPECTED_PER_LANE = APPLES_PER_SESSION // LANES   # 6
 
 
 def assign_gt_by_column(committed_tracks: list, gt_list: list,
                         img_h: int = 1536) -> list:
     """
-    Robustly assign GT values using per-lane temporal gap detection.
-    Correctly handles missing apples at START, MIDDLE, or END of any lane.
+    Assign GT values using entry-gate ordering.
+
+    Each apple's GT number is locked in the moment it enters the camera view.
+    Within each lane, apples are ordered by their FIRST seen frame index
+    (frames[0]["frame_idx"]).  Lanes are then interleaved positionally.
+
+    This handles correctly:
+      - Apples that slow down or speed up after the entry gate
+      - Apples that fall off the conveyor (they are still counted because
+        they were already assigned their slot at entry)
+      - No gap-detection heuristics needed
     """
     if not committed_tracks:
         return []
@@ -370,55 +381,29 @@ def assign_gt_by_column(committed_tracks: list, gt_list: list,
     for t in committed_tracks:
         t.lane_id = min(LANES - 1, int(t.mean_cy / lane_h))
 
-    # Step 2: bucket into lanes, sort by exit time
+    # Step 2: bucket into lanes, sort by ENTRY time
     lanes = [[] for _ in range(LANES)]
     for t in committed_tracks:
         lanes[t.lane_id].append(t)
     for lane in lanes:
-        lane.sort(key=lambda t: t.exit_frame_idx or 0)
+        # entry_frame = frame_idx of the apple's first tracked frame
+        lane.sort(key=lambda t: t.frames[0]["frame_idx"] if t.frames else 0)
 
-    # Step 3: compute typical inter-apple gap (cross-lane median)
-    all_gaps = []
+    # Print entry-gate order for diagnostics
+    print("  Entry-gate ordering (sorted by first-seen frame):")
+    for lid, lane in enumerate(lanes):
+        entries = [t.frames[0]["frame_idx"] if t.frames else 0 for t in lane]
+        print(f"    Lane {lid}: {len(lane)} apple(s)  entry frames={entries}")
+
+    # Step 3: build positional slots — no gap detection, just sequential
+    # Each lane has exactly EXPECTED_PER_LANE slots.
+    # Apples present fill from pos 0; trailing None = apple not seen in that slot.
+    expanded = []
     for lane in lanes:
-        exits = [t.exit_frame_idx or 0 for t in lane]
-        for i in range(1, len(exits)):
-            all_gaps.append(exits[i] - exits[i - 1])
-    typical_gap = float(np.median(all_gaps)) if all_gaps else 300.0
-    print(f"  Typical inter-apple gap: {typical_gap:.0f} frames")
-
-    # Step 4: expand each lane — insert None for mid/end missing apples
-    def expand_lane(tracks):
-        """Replace large time gaps with None placeholder slots."""
-        if not tracks:
-            return []
-        slots = [tracks[0]]
-        for i in range(1, len(tracks)):
-            gap = (tracks[i].exit_frame_idx or 0) - (tracks[i - 1].exit_frame_idx or 0)
-            n_missing = max(0, round(gap / typical_gap) - 1)
-            slots.extend([None] * n_missing)
-            slots.append(tracks[i])
-        return slots
-
-    expanded = [expand_lane(lane) for lane in lanes]
-
-    # Step 5: detect leading missing apples (compare first exits across lanes)
-    first_exits = [lane[0].exit_frame_idx or 0 for lane in lanes if lane]
-    if first_exits:
-        earliest = min(first_exits)
-        for lane_id, lane in enumerate(lanes):
-            if not lane:
-                continue
-            first_t = lane[0].exit_frame_idx or 0
-            n_leading = max(0, round((first_t - earliest) / typical_gap))
-            if n_leading > 0:
-                expanded[lane_id] = [None] * n_leading + expanded[lane_id]
-                print(f"  Lane {lane_id}: {n_leading} missing apple(s) at start")
-
-    # Step 6: pad all lanes to same length (trailing None for end-missing)
-    max_len = max((len(e) for e in expanded), default=0)
-    for e in expanded:
-        while len(e) < max_len:
-            e.append(None)
+        slots = list(lane)                         # already in entry order
+        while len(slots) < EXPECTED_PER_LANE:
+            slots.append(None)                     # trailing missing apple
+        expanded.append(slots[:EXPECTED_PER_LANE])
 
     # Print per-lane summary
     for lid, slots in enumerate(expanded):
@@ -426,12 +411,12 @@ def assign_gt_by_column(committed_tracks: list, gt_list: list,
         n_miss = sum(1 for s in slots if s is None)
         print(f"  Lane {lid}: {n_ok} present, {n_miss} missing  (slots={len(slots)})")
 
-    # Step 7: interleave and assign GT
+    # Step 4: interleave and assign GT
     apples = []
     apple_idx = 0
-    for pos in range(max_len):
+    for pos in range(EXPECTED_PER_LANE):
         for lane_id in range(LANES):
-            slot = expanded[lane_id][pos] if pos < len(expanded[lane_id]) else None
+            slot = expanded[lane_id][pos]
             if slot is None:
                 apple_idx += 1    # consume GT slot — apple was missing here
             else:

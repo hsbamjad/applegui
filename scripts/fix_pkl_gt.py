@@ -65,125 +65,83 @@ def load_gt(gt_path: str, session: str) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# REASSIGN GT using y-centroid lane detection
+# REASSIGN GT  —  Entry-gate ordering
 # ─────────────────────────────────────────────────────────────────────────────
 def reassign_gt(apples: list, gt_list: list, img_h: int) -> list:
     """
     Recompute lane + GT assignment from stored frame data.
-    Uses robust gap detection with EXPECTED_PER_LANE cap to prevent
-    false missing-apple detections from variable conveyor spacing.
+
+    Strategy: ENTRY-GATE assignment
+    --------------------------------
+    The apple's GT number is determined the moment it first enters the
+    camera view (frames[0]["frame_idx"]).  Each lane is sorted by that
+    entry time.  Lanes are then interleaved positionally to recover the
+    physical numbering on the GT sheet:
+
+        pos 0: lane0, lane1, lane2   →  GT indices 0, 1, 2
+        pos 1: lane0, lane1, lane2   →  GT indices 3, 4, 5
+        …
+
+    This is robust against apples that slow down, speed up, or fall off
+    the conveyor after they have already been seen at the entry gate.
+    No gap detection or inter-apple timing heuristics are needed.
     """
-    LANES             = 3
-    GAP_MULTIPLIER    = 1.9   # conservative — only detect gaps ~2x typical
+    LANES              = 3
     APPLES_PER_SESSION = 18
-    EXPECTED_PER_LANE = APPLES_PER_SESSION // LANES  # = 6
+    EXPECTED_PER_LANE  = APPLES_PER_SESSION // LANES   # 6
     lane_h = img_h / LANES
 
-    # Build stub objects
+    # ── Build stub objects ────────────────────────────────────────────────────
     class Stub:
         def __init__(self, apple_dict):
-            self.exit_frame_idx = apple_dict.get("exit_frame_idx", 0) or 0
             cy_vals = [f["cy_px"] for f in apple_dict["frames"] if "cy_px" in f]
-            self.mean_cy = float(np.mean(cy_vals)) if cy_vals else img_h / 2
-            self.lane_id = min(LANES - 1, int(self.mean_cy / lane_h))
-            self._data = apple_dict
+            self.mean_cy       = float(np.mean(cy_vals)) if cy_vals else img_h / 2
+            self.lane_id       = min(LANES - 1, int(self.mean_cy / lane_h))
+            # Entry time = first frame this apple was ever seen
+            self.entry_frame   = apple_dict["frames"][0]["frame_idx"] \
+                                 if apple_dict["frames"] else 0
+            self.exit_frame_idx = apple_dict.get("exit_frame_idx", 0) or 0
+            self._data         = apple_dict
 
     stubs = [Stub(a) for a in apples]
 
-    # Bucket into lanes, sort by exit time
+    # ── Bucket into lanes, sort by ENTRY time (not exit) ─────────────────────
     lanes = [[] for _ in range(LANES)]
     for s in stubs:
         lanes[s.lane_id].append(s)
     for lane in lanes:
-        lane.sort(key=lambda s: s.exit_frame_idx)
+        lane.sort(key=lambda s: s.entry_frame)
 
-    # Compute typical inter-apple gap (cross-lane median)
-    all_gaps = []
+    # ── Print entry-gate order for each lane ─────────────────────────────────
+    print("  Entry-gate ordering (sorted by first-seen frame):")
+    for lid, lane in enumerate(lanes):
+        entries = [s.entry_frame for s in lane]
+        print(f"    Lane {lid}: {len(lane)} apple(s)  entry frames={entries}")
+
+    # ── Build positional slots (no gap detection — just sequential) ───────────
+    # Each lane occupies exactly EXPECTED_PER_LANE slots.
+    # Apples present fill from pos 0; any remaining slots are None (missing).
+    expanded = []
     for lane in lanes:
-        exits = [s.exit_frame_idx for s in lane]
-        for i in range(1, len(exits)):
-            all_gaps.append(exits[i] - exits[i - 1])
-    # Guard against zero or empty gaps (G7 bug: all exit_frame_idx=0)
-    typical_gap = max(1.0, float(np.median(all_gaps)) if all_gaps else 300.0)
-    print(f"  Typical inter-apple gap: {typical_gap:.0f} frames")
+        slots = list(lane)                        # already in entry order
+        while len(slots) < EXPECTED_PER_LANE:
+            slots.append(None)                    # trailing slot = apple missing
+        expanded.append(slots[:EXPECTED_PER_LANE])
 
-    # Expand each lane — insert None for mid/end missing apples
-    def expand_lane(tracks):
-        if not tracks:
-            return []
-        slots = [tracks[0]]
-        for i in range(1, len(tracks)):
-            gap = tracks[i].exit_frame_idx - tracks[i - 1].exit_frame_idx
-            n_missing = max(0, round(gap / typical_gap) - 1)
-            slots.extend([None] * n_missing)
-            slots.append(tracks[i])
-        return slots
-
-    expanded = [expand_lane(lane) for lane in lanes]
-
-    # Detect leading missing apples (compare first exits across lanes)
-    first_exits = [lane[0].exit_frame_idx for lane in lanes if lane]
-    if first_exits:
-        earliest = min(first_exits)
-        for lane_id, lane in enumerate(lanes):
-            if not lane:
-                continue
-            first_t = lane[0].exit_frame_idx
-            n_leading = max(0, round((first_t - earliest) / typical_gap))
-            if n_leading > 0:
-                expanded[lane_id] = [None] * n_leading + expanded[lane_id]
-                print(f"  Lane {lane_id}: {n_leading} missing apple(s) at start")
-
-    # ── Sanity check: cap each lane at EXPECTED_PER_LANE slots ───────────────
-    # If gap detection overcounts (natural spacing variability misread as gaps),
-    # fall back to sequential ordering — but PRESERVE leading Nones that were
-    # already correctly detected by the first-exit comparison above.
-    for lane_id in range(LANES):
-        n_slots   = len(expanded[lane_id])
-        n_present = sum(1 for s in expanded[lane_id] if s is not None)
-        if n_slots > EXPECTED_PER_LANE:
-            # Count leading Nones already in expanded (from start-missing detection)
-            n_leading_nones = 0
-            for s in expanded[lane_id]:
-                if s is None:
-                    n_leading_nones += 1
-                else:
-                    break
-            # Cap leading Nones so we don't exceed budget
-            n_missing_total = EXPECTED_PER_LANE - n_present
-            n_leading_nones = min(n_leading_nones, n_missing_total)
-
-            print(f"  Lane {lane_id}: gap detection overcounted "
-                  f"({n_slots} slots, {n_present} present) → sequential fallback "
-                  f"(preserving {n_leading_nones} leading None(s))")
-
-            # Rebuild: leading Nones + sequential tracks + trailing Nones
-            fallback  = [None] * n_leading_nones
-            fallback += list(lanes[lane_id])          # all tracked, in exit order
-            while len(fallback) < EXPECTED_PER_LANE:
-                fallback.append(None)                 # trailing missing at end
-            expanded[lane_id] = fallback[:EXPECTED_PER_LANE]
-
-    # Pad all lanes to same length
-    max_len = max((len(e) for e in expanded), default=0)
-    for e in expanded:
-        while len(e) < max_len:
-            e.append(None)
-
-    # Print per-lane summary
+    # ── Print per-lane summary ────────────────────────────────────────────────
     for lid, slots in enumerate(expanded):
         n_ok   = sum(1 for s in slots if s is not None)
         n_miss = sum(1 for s in slots if s is None)
         print(f"  Lane {lid}: {n_ok} present, {n_miss} missing  (slots={len(slots)})")
 
-    # Interleave and assign GT
+    # ── Interleave and assign GT ──────────────────────────────────────────────
     corrected = []
     apple_idx = 0
-    for pos in range(max_len):
+    for pos in range(EXPECTED_PER_LANE):
         for lane_id in range(LANES):
-            slot = expanded[lane_id][pos] if pos < len(expanded[lane_id]) else None
+            slot = expanded[lane_id][pos]
             if slot is None:
-                apple_idx += 1
+                apple_idx += 1          # consume GT slot — apple absent here
             else:
                 gt_mm = gt_list[apple_idx] if apple_idx < len(gt_list) else None
                 new_apple = dict(slot._data)
