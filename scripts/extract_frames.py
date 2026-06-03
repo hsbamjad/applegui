@@ -183,11 +183,26 @@ def build_model_input(src0_bgr: np.ndarray, src1_gray: np.ndarray) -> np.ndarray
       Channel 0 : Red   (src0[:,:,2])
       Channel 1 : Blue  (src0[:,:,0])
       Channel 2 : NIR1  (src1 grayscale)
+
+    Handles all Source1 image formats robustly:
+      - (H, W)    — already 2-D grayscale (most common)
+      - (H, W, 1) — 1-channel BMP (some cameras/OS save this way)
+      - (H, W, 3) — 3-channel BGR accidentally loaded without GRAYSCALE flag
     """
-    R   = src0_bgr[:, :, 2]
-    B   = src0_bgr[:, :, 0]
-    N1  = src1_gray if src1_gray.ndim == 2 else cv2.cvtColor(src1_gray, cv2.COLOR_BGR2GRAY)
+    R = src0_bgr[:, :, 2]
+    B = src0_bgr[:, :, 0]
+
+    if src1_gray.ndim == 2:
+        N1 = src1_gray                                          # already 2-D
+    elif src1_gray.ndim == 3 and src1_gray.shape[2] == 1:
+        N1 = src1_gray[:, :, 0]                                # squeeze single channel
+    elif src1_gray.ndim == 3 and src1_gray.shape[2] >= 3:
+        N1 = cv2.cvtColor(src1_gray, cv2.COLOR_BGR2GRAY)       # convert BGR → gray
+    else:
+        N1 = src1_gray.reshape(src1_gray.shape[:2])             # fallback: force 2-D
+
     return np.stack([R, B, N1], axis=2)
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
