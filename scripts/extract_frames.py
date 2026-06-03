@@ -423,10 +423,14 @@ def assign_gt_by_column(committed_tracks: list, gt_list: list,
                       key=lambda t: len(t.frames), reverse=True)[:EXPECTED_PER_LANE]
         best.sort(key=lambda t: t.frames[0]["frame_idx"] if t.frames else 0)
         if len(all_tracks) > len(best):
+            best_ids    = {id(t) for t in best}
+            discarded   = [t for t in all_tracks if id(t) not in best_ids]
+            max_discard = max((len(t.frames) for t in discarded), default=0)
+            min_kept    = min((len(t.frames) for t in best), default=0)
             print(f"    Lane {lid}: {len(all_tracks)} candidates → "
                   f"kept top {len(best)} by frame count "
-                  f"(min kept: {min(len(t.frames) for t in best) if best else 0} frames, "
-                  f"max discarded: {max(len(t.frames) for t in all_tracks[EXPECTED_PER_LANE:]) if len(all_tracks) > EXPECTED_PER_LANE else 0} frames)")
+                  f"(min kept: {min_kept} frames, "
+                  f"max discarded: {max_discard} frames)")
         lanes.append(best)
 
     # Print entry-gate order for diagnostics
