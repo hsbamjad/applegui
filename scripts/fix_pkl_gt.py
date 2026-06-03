@@ -105,12 +105,25 @@ def reassign_gt(apples: list, gt_list: list, img_h: int) -> list:
 
     stubs = [Stub(a) for a in apples]
 
-    # ── Bucket into lanes, sort by ENTRY time (not exit) ─────────────────────
-    lanes = [[] for _ in range(LANES)]
+    # ── Bucket into lanes ─────────────────────────────────────────────────────
+    lanes_all = [[] for _ in range(LANES)]
     for s in stubs:
-        lanes[s.lane_id].append(s)
-    for lane in lanes:
-        lane.sort(key=lambda s: s.entry_frame)
+        lanes_all[s.lane_id].append(s)
+
+    # ── Select top EXPECTED_PER_LANE per lane by frame count ──────────────────
+    # Real apple tracks span hundreds of frames; spurious startup blips have
+    # only a handful.  Ranking by frame count and keeping the top N discards
+    # noise robustly without needing a hard threshold.
+    # After selection, sort by entry time to recover GT arrival order.
+    lanes = []
+    for lid, all_stubs in enumerate(lanes_all):
+        n_frames = lambda s: len(s._data["frames"])
+        best = sorted(all_stubs, key=n_frames, reverse=True)[:EXPECTED_PER_LANE]
+        best.sort(key=lambda s: s.entry_frame)
+        if len(all_stubs) > len(best):
+            print(f"    Lane {lid}: {len(all_stubs)} candidates → "
+                  f"kept top {len(best)} by frame count")
+        lanes.append(best)
 
     # ── Print entry-gate order for each lane ─────────────────────────────────
     print("  Entry-gate ordering (sorted by first-seen frame):")

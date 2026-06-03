@@ -397,13 +397,29 @@ def assign_gt_by_column(committed_tracks: list, gt_list: list,
     for t in committed_tracks:
         t.lane_id = min(LANES - 1, int(t.mean_cy / lane_h))
 
-    # Step 2: bucket into lanes, sort by ENTRY time
-    lanes = [[] for _ in range(LANES)]
+    # Step 2: bucket into lanes
+    lanes_all = [[] for _ in range(LANES)]
     for t in committed_tracks:
-        lanes[t.lane_id].append(t)
-    for lane in lanes:
-        # entry_frame = frame_idx of the apple's first tracked frame
-        lane.sort(key=lambda t: t.frames[0]["frame_idx"] if t.frames else 0)
+        lanes_all[t.lane_id].append(t)
+
+    # Step 2b: select top EXPECTED_PER_LANE tracks per lane by frame count
+    # -----------------------------------------------------------------------
+    # The startup period (and occasional YOLO noise) can produce many more
+    # than 6 tracks per lane.  Real apple tracks span hundreds of frames;
+    # spurious blips have only a handful.  Ranking by frame count and keeping
+    # the top N robustly discards all noise without needing a hard threshold.
+    # After selection, sort by entry time to recover GT arrival order.
+    lanes = []
+    for lid, all_tracks in enumerate(lanes_all):
+        best = sorted(all_tracks,
+                      key=lambda t: len(t.frames), reverse=True)[:EXPECTED_PER_LANE]
+        best.sort(key=lambda t: t.frames[0]["frame_idx"] if t.frames else 0)
+        if len(all_tracks) > len(best):
+            print(f"    Lane {lid}: {len(all_tracks)} candidates → "
+                  f"kept top {len(best)} by frame count "
+                  f"(min kept: {min(len(t.frames) for t in best) if best else 0} frames, "
+                  f"max discarded: {max(len(t.frames) for t in all_tracks[EXPECTED_PER_LANE:]) if len(all_tracks) > EXPECTED_PER_LANE else 0} frames)")
+        lanes.append(best)
 
     # Print entry-gate order for diagnostics
     print("  Entry-gate ordering (sorted by first-seen frame):")
