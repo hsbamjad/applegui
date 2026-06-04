@@ -43,8 +43,9 @@ os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(MODEL_OUT, exist_ok=True)
 
 TRAIN_SESSIONS = ["G1", "G2", "G3", "G4", "G5", "G6", "G8", "G9"]
-TEST_SESSIONS  = ["G10", "G11"]
-ALL_SESSIONS   = TRAIN_SESSIONS + TEST_SESSIONS
+TEST_SESSIONS  = ["G10"]          # G11 excluded: GT labeling error (apples #1 & #4 swapped)
+ALL_SESSIONS   = TRAIN_SESSIONS + TEST_SESSIONS   # G11 excluded: GT labeling corrupted
+
 
 # ── Exclusion thresholds (imaging issues) ─────────────────────────────────────
 MIN_CX_RANGE = 1000   # px — partial traversal = unreliable measurement
