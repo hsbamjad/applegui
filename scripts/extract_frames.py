@@ -84,6 +84,11 @@ OUTPUT (pickle per session)
             "conf":      0.87,   # YOLO detection confidence
             "cls_id":    1,      # 0=Fresh 1=Processing 2=Cull
             "quality":   0.72,   # circularity × completeness
+            # ── Per-frame diameter estimates (pixels) — Step 2 features ──────
+            "d_maxw":  float,   # M1: max projection width
+            "d_sym":   float,   # M2: bilateral symmetry (Mizushima & Lu 2013)
+            "d_ell":   float,   # M3: ellipse major axis
+            "d_area":  float,   # M4: area sphere estimate  sqrt(4A/pi)
           },
           ...
         ],
@@ -97,11 +102,16 @@ import argparse
 import os
 import re
 import pickle
+import sys
 import numpy as np
 import cv2
 import openpyxl
 from pathlib import Path
 from ultralytics import YOLO
+
+# Allow 'core/' package to be found when running from project root or scripts/
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.sizing.mask_diameter import all_diameters as _all_diameters
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -702,6 +712,36 @@ def process_session(
                 td["best_mask"]    = smooth_mask.copy()
                 td["best_rect"]    = crop_rect
 
+            # ── All 4 diameter methods from raw YOLO polygon ─────────────────
+            # Computed on the CONVEX HULL of the raw polygon (same hull used
+            # in make_smooth_mask). Using the raw poly (not the rendered ellipse
+            # mask) gives independent estimates — essential for Step 2 ML.
+            if poly is not None and len(poly) >= 5:
+                # Render hull to a small binary mask for mask_diameter functions
+                hull_pts = cv2.convexHull(
+                    poly.astype(np.int32).reshape(-1, 1, 2)
+                )  # shape (N,1,2)
+                # Bounding box of hull for crop
+                hx, hy, hw, hh = cv2.boundingRect(hull_pts)
+                hx1 = max(0, hx - 4); hy1 = max(0, hy - 4)
+                hx2 = min(img_w, hx + hw + 4); hy2 = min(img_h, hy + hh + 4)
+                cw, ch = hx2 - hx1, hy2 - hy1
+                if cw > 0 and ch > 0:
+                    hull_crop = np.zeros((ch, cw), dtype=np.uint8)
+                    hull_shifted = hull_pts.copy()
+                    hull_shifted[:, :, 0] -= hx1
+                    hull_shifted[:, :, 1] -= hy1
+                    cv2.fillPoly(hull_crop, [hull_shifted.reshape(-1, 2)], 255)
+                    diam = _all_diameters(hull_crop, angle_step=5)
+                    d_maxw = diam["d_maxwidth"]
+                    d_sym  = diam["d_symmetry"]
+                    d_ell  = diam["d_ellipse"]
+                    d_area = diam["d_area"]
+                else:
+                    d_maxw = d_sym = d_ell = d_area = 0.0
+            else:
+                d_maxw = d_sym = d_ell = d_area = 0.0
+
             # Lightweight per-frame record
             td["frames"].append({
                 "frame_no":  frame_no,
@@ -712,10 +752,15 @@ def process_session(
                 "conf":      conf,
                 "cls_id":    cls,
                 "quality":   quality,
-                # Per-frame ellipse axes (pixels) — for frame-by-frame analysis
+                # Per-frame ellipse axes (pixels) — from consensus ellipse
                 "ell_a":     ellipse_abs[2] if ellipse_abs else None,
                 "ell_b":     ellipse_abs[3] if ellipse_abs else None,
                 "ell_angle": ellipse_abs[4] if ellipse_abs else None,
+                # Per-frame diameter estimates (pixels) — M1-M4, Step 2 features
+                "d_maxw":    d_maxw,
+                "d_sym":     d_sym,
+                "d_ell":     d_ell,
+                "d_area":    d_area,
             })
 
         if frame_idx % 200 == 0 and frame_idx > 0:
