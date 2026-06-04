@@ -41,8 +41,10 @@ def parse_args():
                    help="Path to session .pkl (auto-detected if omitted)")
     p.add_argument("--pkl_dir",   default=r"D:\HA\apple_gui\data\frame_features")
     p.add_argument("--out",       default=r"D:\HA\apple_gui\data\viz")
-    p.add_argument("--fps",       type=float, default=15.0,
-                   help="Output video FPS")
+    p.add_argument("--fps",       type=float, default=60.0,
+                   help="Output video FPS (default 60, matches frames-to-video.py)")
+    p.add_argument("--lossless",  action="store_true",
+                   help="Write MJPEG .avi instead of mp4v .mp4 (better for NIR, no compression)")
     p.add_argument("--scale",     type=float, default=0.5,
                    help="Downscale factor for output (0.5 = half resolution)")
     p.add_argument("--max_frames",type=int,   default=0,
@@ -80,7 +82,9 @@ CLS_COLORS = {0: (50, 220, 50), 1: (50, 200, 255), 2: (50, 50, 255)}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def natural_key(s):
-    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
+    # Match frames-to-video.py: strip all non-digits, sort numerically
+    nums = re.sub(r'\D', '', s)
+    return int(nums) if nums else 0
 
 def put_text_bg(img, text, org, font_scale=0.55, thickness=1,
                 color=(255,255,255), bg=(0,0,0,160)):
@@ -212,10 +216,15 @@ def main():
     # ── Output video writer ────────────────────────────────────────────────────
     out_w = int(img_w  * args.scale)
     out_h = int(img_h  * args.scale)
-    out_path = str(Path(args.out) / f"{session}_visualization.mp4")
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    if args.lossless:
+        out_path = str(Path(args.out) / f"{session}_visualization.avi")
+        fourcc   = cv2.VideoWriter_fourcc(*"MJPG")
+    else:
+        out_path = str(Path(args.out) / f"{session}_visualization.mp4")
+        fourcc   = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(out_path, fourcc, args.fps, (out_w, out_h))
-    print(f"  Output: {out_path}  ({out_w}×{out_h} @ {args.fps}fps)")
+    print(f"  Output: {out_path}  ({out_w}×{out_h} @ {args.fps}fps)"
+          f"  {'MJPEG lossless' if args.lossless else 'mp4v'}")
 
     # ── Render loop ────────────────────────────────────────────────────────────
     print(f"\nRendering frames...")
