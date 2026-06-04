@@ -240,7 +240,7 @@ with open(csv_path,"w",newline="") as f:
     for name,res in final.items():
         w.writerow(["BlindTest-G10",name,f"{res['mae']:.4f}",f"{res['rmse']:.4f}",
                     f"{res['r2']:.4f}",f"{res['maxe']:.4f}",f"{res['pacc']:.2f}"])
-    w.writerow(["BlindTest-G10","Paper(Lu2025)","N/A","1.870","0.967","N/A","97.60"])
+    w.writerow(["Reference(their-own-blind-test)","Paper(Lu2025)","N/A","1.870","0.967","N/A","97.60"])
 print(f"  Metrics CSV → {csv_path}")
 
 # =============================================================================
