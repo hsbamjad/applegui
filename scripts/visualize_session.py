@@ -530,11 +530,14 @@ def main():
             # ── 2. REAL fitted ellipse (cv2.fitEllipse on consensus_mask) ─────
             ep = ell_params.get(idx)
             if ep and bw>4 and bh>4:
-                # Scale axes from consensus mask size to current bbox size
-                sx    = bw / max(ep["mask_w"], 1)
-                sy    = bh / max(ep["mask_h"], 1)
-                r_a   = max(1, int(ep["a_px"] * sx))
-                r_b   = max(1, int(ep["b_px"] * sy))
+                # a_px / b_px are already in full-resolution pixels
+                # (cv2.fitEllipse on the cropped mask returns pixel coords
+                # at the same scale as the original image — the crop just
+                # shifts the coordinate origin, does NOT rescale pixels).
+                # Do NOT multiply by bw/mask_w — that incorrectly shrinks
+                # the ellipse because mask_w = bbox_w + 2*MASK_PAD (60px).
+                r_a   = max(1, int(ep["a_px"]))
+                r_b   = max(1, int(ep["b_px"]))
                 r_ang = ep["angle_deg"]
                 # Draw real ellipse (dimmed to not overwhelm mask)
                 cv2.ellipse(bgr, (cx,cy), (r_a,r_b),
@@ -567,8 +570,8 @@ def main():
             n_total = total_frames_per_apple.get(idx, 1)
             frac    = min(1.0, live[idx].n / max(n_total,1))
             _ep = ell_params.get(idx)
-            _ra = (int(_ep['a_px'] * bw / max(_ep['mask_w'],1)) if _ep else max(bw,bh)//2)
-            draw_arc_progress(bgr, cx, cy, min(_ra+10,65),
+            _ra = (int(_ep['a_px']) if _ep else max(bw,bh)//2)
+            draw_arc_progress(bgr, cx, cy, min(_ra+12,80),
                               frac, color, thick=2)
 
             # ── 7. Info HUD above apple ───────────────────────────────────────
