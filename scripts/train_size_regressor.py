@@ -6,10 +6,10 @@ Michigan State University | Apple GUI | feature/apple-size-ml branch
 Loads all session pkls, runs view_fusion, trains Ridge + RandomForest
 regressors, evaluates with Leave-One-Session-Out (LOO-CV).
 
-EXCLUSION CRITERIA (imaging issues, not code issues):
-  - cx_range < 1000 px  → apple didn't cross full frame (partial traversal)
-  - n_frames  < 400     → too little tracking data
-  These are recording/setup problems confirmed during Step 1 validation.
+# EXCLUSION CRITERIA (imaging issues, not code issues):
+#   cx_range < 1000 px → apple didn't cross enough of the frame.
+#   NOTE: n_central is NOT used as a filter — G5 is a short session so
+#   n_central is naturally low even for valid full-traversal apples.
 
 DATA SPLIT:
   - Train: G1-G6, G8-G9  (8 sessions, 144 apples nominal)
@@ -24,6 +24,7 @@ import numpy as np
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
+from sklearn.base import clone
 from sklearn.linear_model import Ridge
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
@@ -35,9 +36,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.sizing.view_fusion import fuse_session, feature_matrix
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-PKL_DIR  = r"S:\MSU_Research\ASABE AIM26\apple_gui\data\frame_features"
-OUT_DIR  = r"S:\MSU_Research\ASABE AIM26\apple_gui\data\ml_results"
-MODEL_OUT= r"S:\MSU_Research\ASABE AIM26\apple_gui\models"
+PKL_DIR  = r"D:\HA\apple_gui\data\frame_features"
+OUT_DIR  = r"D:\HA\apple_gui\data\ml_results"
+MODEL_OUT= r"D:\HA\apple_gui\models"
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(MODEL_OUT, exist_ok=True)
 
@@ -47,7 +48,7 @@ ALL_SESSIONS   = TRAIN_SESSIONS + TEST_SESSIONS
 
 # ── Exclusion thresholds (imaging issues) ─────────────────────────────────────
 MIN_CX_RANGE = 1000   # px — partial traversal = unreliable measurement
-MIN_FRAMES   = 400    # frames
+                      # (only filter used; n_frames/n_central NOT used)
 
 # ── Style ─────────────────────────────────────────────────────────────────────
 DARK  = "#0d1117"; PANEL = "#161b22"; TEXT = "#e6edf3"; MUTED = "#8b949e"
@@ -72,19 +73,16 @@ for sess in ALL_SESSIONS:
 
     kept, excl = 0, 0
     for r in fused:
-        cx  = r.get("cx_range", 9999)
-        nf  = r.get("n_central", 9999)
-
-        # Also check n_frames from the original apple dict
-        apple_nf = r.get("n_central", 9999)
-
-        if cx < MIN_CX_RANGE or nf < MIN_FRAMES:
+        cx = r.get("cx_range", 9999)
+        # Only exclude on cx_range — n_central is naturally low for
+        # short sessions (e.g. G5) even when traversal is complete.
+        if cx < MIN_CX_RANGE:
             excluded.append({
-                "session": sess,
+                "session":   sess,
                 "apple_idx": r.get("apple_idx"),
-                "gt_mm": r.get("gt_mm"),
-                "cx_range": cx,
-                "n_central": nf,
+                "gt_mm":     r.get("gt_mm"),
+                "cx_range":  cx,
+                "n_central": r.get("n_central"),
             })
             excl += 1
         else:
@@ -156,18 +154,8 @@ for held_sess in TRAIN_SESSIONS:
     loo_val   = train_mask & (sessions_arr == held_sess)
     if loo_val.sum() == 0:
         continue
-    for name, model in models.items():
-        m = model.__class__(**model.get_params()) if hasattr(model, "get_params") else \
-            Pipeline([("scaler", StandardScaler()), ("model", Ridge(alpha=1.0))])
-        # Re-create fresh model each fold
-        if name == "Ridge":
-            m = Pipeline([("scaler", StandardScaler()), ("model", Ridge(alpha=1.0))])
-        elif name == "RandomForest":
-            m = RandomForestRegressor(n_estimators=200, max_depth=6,
-                                      min_samples_leaf=3, random_state=42)
-        else:
-            m = GradientBoostingRegressor(n_estimators=200, max_depth=3,
-                                          learning_rate=0.05, random_state=42)
+    for name, model_template in models.items():
+        m = clone(model_template)   # sklearn clone — works for Pipeline too
         m.fit(X[loo_train], y[loo_train])
         preds = m.predict(X[loo_val])
         loo_results[name]["pred"].extend(preds.tolist())
