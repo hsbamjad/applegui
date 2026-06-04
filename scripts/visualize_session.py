@@ -100,13 +100,12 @@ PALETTE = [
     (120, 200, 255),  # peach
 ]
 
-BG_DARK     = (12,  14,  20)    # almost black (BGR)
-BG_PANEL    = (18,  22,  32)    # side panel background
-GRID_COLOR  = (30,  38,  55)    # lane grid lines
-SCAN_COLOR  = ( 0, 255,  80)    # scanning line colour
+BG_DARK     = (12,  14,  20)
+BG_PANEL    = (18,  22,  32)
+GRID_COLOR  = (30,  38,  55)
 TEXT_MAIN   = (220, 230, 245)
 TEXT_DIM    = (100, 120, 150)
-ACCENT      = (  0, 255, 160)   # global accent (neon green)
+ACCENT      = (  0, 255, 160)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DRAWING PRIMITIVES
@@ -209,20 +208,38 @@ def draw_diameter_line(img, cx, cy, d_px, angle_deg, color, thick=2):
     cv2.circle(img,(x1,y1),3,color,-1,cv2.LINE_AA)
     cv2.circle(img,(x2,y2),3,color,-1,cv2.LINE_AA)
 
-def scan_sweep_line(img, frame_idx, img_w, img_h):
-    """Vertical green scan line that sweeps right across frame."""
-    period = img_w * 2          # full sweep period in frames
-    t      = frame_idx % period
-    x      = t if t < img_w else img_w*2 - t
-    if 0 <= x < img_w:
-        alpha_strip = np.zeros((img_h, 3), dtype=np.float32)
-        for dx, alpha in [(-2,0.04),(-1,0.12),(0,0.55),(1,0.12),(2,0.04)]:
-            xx = x + dx
-            if 0 <= xx < img_w:
-                img[:, xx] = np.clip(
-                    img[:, xx].astype(np.float32) +
-                    np.array(SCAN_COLOR, dtype=np.float32) * alpha,
-                    0, 255).astype(np.uint8)
+def precompute_ellipse(apple):
+    """
+    Fit a real ellipse to the apple's consensus_mask using cv2.fitEllipse.
+    Returns dict with keys: angle_deg, a_px, b_px, cx_rel, cy_rel
+    (axes and center are relative to consensus_mask crop so we can
+    scale them to any bbox size at draw time).
+    Returns None if mask is missing or ellipse cannot be fitted.
+    """
+    mask = apple.get("consensus_mask")
+    if mask is None:
+        return None
+    m = (mask.astype(np.uint8) * 255) if mask.max() <= 1 else mask.astype(np.uint8)
+    cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not cnts:
+        return None
+    cnt = max(cnts, key=cv2.contourArea)
+    if len(cnt) < 5:
+        return None
+    try:
+        (ex, ey), (ma, mb), angle = cv2.fitEllipse(cnt)
+        mh, mw = m.shape[:2]
+        return {
+            "angle_deg": float(angle),   # OpenCV ellipse angle (major axis)
+            "a_px":      float(max(ma, mb)) / 2.0,   # semi-major in consensus px
+            "b_px":      float(min(ma, mb)) / 2.0,   # semi-minor in consensus px
+            "cx_rel":    float(ex / mw),             # centre as fraction of mask w
+            "cy_rel":    float(ey / mh),             # centre as fraction of mask h
+            "mask_w":    float(mw),
+            "mask_h":    float(mh),
+        }
+    except cv2.error:
+        return None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ML FEATURE BUILDER  (mirrors view_fusion logic)
@@ -397,6 +414,19 @@ def main():
     # ── Live estimators ────────────────────────────────────────────────────────
     live = {a["apple_idx"]: LiveEst() for a in apples}
 
+    # ── Pre-compute REAL ellipse params from consensus_mask per apple ──────────
+    print("  Computing real ellipse fits from consensus masks...")
+    ell_params = {}
+    for apple in apples:
+        idx = apple["apple_idx"]
+        ep  = precompute_ellipse(apple)
+        ell_params[idx] = ep
+        if ep:
+            print(f"    #{idx+1:2d}: a={ep['a_px']:.1f}px  b={ep['b_px']:.1f}px"
+                  f"  angle={ep['angle_deg']:.1f}°")
+        else:
+            print(f"    #{idx+1:2d}: ellipse fit failed (no mask or <5 contour pts)")
+
     # ── Lane boundaries (for lane grid) ───────────────────────────────────────
     if len(apples) > 0:
         cy_vals = {}
@@ -461,9 +491,6 @@ def main():
             put_text(bgr, f"L{ln}", (5, ly-5), scale=0.30,
                      color=GRID_COLOR, shadow=False)
 
-        # ── Scan sweep ────────────────────────────────────────────────────────
-        scan_sweep_line(bgr, fi, img_w - PANEL_W, img_h)
-
         # ── Update live estimators first ──────────────────────────────────────
         for apple,fm in active:
             live[apple["apple_idx"]].update(fm)
@@ -480,7 +507,7 @@ def main():
             cy = fm.get("cy_px",(y1+y2)//2)
             bw,bh = x2-x1, y2-y1
 
-            # ── 1. Scanline mask ──────────────────────────────────────────────
+            # ── 1. Scanline mask (REAL: consensus_mask from pkl) ─────────────
             cons_mask = apple.get("consensus_mask")
             if cons_mask is not None and bw>4 and bh>4:
                 m = cv2.resize(cons_mask.astype(np.uint8)*255,(bw,bh),
@@ -494,24 +521,38 @@ def main():
                                        m[my1:my2,mx1:mx2],
                                        ix1, iy1, color,
                                        alpha=0.40, stride=5)
-                    # Contour outline (bright)
                     mc = m[my1:my2,mx1:mx2]
                     cnts,_ = cv2.findContours(mc, cv2.RETR_EXTERNAL,
                                                cv2.CHAIN_APPROX_SIMPLE)
                     shifted = [c + np.array([ix1,iy1]) for c in cnts]
                     cv2.polylines(bgr, shifted, True, color, 1, cv2.LINE_AA)
 
-            # ── 2. Fitted ellipse ─────────────────────────────────────────────
-            ell_a = max(bw,bh)//2
-            ell_b = min(bw,bh)//2
-            if ell_a>0 and ell_b>0:
-                cv2.ellipse(bgr,(cx,cy),(ell_a,ell_b),0,0,360,
-                            tuple(int(v*0.55) for v in color),1,cv2.LINE_AA)
-
-            # ── 3. Rotating diameter line (animation) ─────────────────────────
-            d_maxw = fm.get("d_maxw", float(bw)) * 1.0   # pixels
-            angle  = (fi * 1.5) % 180                    # slow rotation
-            draw_diameter_line(bgr, cx, cy, d_maxw, angle, color, thick=1)
+            # ── 2. REAL fitted ellipse (cv2.fitEllipse on consensus_mask) ─────
+            ep = ell_params.get(idx)
+            if ep and bw>4 and bh>4:
+                # Scale axes from consensus mask size to current bbox size
+                sx    = bw / max(ep["mask_w"], 1)
+                sy    = bh / max(ep["mask_h"], 1)
+                r_a   = max(1, int(ep["a_px"] * sx))
+                r_b   = max(1, int(ep["b_px"] * sy))
+                r_ang = ep["angle_deg"]
+                # Draw real ellipse (dimmed to not overwhelm mask)
+                cv2.ellipse(bgr, (cx,cy), (r_a,r_b),
+                            r_ang, 0, 360,
+                            tuple(int(v*0.60) for v in color),
+                            1, cv2.LINE_AA)
+                # Major axis endpoints — this is the REAL measurement axis
+                # (angle in OpenCV ellipse = angle of major axis from x-axis)
+                draw_diameter_line(bgr, cx, cy,
+                                   r_a * 2,       # full major axis length
+                                   r_ang,          # real angle from fitEllipse
+                                   color, thick=1)
+            elif bw>4 and bh>4:
+                # Fallback: use d_ell from pkl (no angle info but real length)
+                d_ell = fm.get("d_ell", float(max(bw,bh)))
+                cv2.ellipse(bgr,(cx,cy),(int(d_ell/2), int(min(bw,bh)/2)),
+                            0,0,360,
+                            tuple(int(v*0.50) for v in color),1,cv2.LINE_AA)
 
             # ── 4. Crosshair ──────────────────────────────────────────────────
             crosshair(bgr, cx, cy, color, size=16, gap=5)
@@ -525,7 +566,9 @@ def main():
             # ── 6. Progress arc (frames seen / total) ─────────────────────────
             n_total = total_frames_per_apple.get(idx, 1)
             frac    = min(1.0, live[idx].n / max(n_total,1))
-            draw_arc_progress(bgr, cx, cy, min(ell_a+10,60),
+            _ep = ell_params.get(idx)
+            _ra = (int(_ep['a_px'] * bw / max(_ep['mask_w'],1)) if _ep else max(bw,bh)//2)
+            draw_arc_progress(bgr, cx, cy, min(_ra+10,65),
                               frac, color, thick=2)
 
             # ── 7. Info HUD above apple ───────────────────────────────────────
