@@ -61,14 +61,9 @@ def _fast_diameters(mask: np.ndarray) -> dict:
     }
 
 
-# Feature columns — must match what the Ridge model was trained on
-# (same order as view_fusion.feature_matrix default cols)
-_FEATURE_COLS = [
-    "d_maxw_wmean", "d_sym_wmean", "d_ell_wmean", "d_area_wmean",
-    "d_maxw_peak",  "d_sym_peak",  "d_ell_peak",  "d_area_peak",
-    "ell_a",        "ell_b",
-    "mean_Q",       "n_central",   "lane",
-]
+# _FEATURE_COLS is loaded from bundle['feature_cols'] at runtime.
+# The trained model is a sklearn Pipeline (scaler + Ridge) — feature order
+# and count are whatever was used during training, stored in the bundle.
 
 
 class AppleSizeAccumulator:
@@ -83,11 +78,11 @@ class AppleSizeAccumulator:
     """
 
     def __init__(self, model_path: str | Path, min_frames: int = 4) -> None:
-        self._min_frames   = min_frames
+        self._min_frames    = min_frames
         self._tracks:    dict[int, list[dict]] = {}   # track_id → measurements
         self._committed: set[int]              = set() # already sized — skip update
-        self._model  = None
-        self._scaler = None
+        self._model       = None   # sklearn Pipeline (scaler + Ridge)
+        self._feature_cols: list[str] = []   # loaded from bundle
 
         self._load_model(Path(model_path))
 
@@ -100,9 +95,16 @@ class AppleSizeAccumulator:
         try:
             with open(path, "rb") as f:
                 bundle = pickle.load(f)
-            self._model  = bundle.get("model")
-            self._scaler = bundle.get("scaler")
-            logger.info("Sizing model loaded from %s", path)
+            self._model        = bundle.get("model")          # sklearn Pipeline
+            self._feature_cols = bundle.get("feature_cols", [])
+            logger.info(
+                "Sizing model loaded from %s  |  %d features  |  "
+                "MAE=%.2fmm  R²=%.3f",
+                path,
+                len(self._feature_cols),
+                bundle.get("mae", float("nan")),
+                bundle.get("r2",  float("nan")),
+            )
         except Exception as exc:
             logger.error("Failed to load sizing model from %s: %s", path, exc)
 
@@ -257,15 +259,13 @@ class AppleSizeAccumulator:
             logger.debug("Track %d: fuse_apple returned None — sizing skipped", track_id)
             return None
 
-        # ── Build feature vector in training column order ─────────────────────
+        # ── Build feature vector in training column order ──────────────────────
         X = np.array(
-            [[float(features.get(c, 0.0)) for c in _FEATURE_COLS]],
+            [[float(features.get(c, 0.0)) for c in self._feature_cols]],
             dtype=np.float32,
         )
 
-        if self._scaler is not None:
-            X = self._scaler.transform(X)
-
+        # Pipeline handles scaling internally — just call predict
         size_mm = float(self._model.predict(X)[0])
         size_mm = round(max(40.0, min(120.0, size_mm)), 1)  # sanity clamp
 
