@@ -186,3 +186,14 @@ display:
   show_bounding_boxes: true
   show_tracking_id: true
   show_grade_label: true
+
+# ══════════════════════════════════════════════════════════════
+# APPLE SIZING
+# Ridge regression model trained on per-track mask features.
+# Only active when a segmentation YOLO model is loaded (has masks).
+# Shows "—" in results table when disabled or model missing.
+# ══════════════════════════════════════════════════════════════
+sizing:
+  enabled: true
+  model_path: "models/size_model.pkl"
+  min_frames: 4       # Discard tracks shorter than this (too few frames for reliable estimate)
