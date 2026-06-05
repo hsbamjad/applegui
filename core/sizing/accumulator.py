@@ -152,10 +152,11 @@ class AppleSizeAccumulator:
         sx = mask_w / orig_w
         sy = mask_h / orig_h
 
-        # Log mask resolution once so we can verify scale
+        # Log mask resolution once — helps diagnose scale mismatches
         if not hasattr(self, "_mask_shape_logged"):
-            logger.debug(
-                "Mask shape: %dx%d  orig: %dx%d  scale: %.3fx%.3f",
+            logger.info(
+                "Mask tensor: %dx%d px  |  orig frame: %dx%d px  |  "
+                "scale: %.3f x %.3f",
                 mask_w, mask_h, orig_w, orig_h, sx, sy,
             )
             self._mask_shape_logged = True
@@ -265,13 +266,22 @@ class AppleSizeAccumulator:
             dtype=np.float32,
         )
 
-        # Pipeline handles scaling internally — just call predict
-        size_mm = float(self._model.predict(X)[0])
-        size_mm = round(max(40.0, min(120.0, size_mm)), 1)  # sanity clamp
+        # Log feature values on first commit to verify scale is correct
+        if not hasattr(self, "_feature_logged"):
+            feat_str = "  ".join(
+                f"{c}={features.get(c, 0.0):.1f}" for c in self._feature_cols
+            )
+            logger.info("First commit features: %s", feat_str)
+            logger.info("First commit raw X: %s", X.tolist())
+            self._feature_logged = True
 
-        logger.debug(
-            "Track %d: lane=%d  frames=%d  size=%.1fmm",
-            track_id, lane, n, size_mm,
+        # Pipeline handles scaling internally — just call predict
+        raw_pred = float(self._model.predict(X)[0])
+        size_mm  = round(max(40.0, min(120.0, raw_pred)), 1)  # sanity clamp
+
+        logger.info(
+            "Track %d: lane=%d  frames=%d  raw=%.1fmm  size=%.1fmm",
+            track_id, lane, n, raw_pred, size_mm,
         )
         return size_mm
 
