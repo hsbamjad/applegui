@@ -238,12 +238,13 @@ class RecentResultsCard(QWidget):
 
         g_color = GRADE_COLORS.get(grade, TEXT_2)
 
-        # Compact fixed-width format that fits in 256px panel at 10px Consolas
-        grade_short = grade[:6]
-        size_str    = f"{size_mm:.0f}mm" if size_mm is not None else "  —  "
+        # Row format (fits 256px panel at 10px Consolas):
+        #   #0011 L1 Cull  →C  94%  72mm
+        grade_short = grade[:5]     # Fresh / Proc / Cull
+        size_str    = f"{size_mm:.0f}mm" if size_mm is not None else " — "
         text = (
-            f"#{apple_id:04d} L{lane} {grade_short:<6}"
-            f"\u2192{outlet} {confidence * 100:.1f}% {size_str}"
+            f"#{apple_id:04d} L{lane} {grade_short:<5}"
+            f" \u2192{outlet}  {confidence * 100:.0f}%  {size_str}"
         )
 
         item = QListWidgetItem(text)
