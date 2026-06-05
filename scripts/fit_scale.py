@@ -1,5 +1,5 @@
 """
-scripts/fit_scale.py  —  Step 4: Geometric Evaluation & Scale Fitting
+scripts/fit_scale.py  --  Step 4: Geometric Evaluation & Scale Fitting
 ======================================================================
 Michigan State University | Apple GUI | feature/apple-size-ml branch
 
@@ -20,8 +20,12 @@ import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+from core.log import get_logger, configure_root
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.sizing.view_fusion import fuse_session, feature_matrix
+
+logger = get_logger(__name__)
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(description="Geometric scale fitting and evaluation")
@@ -53,17 +57,19 @@ METHOD_LABELS = {
     "ell_b":        "Consensus ell_b",
 }
 
+configure_root()
+
 # ── Load and fuse ─────────────────────────────────────────────────────────────
 all_fused = []
 for pkl_path in args.pkls:
-    print(f"Loading {Path(pkl_path).name} ...")
+    logger.info(f"Loading {Path(pkl_path).name} ...")
     with open(pkl_path, "rb") as f:
         data = pickle.load(f)
     fused = fuse_session(data)
     all_fused.extend(fused)
-    print(f"  {len(fused)} apples fused")
+    logger.info(f"  {len(fused)} apples fused")
 
-print(f"\nTotal: {len(all_fused)} apples\n")
+logger.info(f"Total: {len(all_fused)} apples")
 
 # ── Build feature matrix ──────────────────────────────────────────────────────
 EVAL_METHODS = [
@@ -79,16 +85,16 @@ X_v = X[valid_mask]; y_v = y[valid_mask]
 n = len(y_v)
 
 # ── Fit scale & evaluate per method ──────────────────────────────────────────
-print("="*72)
-print(f"{'Method':<26} {'Scale':>8} {'MAE':>7} {'RMSE':>8} {'MaxErr':>8} {'R²':>6}")
-print("="*72)
+logger.info("="*72)
+logger.info(f"{'Method':<26} {'Scale':>8} {'MAE':>7} {'RMSE':>8} {'MaxErr':>8} {'R2':>6}")
+logger.info("="*72)
 
 results = {}
 for ci, method in enumerate(EVAL_METHODS):
     d_px = X_v[:, ci]
     ok = d_px > 5
     if ok.sum() < 3:
-        print(f"  {METHOD_LABELS[method]:<26}  INSUFFICIENT DATA")
+        logger.warning(f"  {METHOD_LABELS[method]:<26}  INSUFFICIENT DATA")
         continue
     scale    = float(np.sum(d_px[ok] * y_v[ok]) / np.sum(d_px[ok] ** 2))
     d_mm     = d_px * scale
@@ -104,16 +110,16 @@ for ci, method in enumerate(EVAL_METHODS):
                            mae=mae, rmse=rmse, max_err=max_err, r2=r2)
     best_marker = ""
     if results and mae == min(v["mae"] for v in results.values()):
-        best_marker = " ◄"
-    print(f"  {METHOD_LABELS[method]:<26}  {scale:6.4f}  {mae:5.2f}mm"
+        best_marker = " [BEST]"
+    logger.info(f"  {METHOD_LABELS[method]:<26}  {scale:6.4f}  {mae:5.2f}mm"
           f"  {rmse:6.2f}mm  {max_err:6.2f}mm  {r2:5.3f}{best_marker}")
 
-print("="*72)
+logger.info("="*72)
 
 # ── Per-apple detail ──────────────────────────────────────────────────────────
-print(f"\n{'#':>3}  {'GT':>6}  " +
+logger.info(f"{'#':>3}  {'GT':>6}  " +
       "  ".join(f"{METHOD_LABELS[m][:8]:>8}" for m in EVAL_METHODS if m in results))
-print("-"*(8 + 10*len(results)))
+logger.info("-"*(8 + 10*len(results)))
 for i, meta in enumerate(metas):
     if not valid_mask[i]: continue
     row = f"#{meta['apple_idx']+1:2d}  {y[i]:6.1f}  "
@@ -121,7 +127,7 @@ for i, meta in enumerate(metas):
         if m not in results: continue
         ci = EVAL_METHODS.index(m)
         row += f"{results[m]['d_mm'][i]:8.1f}  "
-    print(row)
+    logger.info(row)
 
 # ── Plot 1: MAE bar chart ─────────────────────────────────────────────────────
 keys = [m for m in EVAL_METHODS if m in results]
@@ -135,8 +141,8 @@ fig.patch.set_facecolor(DARK)
 sessions_str = "+".join(Path(p).stem for p in args.pkls)
 
 for ax, vals, title in zip(axes, [maes, rmses],
-                            ["MAE (mm) — lower is better",
-                             "RMSE (mm) — lower is better"]):
+                            ["MAE (mm) -- lower is better",
+                             "RMSE (mm) -- lower is better"]):
     ax.set_facecolor(PANEL)
     for sp in ax.spines.values(): sp.set_edgecolor("#30363d")
     ax.tick_params(colors=MUTED, labelsize=9)
@@ -153,13 +159,13 @@ for ax, vals, title in zip(axes, [maes, rmses],
         ax.text(bar.get_x() + bar.get_width()/2, bar.get_height()+0.02,
                 f"{val:.2f}", ha="center", fontsize=9, color=TEXT, fontweight="bold")
 
-fig.suptitle(f"Per-Method Scale Fit — {sessions_str}   (N={n} apples)",
+fig.suptitle(f"Per-Method Scale Fit -- {sessions_str}   (N={n} apples)",
              fontsize=14, fontweight="bold", color=TEXT, y=1.01)
 plt.tight_layout()
 out1 = os.path.join(OUT_DIR, f"{sessions_str}_fit_scale_bars.png")
 plt.savefig(out1, dpi=140, bbox_inches="tight", facecolor=DARK)
 plt.close()
-print(f"\nSaved: {out1}")
+logger.info(f"Saved: {out1}")
 
 # ── Plot 2: Per-apple error lines ─────────────────────────────────────────────
 valid_idxs = [i for i in range(len(metas)) if valid_mask[i]]
@@ -186,8 +192,8 @@ ax.axhline(-2, color=MUTED, lw=0.8, ls="--", alpha=0.5)
 ax.set_xticks(x)
 ax.set_xticklabels([f"#{metas[i]['apple_idx']+1}\nL{metas[i]['lane']}P{metas[i]['pos']}"
                     for i in valid_idxs], fontsize=8, color=TEXT)
-ax.set_ylabel("Error: Estimated − GT (mm)", fontsize=11, color=TEXT)
-ax.set_title(f"Per-Apple Error — {sessions_str}   (view_fusion fused features)",
+ax.set_ylabel("Error: Estimated - GT (mm)", fontsize=11, color=TEXT)
+ax.set_title(f"Per-Apple Error -- {sessions_str}   (view_fusion fused features)",
              fontsize=13, fontweight="bold", color=TEXT)
 ax.legend(fontsize=10, facecolor=PANEL, edgecolor="#30363d", labelcolor=TEXT, ncol=2)
 ax.grid(True, axis="y", alpha=0.12, color="#30363d")
@@ -196,5 +202,5 @@ plt.tight_layout()
 out2 = os.path.join(OUT_DIR, f"{sessions_str}_fit_scale_errors.png")
 plt.savefig(out2, dpi=140, bbox_inches="tight", facecolor=DARK)
 plt.close()
-print(f"Saved: {out2}")
-print("\nDone.")
+logger.info(f"Saved: {out2}")
+logger.info("Done.")

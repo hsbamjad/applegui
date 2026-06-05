@@ -21,7 +21,7 @@ Threading:
 from __future__ import annotations
 
 import time
-import logging
+from core.log import get_logger
 import threading
 from dataclasses import dataclass
 from typing import Optional
@@ -29,7 +29,7 @@ from typing import Optional
 import numpy as np
 import cv2
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 @dataclass

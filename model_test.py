@@ -6,8 +6,11 @@ from scipy.optimize import linear_sum_assignment
 import re
 import time
 
+from core.log import get_logger, configure_root
 
-# ================= 参数配置 =================
+logger = get_logger(__name__)
+
+# ================= Parameter Configuration =================
 model_path = r'C:/Users/tommy/OneDrive - Michigan State University/data/system_integration/training_data/2025_9_30/model/rg-nir1/grading/weights/best.engine'
 image_folder = r"C:/Yuyuan/program_test/rg-nir-G1/"
 img_size = [768, 1024]
@@ -16,9 +19,9 @@ iou_thres = 0.3
 max_missing = 15
 
 
-# ================= 辅助函数 =================
+# ================= Helper Functions =================
 def compute_iou_matrix(boxesA, boxesB):
-    """计算 IOU 矩阵"""
+    """Compute IOU matrix"""
     iou_matrix = np.zeros((len(boxesA), len(boxesB)), dtype=np.float32)
     for i, boxA in enumerate(boxesA):
         for j, boxB in enumerate(boxesB):
@@ -38,11 +41,11 @@ def compute_iou_matrix(boxesA, boxesB):
 
 
 def natural_sort_key(s):
-    """按自然数字顺序排序文件"""
+    """Sort files in natural numeric order"""
     return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s)]
 
 
-# ================= 单目标追踪类 =================
+# ================= Single Object Tracker =================
 class TrackedObject:
     def __init__(self, object_id, bbox, center, prev_center=None, dt=1.0):
         self.id = object_id
@@ -51,7 +54,7 @@ class TrackedObject:
         self.missing_frames = 0
         self.age = 0
         self.confirmed = False
-        self.active = True  # 是否仍在画面中
+        self.active = True  # whether still in frame
         self.trajectory = [center]
 
         # === Kalman Filter ===
@@ -99,7 +102,7 @@ class TrackedObject:
         self.trajectory.append(smooth_center)
 
 
-# ================= 多目标管理类 =================
+# ================= Multi-Object Manager =================
 class TrackerManager:
     def __init__(self, img_width, max_missing=8, iou_threshold=0.5):
         self.trackers = []
@@ -117,16 +120,16 @@ class TrackerManager:
 
         detection_centers = [((x1 + x2)/2, (y1 + y2)/2) for (x1, y1, x2, y2) in detections]
 
-        # === 没有历史追踪对象：新建 ===
+        # === No existing trackers: create new ===
         if len(self.trackers) == 0:
             for i, c in enumerate(detection_centers):
-                # 仅从左端出现的才建立追踪
+                # Only track objects entering from the left
                 if c[0] < self.img_width * 0.15:
                     self.trackers.append(TrackedObject(self.next_id, detections[i], c))
                     self.next_id += 1
             return
 
-        # === 构建代价矩阵（IOU + 中心点距离）===
+        # === Build cost matrix (IOU + center distance) ===
         cost_matrix = np.zeros((len(self.trackers), len(detections)))
         for i, tracker in enumerate(self.trackers):
             pred_center = tracker.predict()
@@ -151,29 +154,31 @@ class TrackerManager:
             else:
                 self.trackers[i].missing_frames += 1
 
-        # === 未匹配追踪对象 ===
+        # === Unmatched trackers ===
         unmatched_trackers = set(range(len(self.trackers))) - matched_tracker_indices
         for i in unmatched_trackers:
             self.trackers[i].missing_frames += 1
 
-        # === 新目标仅从左边进入 ===
+        # === New objects only enter from left ===
         unmatched_detections = set(range(len(detections))) - set(matched_indices)
         for j in unmatched_detections:
             c = detection_centers[j]
-            if c[0] < self.img_width * 0.15:  # 左端进入
+            if c[0] < self.img_width * 0.15:  # enter from left
                 self.trackers.append(TrackedObject(self.next_id, detections[j], c))
                 self.next_id += 1
 
-        # === 移除右端消失的目标 ===
+        # === Remove objects that exited right edge ===
         for t in self.trackers:
-            if t.center[0] > self.img_width * 0.99:  # 超出右边界
+            if t.center[0] > self.img_width * 0.99:  # beyond right boundary
                 t.active = False
         self.trackers = [t for t in self.trackers if t.missing_frames < self.max_missing and t.active]
 
 
-# ================= 主程序 =================
+# ================= Main Program =================
 if __name__ == '__main__':
-    print("🚀 Loading YOLO model...")
+    configure_root()
+
+    logger.info("Loading YOLO model...")
     model = YOLO(model_path, task="segment")
 
     tracker = TrackerManager(
@@ -189,9 +194,9 @@ if __name__ == '__main__':
     )
 
     if not image_files:
-        raise FileNotFoundError(f"❌ No images found in {image_folder}")
+        raise FileNotFoundError(f"No images found in {image_folder}")
 
-    print(f"📂 Found {len(image_files)} images to process.")
+    logger.info(f"Found {len(image_files)} images to process.")
     start = time.time()
 
     for idx, filename in enumerate(image_files, 1):
@@ -199,7 +204,7 @@ if __name__ == '__main__':
         frame = cv2.imread(image_path)
         img = cv2.resize(frame, (1024, 768))
         if img is None:
-            print(f"⚠️ Cannot load image: {filename}")
+            logger.warning(f"Cannot load image: {filename}")
             continue
 
         results = model(
@@ -227,7 +232,7 @@ if __name__ == '__main__':
                 detections.append([xmin, ymin, xmax, ymax, conf, cls])
                 # masks_bin.append((mask * 255).astype("uint8"))
                 if masks is not None and i < len(mask_data):
-                    mask_bin = (mask_data[i] > 0.5).astype("uint8")  # 二值化
+                    mask_bin = (mask_data[i] > 0.5).astype("uint8")  # binarize
                     masks_bin.append(mask_bin)
                 else:
                     masks_bin.append(None)
@@ -245,9 +250,9 @@ if __name__ == '__main__':
             cv2.putText(img, f'ID:{obj.id} Class:{cls}', (x1, y1 - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             # if mask is not None:
-            #     color = (0, 255, 0)  # 绿色掩膜
+            #     color = (0, 255, 0)
             #     mask_colored = np.zeros_like(img, dtype=np.uint8)
-            #     mask_colored[:, :, 1] = mask * 255  # G 通道
+            #     mask_colored[:, :, 1] = mask * 255  # G channel
             #     img = cv2.addWeighted(img, 1.0, mask_colored, 0.5, 0)
 
         cv2.imshow("YOLO + Directional Tracking", img)
@@ -256,4 +261,4 @@ if __name__ == '__main__':
 
     total_time = time.time() - start
     cv2.destroyAllWindows()
-    print(f"✅ Tracking finished! Total time: {total_time:.3f}s")
+    logger.info(f"Tracking finished! Total time: {total_time:.3f}s")

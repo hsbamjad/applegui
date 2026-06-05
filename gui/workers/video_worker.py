@@ -28,14 +28,14 @@ Usage:
 from __future__ import annotations
 
 import time
-import logging
+from core.log import get_logger
 import threading
 
 import cv2
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 class VideoWorker(QThread):

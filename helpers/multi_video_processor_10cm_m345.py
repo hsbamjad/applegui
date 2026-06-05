@@ -14,6 +14,9 @@ import math
 import argparse
 import sys
 
+from core.log import get_logger, configure_root
+logger = get_logger(__name__)
+
 # Add models directory to path for relative imports
 sys.path.insert(0, str(Path(__file__).parent.parent / 'models'))
 try:
@@ -29,7 +32,7 @@ class MultiSourceVideoProcessor:
                  enable_spd=True, enable_nir_fusion=True, enable_chestnut_head=True):
         # Load model with architecture flags matching the training config
         if ChestnutYOLO is not None:
-            print(f"🚀 Loading ChestnutYOLO (SPD={enable_spd}, NIR={enable_nir_fusion}, Head={enable_chestnut_head})")
+            logger.info(f"Loading ChestnutYOLO (SPD={enable_spd}, NIR={enable_nir_fusion}, Head={enable_chestnut_head})")
             model_obj = ChestnutYOLO(
                 model_base=model_path,
                 enable_spd=enable_spd,
@@ -44,7 +47,7 @@ class MultiSourceVideoProcessor:
                 import torch
                 device = 'cuda' if torch.cuda.is_available() else 'cpu'
                 model_obj.nir_fusion.to(device)
-                print(f"  ✓ NIRDiffFusion moved to {device}")
+                logger.info(f"  [OK] NIRDiffFusion moved to {device}")
 
         else:
             self.model = YOLO(model_path)
@@ -64,7 +67,7 @@ class MultiSourceVideoProcessor:
         if self.defective_class_id is None:
             self.defective_class_id = 0
             
-        print(f"Model loaded. Defective class ID: {self.defective_class_id}")
+        logger.info(f"Model loaded. Defective class ID: {self.defective_class_id}")
 
     def get_next_experiment_folder(self, base_name="multi_video_grading"):
         existing_folders = list(self.output_dir.glob(f"{base_name}_*"))
@@ -85,7 +88,7 @@ class MultiSourceVideoProcessor:
 
     def get_global_percentiles_efficient(self, path, samples=150):
         """Pre-scan video to find intensity bounds for consistent normalization"""
-        print(f"📊 Analyzing global contrast for {Path(path).name}...")
+        logger.info(f"Analyzing global contrast for {Path(path).name}...")
         cap = cv2.VideoCapture(str(path))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         indices = np.linspace(0, total_frames - 1, samples, dtype=int)
@@ -104,7 +107,7 @@ class MultiSourceVideoProcessor:
         total_pixels = cdf[-1]
         p_low = np.searchsorted(cdf, 0.005 * total_pixels)
         p_high = np.searchsorted(cdf, 0.995 * total_pixels)
-        print(f"   Done. Global bounds: low={p_low}, high={p_high}")
+        logger.info(f"   Done. Global bounds: low={p_low}, high={p_high}")
         return p_low, p_high
 
     def process_multispectral_video(self, 
@@ -125,15 +128,15 @@ class MultiSourceVideoProcessor:
         s1_path = Path(s1_path)
         s2_path = Path(s2_path)
         
-        print(f"\n{'='*70}")
-        print(f"Fusing Source Streams:")
-        print(f"  RGB: {rgb_path.name}")
-        print(f"  S1:  {s1_path.name}")
-        print(f"  S2:  {s2_path.name}")
-        print(f"{'='*70}\n")
+        logger.info(f"{'='*70}")
+        logger.info(f"Fusing Source Streams:")
+        logger.info(f"  RGB: {rgb_path.name}")
+        logger.info(f"  S1:  {s1_path.name}")
+        logger.info(f"  S2:  {s2_path.name}")
+        logger.info(f"{'='*70}")
         
         exp_folder = self.get_next_experiment_folder()
-        print(f"Output folder: {exp_folder.name}\n")
+        logger.info(f"Output folder: {exp_folder.name}")
         
         # --- GLOBAL PRE-SCAN ---
         # Get stable bounds for NIR2 Source 2 to prevent flicker/bad starts
@@ -343,7 +346,7 @@ class MultiSourceVideoProcessor:
             cv2.putText(annotated_frame, f"Count: {current_count}", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
             out.write(annotated_frame)
             if frame_number % 20 == 0:
-                print(f"  Frame {frame_number}/{total_frames} | Count: {current_count}")
+                logger.info(f"  Frame {frame_number}/{total_frames} | Count: {current_count}")
         
         cap_rgb.release()
         cap_s1.release()
@@ -358,11 +361,13 @@ class MultiSourceVideoProcessor:
             csv_data.append({'nut_id': seq_id, 'prediction': res['prediction'], 'conf': f"{res['confidence']:.4f}", 'frames': res['num_detections']})
         pd.DataFrame(csv_data).to_csv(csv_path, index=False)
         
-        print(f"\n✓ Finished! Results saved to: {exp_folder}")
+        logger.info(f"[OK] Finished! Results saved to: {exp_folder}")
         return output_video_path, csv_path
 
 
 def main():
+    configure_root()
+
     parser = argparse.ArgumentParser(description='Multispectral Video Processor (Ablation Study)')
     parser.add_argument('--rgb', required=True, help='Path to RGB video')
     parser.add_argument('--s1', required=True, help='Path to Source 1 (NIR1) video')

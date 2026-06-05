@@ -7,7 +7,7 @@ Loads all session pkls, runs view_fusion, trains Ridge + RandomForest
 regressors, evaluates with Leave-One-Session-Out (LOO-CV).
 
 EXCLUSION CRITERIA (imaging issues, not code issues):
-  cx_range < 1000 px → apple didn't cross enough of the frame.
+  cx_range < 1000 px -> apple didn't cross enough of the frame.
 
 DATA SPLIT:
   - Train: G1-G6, G8-G9  (8 sessions, ~140 apples)
@@ -15,12 +15,12 @@ DATA SPLIT:
   - G11 excluded: GT labeling error (apples #1 & #4 swapped)
 
 OUTPUTS (saved to OUT_DIR):
-  fig1_loo_scatter.png       — LOO predicted vs GT, all sessions
-  fig2_loo_per_session.png   — per-session MAE/RMSE bars + error distribution
-  fig3_blind_test.png        — G10 blind test scatter + per-apple errors
-  fig4_model_insight.png     — Ridge coefficients + residual diagnostics
-  fig5_r2_explanation.png    — why R² can be lower with small apple size range
-  training_metrics.csv       — all numeric results
+  fig1_loo_scatter.png       -- LOO predicted vs GT, all sessions
+  fig2_loo_per_session.png   -- per-session MAE/RMSE bars + error distribution
+  fig3_blind_test.png        -- G10 blind test scatter + per-apple errors
+  fig4_model_insight.png     -- Ridge coefficients + residual diagnostics
+  fig5_r2_explanation.png    -- why R2 can be lower with small apple size range
+  training_metrics.csv       -- all numeric results
 
 Usage:
     python scripts/train_size_regressor.py
@@ -41,9 +41,13 @@ from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 from sklearn.pipeline import Pipeline
 from scipy import stats
 
+from core.log import get_logger, configure_root
+
 warnings.filterwarnings("ignore")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.sizing.view_fusion import fuse_session, feature_matrix
+
+logger = get_logger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 PKL_DIR  = r"D:\HA\apple_gui\data\frame_features"
@@ -82,16 +86,18 @@ def styled_ax(ax):
     for sp in ax.spines.values(): sp.set_edgecolor(BORDER)
     ax.grid(True, alpha=0.25, color=BORDER)
 
+configure_root()
+
 # ── Load all sessions ──────────────────────────────────────────────────────────
-print("=" * 72)
-print("LOADING AND FUSING ALL SESSIONS")
-print("=" * 72)
+logger.info("=" * 72)
+logger.info("LOADING AND FUSING ALL SESSIONS")
+logger.info("=" * 72)
 
 all_fused, excluded = [], []
 for sess in ALL_SESSIONS:
     pkl_path = Path(PKL_DIR) / f"{sess}.pkl"
     if not pkl_path.exists():
-        print(f"  [SKIP] {sess}.pkl not found"); continue
+        logger.warning(f"  [SKIP] {sess}.pkl not found"); continue
     with open(pkl_path, "rb") as f:
         data = pickle.load(f)
     fused = fuse_session(data)
@@ -101,10 +107,10 @@ for sess in ALL_SESSIONS:
             excluded.append(r); excl += 1
         else:
             all_fused.append(r); kept += 1
-    print(f"  {sess}: {kept} kept, {excl} excluded (cx_range<{MIN_CX_RANGE}px)")
+    logger.info(f"  {sess}: {kept} kept, {excl} excluded (cx_range<{MIN_CX_RANGE}px)")
 
-print(f"\n  Total kept    : {len(all_fused)}")
-print(f"  Total excluded: {len(excluded)}")
+logger.info(f"  Total kept    : {len(all_fused)}")
+logger.info(f"  Total excluded: {len(excluded)}")
 
 # ── Feature matrix ─────────────────────────────────────────────────────────────
 FEATURE_COLS = [
@@ -129,10 +135,10 @@ X_train, y_train = X[train_mask], y[train_mask]
 X_test,  y_test  = X[test_mask],  y[test_mask]
 test_metas = [metas[i] for i in range(len(metas)) if test_mask[i]]
 
-print(f"\n  Train: {train_mask.sum()} apples  |  Test: {test_mask.sum()} apples")
-print(f"  GT range train: {y_train.min():.1f}–{y_train.max():.1f} mm  "
+logger.info(f"  Train: {train_mask.sum()} apples  |  Test: {test_mask.sum()} apples")
+logger.info(f"  GT range train: {y_train.min():.1f}-{y_train.max():.1f} mm  "
       f"std={y_train.std():.2f}mm")
-print(f"  GT range test:  {y_test.min():.1f}–{y_test.max():.1f} mm  "
+logger.info(f"  GT range test:  {y_test.min():.1f}-{y_test.max():.1f} mm  "
       f"std={y_test.std():.2f}mm")
 
 # ── Models ─────────────────────────────────────────────────────────────────────
@@ -149,9 +155,9 @@ models = {"Ridge": make_ridge, "RandomForest": make_rf, "GradientBoost": make_gb
 model_colors = {"Ridge": C_RIDGE, "RandomForest": C_RF, "GradientBoost": C_GB}
 
 # ── Leave-One-Session-Out CV ───────────────────────────────────────────────────
-print(f"\n{'='*72}")
-print("LEAVE-ONE-SESSION-OUT CROSS-VALIDATION")
-print(f"{'='*72}")
+logger.info(f"{'='*72}")
+logger.info("LEAVE-ONE-SESSION-OUT CROSS-VALIDATION")
+logger.info(f"{'='*72}")
 
 loo = {n: {"pred":[], "true":[], "session":[]} for n in models}
 
@@ -166,8 +172,8 @@ for held in TRAIN_SESSIONS:
         loo[name]["true"].extend(y[loo_vl].tolist())
         loo[name]["session"].extend([held]*loo_vl.sum())
 
-print(f"\n  {'Model':<18} {'MAE':>7} {'RMSE':>8} {'R²':>7} {'MaxErr':>8} {'Acc%':>7}")
-print(f"  {'-'*58}")
+logger.info(f"  {'Model':<18} {'MAE':>7} {'RMSE':>8} {'R2':>7} {'MaxErr':>8} {'Acc%':>7}")
+logger.info(f"  {'-'*58}")
 loo_metrics = {}
 for name, res in loo.items():
     p, t = np.array(res["pred"]), np.array(res["true"])
@@ -177,13 +183,13 @@ for name, res in loo.items():
     maxe = np.max(np.abs(p-t))
     acc  = np.mean([(1-abs(pi-ti)/ti)*100 for pi,ti in zip(p,t)])
     loo_metrics[name] = dict(mae=mae, rmse=rmse, r2=r2, maxe=maxe, acc=acc)
-    star = " ← BEST" if mae == min(v["mae"] for v in {k:dict(mae=mean_absolute_error(np.array(loo[k]["true"]),np.array(loo[k]["pred"]))) for k in loo}.values())  else ""
-    print(f"  {name:<18} {mae:6.3f}mm  {rmse:6.3f}mm  {r2:6.3f}  {maxe:6.3f}mm  {acc:6.2f}%{star}")
+    star = " <- BEST" if mae == min(v["mae"] for v in {k:dict(mae=mean_absolute_error(np.array(loo[k]["true"]),np.array(loo[k]["pred"]))) for k in loo}.values())  else ""
+    logger.info(f"  {name:<18} {mae:6.3f}mm  {rmse:6.3f}mm  {r2:6.3f}  {maxe:6.3f}mm  {acc:6.2f}%{star}")
 
-# ── Final train → blind test ───────────────────────────────────────────────────
-print(f"\n{'='*72}")
-print("BLIND TEST (G10)")
-print(f"{'='*72}")
+# ── Final train -> blind test ───────────────────────────────────────────────────
+logger.info(f"{'='*72}")
+logger.info("BLIND TEST (G10)")
+logger.info(f"{'='*72}")
 
 final = {}
 best_mae = 999
@@ -201,18 +207,18 @@ for name, make in models.items():
                        maxe=maxe, acc3=acc3, acc5p=acc5p, pacc=pacc)
     if mae < best_mae: best_mae = mae; best_name = name
 
-print(f"\n  {'Model':<18} {'MAE':>7} {'RMSE':>8} {'R²':>7} "
-      f"{'±3mm%':>7} {'±5%%':>7} {'Acc%(paper)':>12}")
-print(f"  {'-'*72}")
+logger.info(f"  {'Model':<18} {'MAE':>7} {'RMSE':>8} {'R2':>7} "
+      f"{'+-3mm%':>7} {'+-5%%':>7} {'Acc%(paper)':>12}")
+logger.info(f"  {'-'*72}")
 for name, res in final.items():
-    star = " ← BEST" if name == best_name else ""
-    print(f"  {name:<18} {res['mae']:6.3f}mm  {res['rmse']:6.3f}mm  "
+    star = " <- BEST" if name == best_name else ""
+    logger.info(f"  {name:<18} {res['mae']:6.3f}mm  {res['rmse']:6.3f}mm  "
           f"{res['r2']:6.3f}  {res['acc3']:6.1f}%  {res['acc5p']:6.1f}%  "
           f"{res['pacc']:10.2f}%{star}")
 
-print(f"\n  Paper (Lu 2025): RMSE=1.87mm  R²=0.967  Acc%=97.60%  @ 1 apple/lane/s")
-print(f"\n  Our GT std  (G10, N={len(y_test)}):  {y_test.std():.2f}mm  "
-      f"→ explains lower R² vs paper (their test std ≈ 10.3mm)")
+logger.info(f"  Paper (Lu 2025): RMSE=1.87mm  R2=0.967  Acc%=97.60%  @ 1 apple/lane/s")
+logger.info(f"  Our GT std  (G10, N={len(y_test)}):  {y_test.std():.2f}mm  "
+      f"-> explains lower R2 vs paper (their test std approx 10.3mm)")
 
 # ── Save best model ────────────────────────────────────────────────────────────
 bm = final[best_name]["model"]
@@ -227,7 +233,7 @@ with open(model_path,"wb") as f:
                  "mae": final[best_name]["mae"],
                  "rmse": final[best_name]["rmse"],
                  "r2":   final[best_name]["r2"]}, f)
-print(f"\n  Best model ({best_name}) saved → {model_path}")
+logger.info(f"  Best model ({best_name}) saved -> {model_path}")
 
 # ── Save CSV ───────────────────────────────────────────────────────────────────
 csv_path = os.path.join(OUT_DIR, "training_metrics.csv")
@@ -241,13 +247,13 @@ with open(csv_path,"w",newline="") as f:
         w.writerow(["BlindTest-G10",name,f"{res['mae']:.4f}",f"{res['rmse']:.4f}",
                     f"{res['r2']:.4f}",f"{res['maxe']:.4f}",f"{res['pacc']:.2f}"])
     w.writerow(["Reference(their-own-blind-test)","Paper(Lu2025)","N/A","1.870","0.967","N/A","97.60"])
-print(f"  Metrics CSV → {csv_path}")
+logger.info(f"  Metrics CSV -> {csv_path}")
 
 # =============================================================================
-# FIGURE 1 — LOO Scatter: Predicted vs GT, all sessions
+# FIGURE 1 -- LOO Scatter: Predicted vs GT, all sessions
 # =============================================================================
 fig1, axes = plt.subplots(1,3, figsize=(22,7), facecolor=DARK)
-fig1.suptitle("Leave-One-Session-Out Cross-Validation — Predicted vs GT",
+fig1.suptitle("Leave-One-Session-Out Cross-Validation -- Predicted vs GT",
               fontsize=14, fontweight="bold", color=TEXT, y=1.01)
 
 for ax_i, (name, res) in enumerate(loo.items()):
@@ -264,7 +270,7 @@ for ax_i, (name, res) in enumerate(loo.items()):
     lims = [min(t.min(),p.min())-3, max(t.max(),p.max())+3]
     ax.plot(lims, lims, color=MUTED, lw=1.5, ls="--", label="Perfect (y=x)", zorder=2)
     ax.fill_between(lims, [l-3 for l in lims], [l+3 for l in lims],
-                    alpha=0.08, color=C_RIDGE, label="±3mm band")
+                    alpha=0.08, color=C_RIDGE, label="+-3mm band")
     ax.set_xlim(lims); ax.set_ylim(lims)
     ax.set_xlabel("GT Caliper (mm)", fontsize=11)
     ax.set_ylabel("Predicted (mm)", fontsize=11)
@@ -272,7 +278,7 @@ for ax_i, (name, res) in enumerate(loo.items()):
     ax.set_title(f"{name}\nLOO-CV", color=model_colors[name], fontsize=12, fontweight="bold")
     ax.text(0.04, 0.96,
             f"MAE  = {m['mae']:.3f} mm\nRMSE = {m['rmse']:.3f} mm\n"
-            f"R²    = {m['r2']:.3f}\nAcc% = {m['acc']:.2f}%",
+            f"R2    = {m['r2']:.3f}\nAcc% = {m['acc']:.2f}%",
             transform=ax.transAxes, color=TEXT, fontsize=10,
             va="top", bbox=dict(facecolor=PANEL2, edgecolor=BORDER, boxstyle="round,pad=0.4"))
     ax.legend(fontsize=7.5, facecolor=PANEL2, edgecolor=BORDER,
@@ -281,10 +287,10 @@ for ax_i, (name, res) in enumerate(loo.items()):
 plt.tight_layout()
 out1 = os.path.join(OUT_DIR,"fig1_loo_scatter.png")
 fig1.savefig(out1, dpi=140, bbox_inches="tight", facecolor=DARK); plt.close()
-print(f"\n  Saved: {out1}")
+logger.info(f"  Saved: {out1}")
 
 # =============================================================================
-# FIGURE 2 — Per-Session Analysis + Error Distribution
+# FIGURE 2 -- Per-Session Analysis + Error Distribution
 # =============================================================================
 fig2 = plt.figure(figsize=(22,10), facecolor=DARK)
 gs   = gridspec.GridSpec(2,3, figure=fig2, hspace=0.42, wspace=0.32)
@@ -312,7 +318,7 @@ ax.axhline(1.87, color=MUTED, lw=1.2, ls=":", alpha=0.7, label="Paper RMSE=1.87m
 ax.set_xticks(x)
 ax.set_xticklabels([f"{s}\n(N={n})" for s,n in zip(TRAIN_SESSIONS,sess_n)], color=TEXT)
 ax.set_ylabel("Error (mm)", color=TEXT)
-ax.set_title("Ridge LOO-CV — Per-Session RMSE and MAE", color=TEXT, fontweight="bold")
+ax.set_title("Ridge LOO-CV -- Per-Session RMSE and MAE", color=TEXT, fontweight="bold")
 ax.legend(facecolor=PANEL2, edgecolor=BORDER, labelcolor=TEXT, fontsize=9)
 for bar,val in zip(bars, sess_rmse):
     ax.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.02,
@@ -328,9 +334,9 @@ for name, res in loo.items():
     ax.hist(errs, bins=20, alpha=0.55, color=model_colors[name],
             label=name, edgecolor=DARK, density=True)
 ax.axvline(0, color=TEXT, lw=1.2, ls="--")
-ax.axvline(+3, color=MUTED, lw=0.8, ls=":", alpha=0.7, label="±3mm")
+ax.axvline(+3, color=MUTED, lw=0.8, ls=":", alpha=0.7, label="+-3mm")
 ax.axvline(-3, color=MUTED, lw=0.8, ls=":", alpha=0.7)
-ax.set_xlabel("Error: Predicted − GT (mm)"); ax.set_ylabel("Density")
+ax.set_xlabel("Error: Predicted - GT (mm)"); ax.set_ylabel("Density")
 ax.set_title("LOO Error Distribution\n(all models)", color=TEXT, fontweight="bold")
 ax.legend(facecolor=PANEL2, edgecolor=BORDER, labelcolor=TEXT, fontsize=8)
 
@@ -343,28 +349,28 @@ ax.bar(range(len(r_errs)), r_errs[sort_idx], color=colors_e,
        edgecolor=DARK, width=0.85, zorder=3)
 ax.axhline(0,  color=TEXT, lw=1)
 ax.axhline(+3, color=MUTED, lw=1, ls="--", alpha=0.7)
-ax.axhline(-3, color=MUTED, lw=1, ls="--", alpha=0.7, label="±3mm threshold")
+ax.axhline(-3, color=MUTED, lw=1, ls="--", alpha=0.7, label="+-3mm threshold")
 ax.set_xlabel(f"Apple rank (sorted by error, N={len(r_errs)})")
-ax.set_ylabel("Error: Predicted − GT (mm)")
-ax.set_title("Ridge LOO-CV — Per-Apple Errors (sorted)   "
-             f"Green = within ±3mm ({sum(1 for e in r_errs if abs(e)<=3)}/{len(r_errs)})",
+ax.set_ylabel("Error: Predicted - GT (mm)")
+ax.set_title("Ridge LOO-CV -- Per-Apple Errors (sorted)   "
+             f"Green = within +-3mm ({sum(1 for e in r_errs if abs(e)<=3)}/{len(r_errs)})",
              color=TEXT, fontweight="bold")
-legend_e = [Line2D([0],[0],color=C_OK,marker="s",ls="",ms=10,label="Within ±3mm"),
-            Line2D([0],[0],color=C_BAD,marker="s",ls="",ms=10,label="Outside ±3mm"),
-            Line2D([0],[0],color=MUTED,ls="--",lw=1.5,label="±3mm boundary")]
+legend_e = [Line2D([0],[0],color=C_OK,marker="s",ls="",ms=10,label="Within +-3mm"),
+            Line2D([0],[0],color=C_BAD,marker="s",ls="",ms=10,label="Outside +-3mm"),
+            Line2D([0],[0],color=MUTED,ls="--",lw=1.5,label="+-3mm boundary")]
 ax.legend(handles=legend_e, facecolor=PANEL2, edgecolor=BORDER, labelcolor=TEXT)
 
-plt.suptitle("LOO Cross-Validation — Per-Session & Per-Apple Analysis (Ridge)",
+plt.suptitle("LOO Cross-Validation -- Per-Session & Per-Apple Analysis (Ridge)",
              fontsize=13, fontweight="bold", color=TEXT, y=1.01)
 out2 = os.path.join(OUT_DIR,"fig2_loo_per_session.png")
 fig2.savefig(out2, dpi=140, bbox_inches="tight", facecolor=DARK); plt.close()
-print(f"  Saved: {out2}")
+logger.info(f"  Saved: {out2}")
 
 # =============================================================================
-# FIGURE 3 — Blind Test G10: Scatter + Per-Apple Errors
+# FIGURE 3 -- Blind Test G10: Scatter + Per-Apple Errors
 # =============================================================================
 fig3, axes = plt.subplots(1,2, figsize=(20,8), facecolor=DARK)
-fig3.suptitle(f"Blind Test — G10  (N={len(y_test)} apples, never seen during training)",
+fig3.suptitle(f"Blind Test -- G10  (N={len(y_test)} apples, never seen during training)",
               fontsize=14, fontweight="bold", color=TEXT, y=1.01)
 
 # 3A: Scatter all models
@@ -373,7 +379,7 @@ lims = [min(y_test.min(), min(v["preds"].min() for v in final.values()))-3,
         max(y_test.max(), max(v["preds"].max() for v in final.values()))+3]
 ax.plot(lims, lims, color=MUTED, lw=1.5, ls="--", label="Perfect (y=x)", zorder=1)
 ax.fill_between(lims,[l-3 for l in lims],[l+3 for l in lims],
-                alpha=0.07, color=C_RIDGE, label="±3mm band")
+                alpha=0.07, color=C_RIDGE, label="+-3mm band")
 
 for name, res in final.items():
     errs = np.abs(res["preds"]-y_test)
@@ -393,18 +399,18 @@ for i,(gt,pred,meta) in enumerate(zip(y_test, final[best_name]["preds"], test_me
 ax.set_xlim(lims); ax.set_ylim(lims)
 ax.set_xlabel("GT Caliper (mm)", fontsize=12)
 ax.set_ylabel("Predicted (mm)", fontsize=12)
-ax.set_title("Predicted vs GT — All Models", color=TEXT, fontweight="bold")
+ax.set_title("Predicted vs GT -- All Models", color=TEXT, fontweight="bold")
 res_b = final[best_name]
 ax.text(0.04,0.97,
         f"Best model: {best_name}\n"
         f"MAE  = {res_b['mae']:.3f} mm\n"
         f"RMSE = {res_b['rmse']:.3f} mm\n"
-        f"R²    = {res_b['r2']:.3f}\n"
+        f"R2    = {res_b['r2']:.3f}\n"
         f"Acc% = {res_b['pacc']:.2f}%\n"
-        f"±3mm = {res_b['acc3']:.1f}%\n\n"
+        f"+-3mm = {res_b['acc3']:.1f}%\n\n"
         f"Paper (Lu 2025):\n"
         f"RMSE = 1.870 mm\n"
-        f"R²    = 0.967\n"
+        f"R2    = 0.967\n"
         f"Acc% = 97.60%",
         transform=ax.transAxes, color=TEXT, fontsize=9.5, va="top",
         bbox=dict(facecolor=PANEL2, edgecolor=C_RIDGE, boxstyle="round,pad=0.5",lw=1.5))
@@ -422,25 +428,25 @@ ax.axhline(0,  color=TEXT, lw=1.2)
 ax.axhline(+3, color=MUTED, lw=1, ls="--", alpha=0.7)
 ax.axhline(-3, color=MUTED, lw=1, ls="--", alpha=0.7)
 ax.set_xticks(xp); ax.set_xticklabels(apple_labels, fontsize=8, color=TEXT)
-ax.set_ylabel("Error: Predicted − GT (mm)", fontsize=11)
-ax.set_title(f"{best_name} — Per-Apple Error on G10\n"
-             f"Green = within ±3mm ({sum(1 for e in errs if abs(e)<=3)}/{len(errs)})",
+ax.set_ylabel("Error: Predicted - GT (mm)", fontsize=11)
+ax.set_title(f"{best_name} -- Per-Apple Error on G10\n"
+             f"Green = within +-3mm ({sum(1 for e in errs if abs(e)<=3)}/{len(errs)})",
              color=TEXT, fontweight="bold")
 for bar,e,gt in zip(bars,errs,y_test):
     ypos = e + 0.1 if e>=0 else e - 0.35
     ax.text(bar.get_x()+bar.get_width()/2, ypos,
             f"{e:+.1f}", ha="center", fontsize=7.5, color=TEXT)
-legend_b = [Line2D([0],[0],color=C_OK,marker="s",ls="",ms=10,label="Within ±3mm"),
-            Line2D([0],[0],color=C_BAD,marker="s",ls="",ms=10,label="Outside ±3mm")]
+legend_b = [Line2D([0],[0],color=C_OK,marker="s",ls="",ms=10,label="Within +-3mm"),
+            Line2D([0],[0],color=C_BAD,marker="s",ls="",ms=10,label="Outside +-3mm")]
 ax.legend(handles=legend_b, facecolor=PANEL2, edgecolor=BORDER, labelcolor=TEXT)
 
 plt.tight_layout()
 out3 = os.path.join(OUT_DIR,"fig3_blind_test.png")
 fig3.savefig(out3, dpi=140, bbox_inches="tight", facecolor=DARK); plt.close()
-print(f"  Saved: {out3}")
+logger.info(f"  Saved: {out3}")
 
 # =============================================================================
-# FIGURE 4 — Model Insight: Ridge Coefficients + Residuals + Q-Q
+# FIGURE 4 -- Model Insight: Ridge Coefficients + Residuals + Q-Q
 # =============================================================================
 # Train final Ridge on all training data to get interpretable coefficients
 ridge_final = make_ridge()
@@ -454,10 +460,10 @@ best_preds_train = ridge_final.predict(X_train)
 residuals_train  = y_train - best_preds_train
 
 fig4, axes = plt.subplots(1,3, figsize=(22,7), facecolor=DARK)
-fig4.suptitle("Ridge Regression — Model Insight (trained on all training sessions)",
+fig4.suptitle("Ridge Regression -- Model Insight (trained on all training sessions)",
               fontsize=13, fontweight="bold", color=TEXT, y=1.01)
 
-# 4A: Feature coefficients (standardized — relative importance)
+# 4A: Feature coefficients (standardized -- relative importance)
 ax = axes[0]; styled_ax(ax)
 sorted_idx = np.argsort(np.abs(coefs))[::-1]
 cols_c = [C_RIDGE if c>0 else C_BAD for c in coefs[sorted_idx]]
@@ -479,11 +485,11 @@ ax = axes[1]; styled_ax(ax)
 ax.scatter(best_preds_train, residuals_train,
            color=C_RIDGE, s=50, alpha=0.7, edgecolors=DARK, lw=0.5, zorder=3)
 ax.axhline(0, color=MUTED, lw=1.5, ls="--")
-ax.axhline(+3, color=C_BAD, lw=0.8, ls=":", alpha=0.6, label="±3mm")
+ax.axhline(+3, color=C_BAD, lw=0.8, ls=":", alpha=0.6, label="+-3mm")
 ax.axhline(-3, color=C_BAD, lw=0.8, ls=":", alpha=0.6)
 ax.set_xlabel("Fitted value (mm)", fontsize=10)
-ax.set_ylabel("Residual: GT − Predicted (mm)", fontsize=10)
-ax.set_title("Residuals vs Fitted\n(Training data — Ridge LOO)",
+ax.set_ylabel("Residual: GT - Predicted (mm)", fontsize=10)
+ax.set_title("Residuals vs Fitted\n(Training data -- Ridge LOO)",
              color=TEXT, fontweight="bold")
 ax.legend(facecolor=PANEL2, edgecolor=BORDER, labelcolor=TEXT)
 ax.text(0.04, 0.97,
@@ -505,23 +511,23 @@ ax.set_ylabel("Sample quantiles (error, mm)", fontsize=10)
 ax.set_title("Q-Q Plot of LOO Residuals\n(normal = points on line)",
              color=TEXT, fontweight="bold")
 ax.legend(facecolor=PANEL2, edgecolor=BORDER, labelcolor=TEXT)
-ax.text(0.04,0.97, f"R²(Q-Q) = {r**2:.3f}",
+ax.text(0.04,0.97, f"R2(Q-Q) = {r**2:.3f}",
         transform=ax.transAxes, va="top", fontsize=9, color=TEXT,
         bbox=dict(facecolor=PANEL2,edgecolor=BORDER,boxstyle="round"))
 
 plt.tight_layout()
 out4 = os.path.join(OUT_DIR,"fig4_model_insight.png")
 fig4.savefig(out4, dpi=140, bbox_inches="tight", facecolor=DARK); plt.close()
-print(f"  Saved: {out4}")
+logger.info(f"  Saved: {out4}")
 
 # =============================================================================
-# FIGURE 5 — R² Explanation: Why narrow size range → lower R²
+# FIGURE 5 -- R2 Explanation: Why narrow size range -> lower R2
 # =============================================================================
 fig5, axes = plt.subplots(1,3, figsize=(22,7), facecolor=DARK)
-fig5.suptitle("Why R² Is Lower Despite Better RMSE — Apple Size Range Effect",
+fig5.suptitle("Why R2 Is Lower Despite Better RMSE -- Apple Size Range Effect",
               fontsize=13, fontweight="bold", color=TEXT, y=1.01)
 
-# Compute paper's implied test std from their R² and RMSE
+# Compute paper's implied test std from their R2 and RMSE
 paper_rmse = 1.87; paper_r2 = 0.967; paper_n = 108
 paper_ss_tot = (paper_rmse**2 * paper_n) / (1 - paper_r2)
 paper_std = np.sqrt(paper_ss_tot / paper_n)
@@ -544,8 +550,8 @@ ax.set_xlabel("GT Caliper (mm)"); ax.set_ylabel("Predicted (mm)")
 ax.set_title(f"Our Blind Test (G10)\nNarrow size range: std={our_std:.1f}mm",
              color=C_RIDGE, fontweight="bold")
 ax.text(0.04,0.97,
-        f"N = {our_n} apples\nSize range: {y_test.min():.0f}–{y_test.max():.0f}mm\n"
-        f"Std = {our_std:.1f}mm\nRMSE = {our_rmse:.3f}mm\nR² = {our_r2:.3f}",
+        f"N = {our_n} apples\nSize range: {y_test.min():.0f}-{y_test.max():.0f}mm\n"
+        f"Std = {our_std:.1f}mm\nRMSE = {our_rmse:.3f}mm\nR2 = {our_r2:.3f}",
         transform=ax.transAxes, va="top", fontsize=10,
         color=TEXT, bbox=dict(facecolor=PANEL2,edgecolor=C_RIDGE,boxstyle="round",lw=1.5))
 
@@ -565,15 +571,15 @@ ax.fill_between(lims_s,[l-3 for l in lims_s],[l+3 for l in lims_s],
                 alpha=0.1, color=C_RF)
 ax.set_xlim(lims_s); ax.set_ylim(lims_s)
 ax.set_xlabel("GT Caliper (mm)"); ax.set_ylabel("Predicted (mm)")
-ax.set_title(f"Paper-Style Test (simulated)\nWide size range: std≈{paper_std:.1f}mm",
+ax.set_title(f"Paper-Style Test (simulated)\nWide size range: std approx {paper_std:.1f}mm",
              color=C_RF, fontweight="bold")
 ax.text(0.04,0.97,
-        f"N ≈ {paper_n} apples\nSize range: ~{int(sim_gt.min())}–{int(sim_gt.max())}mm\n"
-        f"Std ≈ {paper_std:.1f}mm\nRMSE ≈ {paper_rmse:.3f}mm\nR² ≈ {sim_r2:.3f}",
+        f"N approx {paper_n} apples\nSize range: ~{int(sim_gt.min())}-{int(sim_gt.max())}mm\n"
+        f"Std approx {paper_std:.1f}mm\nRMSE approx {paper_rmse:.3f}mm\nR2 approx {sim_r2:.3f}",
         transform=ax.transAxes, va="top", fontsize=10,
         color=TEXT, bbox=dict(facecolor=PANEL2,edgecolor=C_RF,boxstyle="round",lw=1.5))
 
-# 5C: R² vs test-set std (theoretical)
+# 5C: R2 vs test-set std (theoretical)
 ax = axes[2]; styled_ax(ax)
 stds = np.linspace(1.5, 15, 200)
 r2_ours_rmse  = [1 - (our_rmse**2  * our_n) / (s**2 * our_n)  for s in stds]
@@ -581,55 +587,55 @@ r2_paper_rmse = [1 - (paper_rmse**2* paper_n)/(s**2 * paper_n) for s in stds]
 ax.plot(stds, r2_ours_rmse,  color=C_RIDGE, lw=2.5, label=f"RMSE={our_rmse:.2f}mm (ours)")
 ax.plot(stds, r2_paper_rmse, color=C_RF,    lw=2.5, label=f"RMSE={paper_rmse:.2f}mm (paper)")
 ax.axvline(our_std,    color=C_RIDGE, lw=1.2, ls="--", alpha=0.8,
-           label=f"Our test std={our_std:.1f}mm  → R²={our_r2:.3f}")
+           label=f"Our test std={our_std:.1f}mm  -> R2={our_r2:.3f}")
 ax.axvline(paper_std,  color=C_RF,    lw=1.2, ls="--", alpha=0.8,
-           label=f"Paper test std≈{paper_std:.1f}mm → R²=0.967")
+           label=f"Paper test std approx {paper_std:.1f}mm -> R2=0.967")
 ax.axhline(our_r2,   color=C_RIDGE, lw=0.8, ls=":", alpha=0.5)
 ax.axhline(0.967,    color=C_RF,    lw=0.8, ls=":", alpha=0.5)
 ax.scatter([our_std],   [our_r2],  color=C_RIDGE, s=120, zorder=5, edgecolors=TEXT, lw=1.5)
 ax.scatter([paper_std], [0.967],   color=C_RF,    s=120, zorder=5, edgecolors=TEXT, lw=1.5)
 ax.set_xlabel("Standard deviation of GT apple sizes in test set (mm)", fontsize=10)
-ax.set_ylabel("R²", fontsize=10)
-ax.set_title("R² vs Apple Size Diversity in Test Set\n"
-             "(same RMSE can give very different R²!)", color=TEXT, fontweight="bold")
+ax.set_ylabel("R2", fontsize=10)
+ax.set_title("R2 vs Apple Size Diversity in Test Set\n"
+             "(same RMSE can give very different R2!)", color=TEXT, fontweight="bold")
 ax.set_ylim(-0.1, 1.05)
 ax.legend(facecolor=PANEL2, edgecolor=BORDER, labelcolor=TEXT, fontsize=8.5)
 ax.text(0.5, 0.12,
-        "Key insight: R² depends on\nhow diverse the test set is.\n"
-        "Our G10 had a narrow size\nrange → lower R² even with\nlower RMSE than the paper.",
+        "Key insight: R2 depends on\nhow diverse the test set is.\n"
+        "Our G10 had a narrow size\nrange -> lower R2 even with\nlower RMSE than the paper.",
         transform=ax.transAxes, ha="center", fontsize=9, color=MUTED,
         bbox=dict(facecolor=PANEL2, edgecolor=BORDER, boxstyle="round"))
 
 plt.tight_layout()
 out5 = os.path.join(OUT_DIR,"fig5_r2_explanation.png")
 fig5.savefig(out5, dpi=140, bbox_inches="tight", facecolor=DARK); plt.close()
-print(f"  Saved: {out5}")
+logger.info(f"  Saved: {out5}")
 
 # =============================================================================
 # FINAL CONSOLE SUMMARY
 # =============================================================================
-print(f"\n{'='*72}")
-print("FINAL SUMMARY")
-print(f"{'='*72}")
-print(f"\n  LOO Cross-Validation (Ridge, {len(y_train)} training apples):")
+logger.info(f"{'='*72}")
+logger.info("FINAL SUMMARY")
+logger.info(f"{'='*72}")
+logger.info(f"  LOO Cross-Validation (Ridge, {len(y_train)} training apples):")
 m = loo_metrics["Ridge"]
-print(f"    MAE  = {m['mae']:.3f}mm   RMSE = {m['rmse']:.3f}mm   "
-      f"R² = {m['r2']:.3f}   Acc% = {m['acc']:.2f}%")
-print(f"\n  Blind Test G10 (Ridge, {len(y_test)} apples):")
+logger.info(f"    MAE  = {m['mae']:.3f}mm   RMSE = {m['rmse']:.3f}mm   "
+      f"R2 = {m['r2']:.3f}   Acc% = {m['acc']:.2f}%")
+logger.info(f"  Blind Test G10 (Ridge, {len(y_test)} apples):")
 res = final[best_name]
-print(f"    MAE  = {res['mae']:.3f}mm   RMSE = {res['rmse']:.3f}mm   "
-      f"R² = {res['r2']:.3f}   Acc% = {res['pacc']:.2f}%")
-print(f"    ±3mm = {res['acc3']:.1f}%   ±5% = {res['acc5p']:.1f}%")
-print(f"\n  Paper (Lu 2025 @ 1 apple/lane/s):")
-print(f"    RMSE = 1.870mm   R² = 0.967   Acc% = 97.60%")
-print(f"\n  Apple size std:  Our G10 = {y_test.std():.2f}mm  |  "
-      f"Paper test ≈ {paper_std:.1f}mm")
-print(f"  → Same RMSE formula but 2.4× wider size range → paper gets higher R²")
-print(f"\n  Output files in: {OUT_DIR}")
-print(f"    fig1_loo_scatter.png       — LOO predicted vs GT (all sessions)")
-print(f"    fig2_loo_per_session.png   — per-session bars + error distribution")
-print(f"    fig3_blind_test.png        — G10 blind test scatter + per-apple errors")
-print(f"    fig4_model_insight.png     — Ridge coefficients + residual diagnostics")
-print(f"    fig5_r2_explanation.png    — why R² is lower (size range effect)")
-print(f"    training_metrics.csv       — all numeric results")
-print("\nDone.")
+logger.info(f"    MAE  = {res['mae']:.3f}mm   RMSE = {res['rmse']:.3f}mm   "
+      f"R2 = {res['r2']:.3f}   Acc% = {res['pacc']:.2f}%")
+logger.info(f"    +-3mm = {res['acc3']:.1f}%   +-5% = {res['acc5p']:.1f}%")
+logger.info(f"  Paper (Lu 2025 @ 1 apple/lane/s):")
+logger.info(f"    RMSE = 1.870mm   R2 = 0.967   Acc% = 97.60%")
+logger.info(f"  Apple size std:  Our G10 = {y_test.std():.2f}mm  |  "
+      f"Paper test approx {paper_std:.1f}mm")
+logger.info(f"  -> Same RMSE formula but 2.4x wider size range -> paper gets higher R2")
+logger.info(f"  Output files in: {OUT_DIR}")
+logger.info(f"    fig1_loo_scatter.png       -- LOO predicted vs GT (all sessions)")
+logger.info(f"    fig2_loo_per_session.png   -- per-session bars + error distribution")
+logger.info(f"    fig3_blind_test.png        -- G10 blind test scatter + per-apple errors")
+logger.info(f"    fig4_model_insight.png     -- Ridge coefficients + residual diagnostics")
+logger.info(f"    fig5_r2_explanation.png    -- why R2 is lower (size range effect)")
+logger.info(f"    training_metrics.csv       -- all numeric results")
+logger.info("Done.")

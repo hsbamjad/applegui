@@ -7,7 +7,7 @@ Compute our sizing accuracy using the SAME formula as the reference paper:
     mean_accuracy = mean(accuracy_i across all apples)   [Lu et al. 2025 / Xu et al. 2024b]
 
 Uses EXACTLY the same feature extraction (view_fusion.fuse_session) and
-the same FEATURE_COLS as train_size_regressor.py — no approximations.
+the same FEATURE_COLS as train_size_regressor.py -- no approximations.
 
 Also computes LIVE estimate (pixel x scale) for comparison.
 
@@ -19,10 +19,14 @@ import sys, os, pickle
 import numpy as np
 from pathlib import Path
 
+from core.log import get_logger, configure_root
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # ── Import the SAME fusion code used in training ───────────────────────────────
 from core.sizing.view_fusion import fuse_session, feature_matrix
+
+logger = get_logger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 PKL_DIR    = r"D:\HA\apple_gui\data\frame_features"
@@ -35,17 +39,19 @@ ALL_SESSIONS   = SESSIONS_TRAIN + [SESSION_BLIND]
 
 MIN_CX_RANGE   = 1000  # same exclusion as training
 
+configure_root()
+
 # ── Load model + feature_cols (saved together in pkl) ─────────────────────────
 if not Path(MODEL_PATH).exists():
-    print(f"Model not found: {MODEL_PATH}"); sys.exit(1)
+    logger.error(f"Model not found: {MODEL_PATH}"); sys.exit(1)
 
 with open(MODEL_PATH,"rb") as f: saved = pickle.load(f)
 model        = saved["model"]
 FEATURE_COLS = saved["feature_cols"]          # exact same cols used in training
 model_name   = saved.get("model_name","?")
-print(f"Model: {model_name}")
-print(f"Features ({len(FEATURE_COLS)}): {FEATURE_COLS}")
-print(f"Saved RMSE: {saved.get('rmse','?'):.3f}mm  MAE: {saved.get('mae','?'):.3f}mm\n")
+logger.info(f"Model: {model_name}")
+logger.info(f"Features ({len(FEATURE_COLS)}): {FEATURE_COLS}")
+logger.info(f"Saved RMSE: {saved.get('rmse','?'):.3f}mm  MAE: {saved.get('mae','?'):.3f}mm")
 
 # ── LIVE estimate: quality-weighted mean of d_area * scale (all frames) ────────
 def live_estimate(apple):
@@ -62,10 +68,10 @@ def paper_acc(pred, gt):
     return a, float(a.mean())
 
 # ── Process all sessions ───────────────────────────────────────────────────────
-print("="*72)
-print(f"{'Session':<12} {'N':>4}  {'ML Acc%':>8}  {'ML RMSE':>9}  "
+logger.info("="*72)
+logger.info(f"{'Session':<12} {'N':>4}  {'ML Acc%':>8}  {'ML RMSE':>9}  "
       f"{'LIVE Acc%':>10}  {'LIVE RMSE':>10}")
-print("="*72)
+logger.info("="*72)
 
 all_ml_gt=[]; all_ml_p=[]; all_lv_gt=[]; all_lv_p=[]
 g10_detail = []
@@ -73,7 +79,7 @@ g10_detail = []
 for sess in ALL_SESSIONS:
     pkl_path = Path(PKL_DIR)/f"{sess}.pkl"
     if not pkl_path.exists():
-        print(f"  SKIP {sess} — pkl not found"); continue
+        logger.warning(f"  SKIP {sess} -- pkl not found"); continue
 
     with open(pkl_path,"rb") as f: data = pickle.load(f)
 
@@ -92,7 +98,7 @@ for sess in ALL_SESSIONS:
     fused_v = [fused[i] for i in range(len(fused)) if valid[i]]
 
     if len(y_v) == 0:
-        print(f"  SKIP {sess} — no GT"); continue
+        logger.warning(f"  SKIP {sess} -- no GT"); continue
 
     # ML predictions
     ml_preds = model.predict(X_v)
@@ -115,8 +121,8 @@ for sess in ALL_SESSIONS:
     lv_acc_arr, lv_acc = paper_acc(lv_preds, lv_gt) if lv_preds else (np.array([]), 0.0)
     lv_rmse = float(np.sqrt(np.mean([(p-g)**2 for p,g in zip(lv_preds,lv_gt)]))) if lv_preds else 0.0
 
-    blind_tag = " ← BLIND" if sess==SESSION_BLIND else ""
-    print(f"{sess+blind_tag:<20} {len(y_v):>4}  {ml_acc:>8.2f}%  {ml_rmse:>8.3f}mm  "
+    blind_tag = " <- BLIND" if sess==SESSION_BLIND else ""
+    logger.info(f"{sess+blind_tag:<20} {len(y_v):>4}  {ml_acc:>8.2f}%  {ml_rmse:>8.3f}mm  "
           f"{lv_acc:>10.2f}%  {lv_rmse:>10.3f}mm")
 
     if sess != SESSION_BLIND:
@@ -133,24 +139,24 @@ for sess in ALL_SESSIONS:
                 "gt": gt, "ml": float(pred), "live": lv,
             })
 
-print("-"*72)
+logger.info("-"*72)
 if all_ml_gt:
     _, oa_ml = paper_acc(all_ml_p, all_ml_gt)
     or_ml    = float(np.sqrt(np.mean([(p-g)**2 for p,g in zip(all_ml_p,all_ml_gt)])))
     _, oa_lv = paper_acc(all_lv_p, all_lv_gt)
     or_lv    = float(np.sqrt(np.mean([(p-g)**2 for p,g in zip(all_lv_p,all_lv_gt)])))
     n = len(all_ml_gt)
-    print(f"{'ALL TRAIN (N='+str(n)+')':<20} {n:>4}  {oa_ml:>8.2f}%  {or_ml:>8.3f}mm  "
+    logger.info(f"{'ALL TRAIN (N='+str(n)+')':<20} {n:>4}  {oa_ml:>8.2f}%  {or_ml:>8.3f}mm  "
           f"{oa_lv:>10.2f}%  {or_lv:>10.3f}mm")
 
 # ── Detailed G10 table ─────────────────────────────────────────────────────────
-print()
-print("="*72)
-print("DETAILED G10 BLIND TEST — paper accuracy formula")
-print("="*72)
-print(f"  {'#':>3}  {'L':>2}  {'GT':>6}  {'ML':>8}  {'ML acc%':>8}  "
+logger.info("")
+logger.info("="*72)
+logger.info("DETAILED G10 BLIND TEST -- paper accuracy formula")
+logger.info("="*72)
+logger.info(f"  {'#':>3}  {'L':>2}  {'GT':>6}  {'ML':>8}  {'ML acc%':>8}  "
       f"{'LIVE':>8}  {'LIVE acc%':>9}")
-print(f"  {'-'*64}")
+logger.info(f"  {'-'*64}")
 
 g10_ml_acc=[]; g10_lv_acc=[]
 for r in sorted(g10_detail, key=lambda x: x["apple"]):
@@ -158,28 +164,28 @@ for r in sorted(g10_detail, key=lambda x: x["apple"]):
     ma = (1-abs(ml-gt)/gt)*100 if ml else None
     la = (1-abs(lv-gt)/gt)*100 if lv else None
     g10_ml_acc.append(ma); g10_lv_acc.append(la)
-    flag = " ✗" if (ma and ma<95) else ""
-    print(f"  #{r['apple']:2d}  L{r['lane']}  {gt:>6.1f}"
+    flag = " [FAIL]" if (ma and ma<95) else ""
+    logger.info(f"  #{r['apple']:2d}  L{r['lane']}  {gt:>6.1f}"
           f"  {ml:>8.2f}  {(str(round(ma,2))+'%') if ma else '--':>9}{flag}"
           f"  {(lv if lv else 0):>8.2f}  {(str(round(la,2))+'%') if la else '--':>9}")
 
-print(f"  {'-'*64}")
+logger.info(f"  {'-'*64}")
 ml_a_clean = [a for a in g10_ml_acc if a]
 lv_a_clean = [a for a in g10_lv_acc if a]
-print(f"  Mean ML   accuracy (paper formula): {np.mean(ml_a_clean):.2f}%")
-print(f"  Mean LIVE accuracy (paper formula): {np.mean(lv_a_clean):.2f}%")
-print(f"  Paper (Lu 2025) reported:           97.60%  @ 1 apple/lane/s")
-print()
+logger.info(f"  Mean ML   accuracy (paper formula): {np.mean(ml_a_clean):.2f}%")
+logger.info(f"  Mean LIVE accuracy (paper formula): {np.mean(lv_a_clean):.2f}%")
+logger.info(f"  Paper (Lu 2025) reported:           97.60%  @ 1 apple/lane/s")
+logger.info("")
 ml_rmse_g10 = float(np.sqrt(np.mean([(r["ml"]-r["gt"])**2 for r in g10_detail if r["ml"]])))
 lv_rmse_g10 = float(np.sqrt(np.mean([(r["live"]-r["gt"])**2 for r in g10_detail if r["live"]])))
-print(f"  ML   RMSE G10: {ml_rmse_g10:.3f}mm   (paper: 1.87mm)")
-print(f"  LIVE RMSE G10: {lv_rmse_g10:.3f}mm")
-print()
+logger.info(f"  ML   RMSE G10: {ml_rmse_g10:.3f}mm   (paper: 1.87mm)")
+logger.info(f"  LIVE RMSE G10: {lv_rmse_g10:.3f}mm")
+logger.info("")
 w3_ml = sum(1 for r in g10_detail if r["ml"]   and abs(r["ml"]  -r["gt"])<=3)
 w3_lv = sum(1 for r in g10_detail if r["live"] and abs(r["live"]-r["gt"])<=3)
 w5p_ml= sum(1 for r in g10_detail if r["ml"]   and abs(r["ml"]  -r["gt"])/r["gt"]<=0.05)
 w5p_lv= sum(1 for r in g10_detail if r["live"] and abs(r["live"]-r["gt"])/r["gt"]<=0.05)
 n = len(g10_detail)
-print(f"  Within ±3mm:      ML={w3_ml}/{n}  LIVE={w3_lv}/{n}")
-print(f"  Within ±5% (rel): ML={w5p_ml}/{n}  LIVE={w5p_lv}/{n}")
-print("\nDone.")
+logger.info(f"  Within +-3mm:      ML={w3_ml}/{n}  LIVE={w3_lv}/{n}")
+logger.info(f"  Within +-5% (rel): ML={w5p_ml}/{n}  LIVE={w5p_lv}/{n}")
+logger.info("Done.")

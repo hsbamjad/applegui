@@ -45,6 +45,9 @@ from collections import deque
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from core.log import get_logger, configure_root
+logger = get_logger(__name__)
+
 # ── optional ML import ────────────────────────────────────────────────────────
 try:
     from core.sizing.view_fusion import fuse_apple_views
@@ -357,11 +360,11 @@ def draw_side_panel(img, session, n_apples, frame_no, total_frames,
     y = h - 80
     cv2.line(img,(px+10,y),(w-10,y),(50,65,90),1)
     y += 14
-    put_text(img, "LIVE = area\u00d70.377 (running)", (px+10,y), scale=0.33, color=(150,200,150))
+    put_text(img, "LIVE = area*0.377 (running)", (px+10,y), scale=0.33, color=(150,200,150))
     y += 16
     put_text(img, "ML   = Ridge model (trained)", (px+10,y), scale=0.33, color=(100,180,255))
     y += 16
-    put_text(img, "\u2588\u2588 err \u22643mm  \u2588\u2588 \u22645mm  \u2588\u2588 >5mm", (px+10,y),
+    put_text(img, "██ err <=3mm  ██ <=5mm  ██ >5mm", (px+10,y),
              scale=0.33, color=TEXT_DIM)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -369,27 +372,28 @@ def draw_side_panel(img, session, n_apples, frame_no, total_frames,
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     args = parse_args()
+    configure_root()
     os.makedirs(args.out, exist_ok=True)
 
     # ── Load pkl ───────────────────────────────────────────────────────────────
     pkl_path = args.pkl or str(Path(args.pkl_dir)/f"{args.session}.pkl")
-    print(f"Loading pkl: {pkl_path}")
+    logger.info("Loading pkl: %s", pkl_path)
     with open(pkl_path,"rb") as f: data = pickle.load(f)
 
     apples  = data["apples"]
     img_w   = data.get("img_w",2048)
     img_h   = data.get("img_h",1536)
     session = data.get("session",args.session)
-    print(f"  {session}: {len(apples)} apples  {img_w}x{img_h}")
+    logger.info("%s: %d apples  %dx%d", session, len(apples), img_w, img_h)
 
     # ── Load ML model ──────────────────────────────────────────────────────────
     ml_model = None
     if Path(args.model).exists():
         with open(args.model,"rb") as f: saved = pickle.load(f)
         ml_model = saved.get("model") or saved
-        print(f"  ML model: {args.model}")
+        logger.info("ML model: %s", args.model)
     else:
-        print(f"  [WARN] ML model not found — showing LIVE only")
+        logger.warning("ML model not found -- showing LIVE only")
 
     # ── Pre-compute ML predictions ─────────────────────────────────────────────
     ml_pred = {}
@@ -415,17 +419,17 @@ def main():
     live = {a["apple_idx"]: LiveEst() for a in apples}
 
     # ── Pre-compute REAL ellipse params from consensus_mask per apple ──────────
-    print("  Computing real ellipse fits from consensus masks...")
+    logger.info("Computing real ellipse fits from consensus masks...")
     ell_params = {}
     for apple in apples:
         idx = apple["apple_idx"]
         ep  = precompute_ellipse(apple)
         ell_params[idx] = ep
         if ep:
-            print(f"    #{idx+1:2d}: a={ep['a_px']:.1f}px  b={ep['b_px']:.1f}px"
-                  f"  angle={ep['angle_deg']:.1f}°")
+            logger.info("  #%2d: a=%.1fpx  b=%.1fpx  angle=%.1f deg",
+                        idx+1, ep['a_px'], ep['b_px'], ep['angle_deg'])
         else:
-            print(f"    #{idx+1:2d}: ellipse fit failed (no mask or <5 contour pts)")
+            logger.warning("  #%2d: ellipse fit failed (no mask or <5 contour pts)", idx+1)
 
     # ── Lane boundaries (for lane grid) ───────────────────────────────────────
     if len(apples) > 0:
@@ -444,7 +448,8 @@ def main():
     src0_dir = Path(args.data_root)/"Source0"/session
     if not src0_dir.exists(): src0_dir = Path(args.data_root)/session
     if not src0_dir.exists():
-        print(f"ERROR: {src0_dir}"); sys.exit(1)
+        logger.error("Source directory not found: %s", src0_dir)
+        sys.exit(1)
 
     bmp_files = sorted(
         [f for f in src0_dir.iterdir()
@@ -455,7 +460,7 @@ def main():
     bmp_by_no     = {fn(p):p for p in bmp_files}
     total_frames  = min(len(bmp_files),args.max_frames) if args.max_frames else len(bmp_files)
     all_frame_nos = sorted(bmp_by_no.keys())[:total_frames]
-    print(f"  Rendering {total_frames} frames...")
+    logger.info("Rendering %d frames...", total_frames)
 
     # ── Video writer ──────────────────────────────────────────────────────────
     PANEL_W = 260
@@ -470,11 +475,11 @@ def main():
         fourcc   = cv2.VideoWriter_fourcc(*"mp4v")
 
     writer = cv2.VideoWriter(out_path, fourcc, args.fps, (out_w, out_h))
-    print(f"  Output: {out_path}  ({out_w}x{out_h} @ {args.fps}fps)\n")
+    logger.info("Output: %s  (%dx%d @ %.0ffps)", out_path, out_w, out_h, args.fps)
 
     # ── Render loop ────────────────────────────────────────────────────────────
     for fi, frame_no in enumerate(all_frame_nos):
-        if fi % 500 == 0: print(f"  {fi}/{total_frames}")
+        if fi % 500 == 0: logger.debug("Render progress: %d/%d", fi, total_frames)
 
         # Load frame
         bgr = cv2.imread(str(bmp_by_no[frame_no]))
@@ -663,13 +668,13 @@ def main():
 
     writer.release()
 
-    # ── Final console summary ─────────────────────────────────────────────────
-    print(f"\n{'='*68}")
-    print(f"SUMMARY — {session}")
-    print(f"{'='*68}")
-    print(f"  {'#':>3} {'L':>2} {'P':>2}  {'GT':>6}  {'LIVE':>7} {'LE':>6}  "
-          f"{'ML':>7} {'ME':>6}")
-    print(f"  {'-'*60}")
+    # -- Final console summary -------------------------------------------------
+    logger.info("=" * 68)
+    logger.info("SUMMARY -- %s", session)
+    logger.info("=" * 68)
+    logger.info("  %3s %2s %2s  %6s  %7s %6s  %7s %6s",
+                "#", "L", "P", "GT", "LIVE", "LE", "ML", "ME")
+    logger.info("  " + "-" * 60)
     for apple in sorted(apples,key=lambda a:a["apple_idx"]):
         idx = apple["apple_idx"]
         gt  = apple.get("gt_mm")
@@ -677,15 +682,16 @@ def main():
         ml  = ml_pred.get(idx)
         le  = f"{lv-gt:+.2f}" if (lv and gt) else "  -- "
         me  = f"{ml-gt:+.2f}" if (ml and gt) else "  -- "
-        lf  = "✓" if (lv and gt and abs(lv-gt)<=3) else "✗" if (lv and gt) else " "
-        mf  = "✓" if (ml and gt and abs(ml-gt)<=3) else "✗" if (ml and gt) else " "
+        lf  = "[OK]"   if (lv and gt and abs(lv-gt)<=3) else "[FAIL]" if (lv and gt) else " "
+        mf  = "[OK]"   if (ml and gt and abs(ml-gt)<=3) else "[FAIL]" if (ml and gt) else " "
         ln  = apple["lane"]
         ps  = apple.get("pos_in_lane",apple.get("pos","?"))
-        print(f"  #{idx+1:2d} L{ln} P{ps}  "
-              f"{str(round(gt,1)) if gt else '--':>6}  "
-              f"{(lv or 0):7.2f}{lf} {le:>6}  "
-              f"{(ml or 0):7.2f}{mf} {me:>6}")
-    print(f"\nSaved → {out_path}")
+        logger.info("  #%2d L%s P%s  %6s  %7.2f%-6s %6s  %7.2f%-6s %6s",
+                    idx+1, ln, ps,
+                    str(round(gt,1)) if gt else '--',
+                    lv or 0, lf, le,
+                    ml or 0, mf, me)
+    logger.info("Saved -> %s", out_path)
 
 
 if __name__ == "__main__":

@@ -112,6 +112,9 @@ from ultralytics import YOLO
 # Allow 'core/' package to be found when running from project root or scripts/
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.sizing.mask_diameter import all_diameters as _all_diameters
+from core.log import get_logger, configure_root
+
+logger = get_logger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -180,8 +183,8 @@ def load_gt(gt_path: str, session: str) -> list:
         if target_sheet is None and "Sheet1" in wb.sheetnames:
             target_sheet = "Sheet1"
         if target_sheet is None:
-            print(f"    [GT] No usable sheet found in {gt_path}  "
-                  f"(sheets: {wb.sheetnames})")
+            logger.warning("[GT] No usable sheet found in %s (sheets: %s)",
+                           gt_path, wb.sheetnames)
             wb.close()
             return []
 
@@ -200,7 +203,7 @@ def load_gt(gt_path: str, session: str) -> list:
                             vals.append(float(cell))
                         except (TypeError, ValueError):
                             pass
-            print(f"    [GT] Loaded {len(vals)} values from sheet '{target_sheet}'")
+            logger.info("[GT] Loaded %d values from sheet '%s'", len(vals), target_sheet)
             return vals
 
         # ── Case 2: Sheet1 multi-session format ───────────────────────────────
@@ -224,12 +227,12 @@ def load_gt(gt_path: str, session: str) -> list:
                 except (TypeError, ValueError):
                     pass
 
-        print(f"    [GT] Loaded {len(vals)} values for session '{session}' "
-              f"from '{target_sheet}'  (D1+D2)/2 averages in mm")
+        logger.info("[GT] Loaded %d values for session '%s' from '%s'  (D1+D2)/2 averages in mm",
+                    len(vals), session, target_sheet)
         return vals
 
     except Exception as exc:
-        print(f"    [GT] Failed to load {gt_path}: {exc}")
+        logger.warning("[GT] Failed to load %s: %s", gt_path, exc)
         return []
 
 
@@ -519,12 +522,12 @@ def select_and_order_tracks(
             lane_tracks.sort(key=lambda t: t["n_frames"], reverse=True)
             discarded = lane_tracks[apples_per_lane:]
             lane_tracks = lane_tracks[:apples_per_lane]
-            print(f"    Lane {lane_idx}: {len(lane_tracks)+len(discarded)} candidates "
-                  f"-> kept top {apples_per_lane} by frame count "
-                  f"(discarded {len(discarded)})")
+            logger.warning("Lane %d: %d candidates -> kept top %d by frame count (discarded %d)",
+                           lane_idx, len(lane_tracks)+len(discarded),
+                           apples_per_lane, len(discarded))
         elif len(lane_tracks) < apples_per_lane:
-            print(f"    Lane {lane_idx}: only {len(lane_tracks)} tracks "
-                  f"(expected {apples_per_lane}) -- missing apples?")
+            logger.warning("Lane %d: only %d tracks (expected %d) -- missing apples?",
+                           lane_idx, len(lane_tracks), apples_per_lane)
 
         # Sort by entry frame within lane -> positional order (first to enter = pos 0)
         lane_tracks.sort(key=lambda t: t["entry_frame"])
@@ -579,7 +582,7 @@ def process_session(
     src1_dir = Path(data_root) / "Source1" / session
 
     if not src0_dir.exists():
-        print(f"  ✗ Source0 folder not found: {src0_dir}")
+        logger.warning("[FAIL] Source0 folder not found: %s", src0_dir)
         return
 
     src0_files = sorted(
@@ -587,19 +590,19 @@ def process_session(
         key=lambda f: natural_key(f.name),
     )
     if not src0_files:
-        print(f"  ✗ No BMP files in {src0_dir}")
+        logger.warning("[FAIL] No BMP files in %s", src0_dir)
         return
 
-    print(f"\n{'─'*60}")
-    print(f"  Session {session}  |  {len(src0_files)} frames")
+    logger.info("-" * 60)
+    logger.info("Session %s  |  %d frames", session, len(src0_files))
 
     # Detect image dimensions from first frame
     probe = cv2.imread(str(src0_files[0]))
     if probe is None:
-        print(f"  ✗ Cannot read first frame: {src0_files[0]}")
+        logger.warning("[FAIL] Cannot read first frame: %s", src0_files[0])
         return
     img_h, img_w = probe.shape[:2]
-    print(f"  Image size: {img_w}×{img_h}")
+    logger.info("Image size: %dx%d", img_w, img_h)
     del probe
 
     entry_px = int(img_w * ENTRY_FRAC)   # x threshold for valid entry
@@ -764,10 +767,10 @@ def process_session(
             })
 
         if frame_idx % 200 == 0 and frame_idx > 0:
-            print(f"    ... frame {frame_idx}/{len(src0_files)}  "
-                  f"active tracks: {len(track_data)}")
+            logger.debug("... frame %d/%d  active tracks: %d",
+                         frame_idx, len(src0_files), len(track_data))
 
-    print(f"  Raw bytetrack IDs seen: {len(track_data)}")
+    logger.info("Raw bytetrack IDs seen: %d", len(track_data))
 
     # ── Filter valid tracks ───────────────────────────────────────────────────
     valid = []
@@ -788,7 +791,7 @@ def process_session(
         td["track_id"]  = tid
         valid.append(td)
 
-    print(f"  Valid tracks after filtering: {len(valid)}  (expected {APPLES_PER_SESSION})")
+    logger.info("Valid tracks after filtering: %d  (expected %d)", len(valid), APPLES_PER_SESSION)
 
     # ── Lane assignment ───────────────────────────────────────────────────────
     assign_lanes(valid, img_h, n_lanes=3)
@@ -846,10 +849,9 @@ def process_session(
         ell_b = consensus_params["axis_b"] if consensus_params else None
         ell_info = (f"ell={ell_a:.1f}x{ell_b:.1f}px" if ell_a else "no_ell")
 
-        print(f"    Apple {td['apple_idx']+1:2d}  "
-              f"lane={td['lane']} pos={td['pos_in_lane']}  "
-              f"frames={td['n_frames']:4d}  cx_range={td['cx_range']:4d}px  "
-              f"Q={best_q:.3f}  {ell_info}  gt={gt_str}")
+        logger.info("Apple %2d  lane=%d pos=%d  frames=%4d  cx_range=%4dpx  Q=%.3f  %s  gt=%s",
+                    td['apple_idx']+1, td['lane'], td['pos_in_lane'],
+                    td['n_frames'], td['cx_range'], best_q, ell_info, gt_str)
 
         committed_apples.append({
             "apple_idx":        td["apple_idx"],
@@ -869,7 +871,7 @@ def process_session(
             "frames":           td["frames"],
         })
 
-    print(f"  Total assigned: {len(committed_apples)}  (expected {APPLES_PER_SESSION})")
+    logger.info("Total assigned: %d  (expected %d)", len(committed_apples), APPLES_PER_SESSION)
 
     # ── Save ──────────────────────────────────────────────────────────────────
     os.makedirs(output_dir, exist_ok=True)
@@ -882,7 +884,7 @@ def process_session(
     }
     with open(out_path, "wb") as f:
         pickle.dump(payload, f)
-    print(f"  Saved → {out_path}")
+    logger.info("Saved -> %s", out_path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -907,12 +909,13 @@ def main() -> None:
                         help="Inference device: cuda or cpu")
     args = parser.parse_args()
 
-    print(f"Loading model: {args.model_path}")
+    configure_root()
+    logger.info("Loading model: %s", args.model_path)
     model = YOLO(args.model_path)
     model.to(args.device)
-    print(f"Model loaded. Device: {args.device}")
-    print(f"Tracker: {TRACKER_CFG}  |  Input mode: {INPUT_MODE}")
-    print(f"Sessions to process: {args.sessions}")
+    logger.info("Model loaded. Device: %s", args.device)
+    logger.info("Tracker: %s  |  Input mode: %s", TRACKER_CFG, INPUT_MODE)
+    logger.info("Sessions to process: %s", args.sessions)
 
     for session in args.sessions:
         process_session(
@@ -924,7 +927,7 @@ def main() -> None:
             device     = args.device,
         )
 
-    print("\n✅ All sessions complete.")
+    logger.info("All sessions complete.")
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ Layout:
 
 from __future__ import annotations
 
-import logging
+from core.log import get_logger
 from pathlib import Path
 
 import numpy as np
@@ -47,7 +47,7 @@ from gui.workers.video_worker  import VideoWorker
 from gui.workers.inference_worker import MockInferenceWorker, RealInferenceWorker
 from gui.workers.tracker import AppleTracker as ConveyorTracker
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 def _load_config(path: str = "config/config.yaml") -> dict:

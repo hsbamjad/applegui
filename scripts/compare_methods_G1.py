@@ -24,6 +24,10 @@ import matplotlib.pyplot as plt
 # Make sure project root is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from core.log import get_logger, configure_root
+configure_root()
+logger = get_logger(__name__)
+
 from core.sizing.mask_diameter import all_diameters
 
 PKL_PATH = r"S:\MSU_Research\ASABE AIM26\apple_gui\data\frame_features\G1.pkl"
@@ -50,12 +54,12 @@ METHOD_LABELS = {
 }
 
 # ── Load pkl ──────────────────────────────────────────────────────────────────
-print(f"Loading {PKL_PATH} ...")
+logger.info(f"Loading {PKL_PATH} ...")
 with open(PKL_PATH, "rb") as f:
     data = pickle.load(f)
 
 apples = sorted(data["apples"], key=lambda a: a["apple_idx"])
-print(f"  {len(apples)} apples loaded")
+logger.info(f"  {len(apples)} apples loaded")
 
 # ── Compute all diameters per apple ───────────────────────────────────────────
 records = []
@@ -84,23 +88,23 @@ for a in apples:
     })
 
 if skipped:
-    print(f"  Warning: {skipped} apples skipped (missing mask or GT)")
+    logger.warning(f"  {skipped} apples skipped (missing mask or GT)")
 
 methods = ["d_maxwidth", "d_symmetry", "d_ellipse", "d_area"]
 gt_arr  = np.array([r["gt_mm"] for r in records])
 n       = len(records)
 
 # ── Fit scale per method (least-squares: sum(D_px * gt) / sum(D_px^2)) ────────
-print("\n" + "="*72)
-print(f"{'Method':<42} {'Scale':>8} {'MAE':>7} {'RMSE':>8} {'MaxErr':>8} {'R²':>6}")
-print("="*72)
+logger.info("\n" + "="*72)
+logger.info(f"{'Method':<42} {'Scale':>8} {'MAE':>7} {'RMSE':>8} {'MaxErr':>8} {'R2':>6}")
+logger.info("="*72)
 
 results = {}
 for method in methods:
     d_px   = np.array([r[method] for r in records])
     valid  = d_px > 10
     if valid.sum() < 3:
-        print(f"  {METHOD_LABELS[method]:<42}  INSUFFICIENT DATA")
+        logger.info(f"  {METHOD_LABELS[method]:<42}  INSUFFICIENT DATA")
         continue
 
     scale     = float(np.sum(d_px[valid] * gt_arr[valid]) / np.sum(d_px[valid] ** 2))
@@ -116,11 +120,11 @@ for method in methods:
     results[method] = {"scale": scale, "d_mm": d_mm, "errs": errs[...],
                        "mae": mae, "rmse": rmse, "max_err": max_err, "r2": r2}
 
-    star = " ◄ BEST" if mae == min(
+    star = " <- BEST" if mae == min(
         v["mae"] for v in results.values() if "mae" in v
     ) else ""
-    print(f"  {METHOD_LABELS[method]:<42}  {scale:6.3f}  {mae:5.2f}mm  "
-          f"{rmse:6.2f}mm  {max_err:6.2f}mm  {r2:5.3f}{star}")
+    logger.info(f"  {METHOD_LABELS[method]:<42}  {scale:6.3f}  {mae:5.2f}mm  "
+                f"{rmse:6.2f}mm  {max_err:6.2f}mm  {r2:5.3f}{star}")
 
 # Simple ensemble: mean of all methods in mm
 ens_mm_all = []
@@ -145,22 +149,22 @@ results["ensemble"] = {"d_mm": ens_mm, "errs": ens_err,
                        "mae": ens_mae, "rmse": ens_rmse,
                        "max_err": ens_max, "r2": ens_r2}
 
-print(f"  {'--- Simple Mean Ensemble ---':<42}  {'N/A':>6}  {ens_mae:5.2f}mm  "
-      f"{ens_rmse:6.2f}mm  {ens_max:6.2f}mm  {ens_r2:5.3f}")
-print("="*72)
+logger.info(f"  {'--- Simple Mean Ensemble ---':<42}  {'N/A':>6}  {ens_mae:5.2f}mm  "
+            f"{ens_rmse:6.2f}mm  {ens_max:6.2f}mm  {ens_r2:5.3f}")
+logger.info("="*72)
 
 # ── Per-apple detail table ─────────────────────────────────────────────────────
-print(f"\n{'#':>3}  {'GT':>6}  {'MaxW':>7}  {'Sym':>7}  {'Ell':>7}  {'Area':>7}  {'Ens':>7}")
-print("-" * 58)
+logger.info(f"{'#':>3}  {'GT':>6}  {'MaxW':>7}  {'Sym':>7}  {'Ell':>7}  {'Area':>7}  {'Ens':>7}")
+logger.info("-" * 58)
 for i, r in enumerate(records):
     vals = {m: f"{results[m]['d_mm'][i]:6.1f}" for m in methods if m in results}
     ens  = f"{results['ensemble']['d_mm'][i]:6.1f}"
-    print(f"#{r['apple_idx']:2d}  {r['gt_mm']:6.1f}  "
-          f"{vals.get('d_maxwidth','   N/A')}  "
-          f"{vals.get('d_symmetry','   N/A')}  "
-          f"{vals.get('d_ellipse', '   N/A')}  "
-          f"{vals.get('d_area',    '   N/A')}  "
-          f"{ens}")
+    logger.info(f"#{r['apple_idx']:2d}  {r['gt_mm']:6.1f}  "
+                f"{vals.get('d_maxwidth','   N/A')}  "
+                f"{vals.get('d_symmetry','   N/A')}  "
+                f"{vals.get('d_ellipse', '   N/A')}  "
+                f"{vals.get('d_area',    '   N/A')}  "
+                f"{ens}")
 
 # ── FIGURE 1: MAE comparison bar chart ────────────────────────────────────────
 all_method_keys  = list(methods) + ["ensemble"]
@@ -206,7 +210,7 @@ plt.tight_layout()
 out1 = os.path.join(OUT_DIR, "G1_method_comparison_bars.png")
 plt.savefig(out1, dpi=140, bbox_inches="tight", facecolor=DARK)
 plt.close()
-print(f"\nSaved: {out1}")
+logger.info(f"Saved: {out1}")
 
 # ── FIGURE 2: Per-apple error lines ───────────────────────────────────────────
 fig2, ax = plt.subplots(figsize=(20, 8), facecolor=DARK)
@@ -229,7 +233,7 @@ ax.axhline(-2,  color=MUTED, lw=0.8, ls="--", alpha=0.5)
 ax.set_xticks(x)
 ax.set_xticklabels([f"#{r['apple_idx']}\nL{r['lane']}P{r['pos']}"
                     for r in records], fontsize=8, color=TEXT)
-ax.set_ylabel("Error: Estimated − GT (mm)", fontsize=11, color=TEXT)
+ax.set_ylabel("Error: Estimated - GT (mm)", fontsize=11, color=TEXT)
 ax.set_title("Per-Apple Error by Method — G1 Session", fontsize=13,
              fontweight="bold", color=TEXT)
 ax.legend(fontsize=9.5, facecolor=PANEL, edgecolor="#30363d",
@@ -241,5 +245,5 @@ out2 = os.path.join(OUT_DIR, "G1_method_comparison_errors.png")
 plt.tight_layout()
 plt.savefig(out2, dpi=140, bbox_inches="tight", facecolor=DARK)
 plt.close()
-print(f"Saved: {out2}")
-print("\nDone.")
+logger.info(f"Saved: {out2}")
+logger.info("Done.")

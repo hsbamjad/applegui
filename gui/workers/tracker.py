@@ -24,11 +24,11 @@ Lane assignment uses the orthogonal axis (Y for LR/RL, X for TB/BT).
 from __future__ import annotations
 
 import math
-import logging
+from core.log import get_logger
 from collections import defaultdict
 from dataclasses import dataclass
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 # Supported orientations
 ORIENTATIONS = ("LR", "RL", "TB", "BT")

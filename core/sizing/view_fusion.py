@@ -46,6 +46,9 @@ from __future__ import annotations
 import numpy as np
 from typing import Any
 
+from core.log import get_logger
+logger = get_logger(__name__)
+
 # Central fraction: skip first/last 20% of traversal
 CENTRAL_FRAC = 0.20
 
@@ -163,8 +166,7 @@ def fuse_session(pkl_data: dict, **kwargs) -> list[dict]:
         feat = fuse_apple(apple, **kwargs)
         if feat is None:
             idx = apple.get("apple_idx", "?")
-            print(f"  [view_fusion] WARNING: Apple {idx} in {session} — "
-                  f"no usable frames, skipped.")
+            logger.warning(f"Apple {idx} in {session} - no usable frames, skipped.")
             continue
         results.append(feat)
 

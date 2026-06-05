@@ -28,6 +28,9 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from core.log import get_logger
+logger = get_logger(__name__)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # INTERNAL HELPERS
