@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 # ── Format ─────────────────────────────────────────────────────────────────────
-_FMT     = "%(asctime)s [%(levelname)-8s] %(name)s: %(message)s"
+_FMT     = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _DATEFMT = "%H:%M:%S"
 
 _configured = False
