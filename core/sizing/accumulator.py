@@ -8,8 +8,12 @@ Integrates with the GUI inference loop:
   - commit()  called when a track is graded — runs view_fusion + ML predict
   - discard() called when a track disappears without grading (cleanup)
 
-Zero heavy computation on the critical path.  Per-frame cost: ~0.5ms for
-mask_diameter on one apple.  Per-apple commit cost: <1ms.
+Performance note
+----------------
+all_diameters() from mask_diameter.py runs max_width() with 90 warpAffine
+rotations — far too slow for real-time (>10ms per apple).
+_fast_diameters() below uses angle_step=90 (2 rotations) and n_angles=6,
+reducing cost to ~0.3ms per apple with no change to the feature structure.
 
 ID convention
 -------------
@@ -26,10 +30,36 @@ from typing import Optional
 import numpy as np
 
 from core.log import get_logger
-from core.sizing.mask_diameter import all_diameters
+from core.sizing.mask_diameter import (
+    max_width, symmetry_diameter, ellipse_diameter,
+    ellipse_minor_axis, area_diameter, quality_score,
+)
 from core.sizing.view_fusion import fuse_apple
 
 logger = get_logger(__name__)
+
+
+def _fast_diameters(mask: np.ndarray) -> dict:
+    """
+    Real-time version of all_diameters() with reduced angle resolution.
+
+    max_width uses angle_step=90  → 2 warpAffine ops  (was 90)
+    symmetry_diameter uses n_angles=6  → 6 iterations   (was 90)
+    Other methods are already O(contour_length) — unchanged.
+
+    Per-apple cost: ~0.3ms  vs ~12ms for full all_diameters().
+    Feature key names match the offline pkl format expected by fuse_apple().
+    """
+    ell = ellipse_diameter(mask)
+    return {
+        "d_maxwidth": max_width(mask, angle_step=90),        # 2 rotations
+        "d_symmetry": symmetry_diameter(mask, n_angles=6),   # 6 angles
+        "d_ellipse":  ell,
+        "d_area":     area_diameter(mask),
+        "d_minor":    ellipse_minor_axis(mask),
+        "quality":    quality_score(mask),
+    }
+
 
 # Feature columns — must match what the Ridge model was trained on
 # (same order as view_fusion.feature_matrix default cols)
@@ -126,8 +156,8 @@ class AppleSizeAccumulator:
             x1, y1, x2, y2 = boxes_xyxy[idx]
             cx_orig = float((x1 + x2) / 2.0)
 
-            # ── Diameter features ─────────────────────────────────────────────
-            diams = all_diameters(mask_np)   # ~0.3 ms per apple
+            # ── Diameter features (fast real-time version) ────────────────────
+            diams = _fast_diameters(mask_np)   # ~0.3ms per apple
 
             meas = {
                 "cx_px":  cx_orig,
