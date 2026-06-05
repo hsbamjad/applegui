@@ -1,4 +1,4 @@
-#  Project Workflow Document
+﻿#  Project Workflow Document
 ## Multispectral Apple Sorting GUI
 **Michigan State University | ASABE AIM26 | Version 1.0**
 **Last Updated: May 2026**

@@ -1,4 +1,4 @@
-# Multispectral Apple Grading System: Project Roadmap
+﻿# Multispectral Apple Grading System: Project Roadmap
 
 **Platform:** JAI FS-3200T-10GE · 3-Channel Multispectral (Color + NIR1 + NIR2)
 **Goal:** Automated apple grading and sorting on a 3-lane conveyor belt

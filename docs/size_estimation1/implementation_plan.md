@@ -1,4 +1,4 @@
-# Final Implementation Plan: Apple Size Estimation
+﻿# Final Implementation Plan: Apple Size Estimation
 **Branch:** `feature/apple-size-estimation` (from `phase1/inference-tracking`)
 
 ---

@@ -1,4 +1,4 @@
-# RGB Channel Flicker at High FPS - Root Cause Analysis
+﻿# RGB Channel Flicker at High FPS - Root Cause Analysis
 
 **Date:** 2026-05-20
 **Camera:** JAI FS-3200T (3-source multispectral)
