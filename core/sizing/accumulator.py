@@ -133,35 +133,65 @@ class AppleSizeAccumulator:
             return   # tracking not initialised yet
 
         # Build index: ByteTrack_id → position in YOLO result
-        track_ids  = boxes.id.cpu().numpy().astype(int)
+        track_ids = boxes.id.cpu().numpy().astype(int)
         tid_to_idx = {int(tid): i for i, tid in enumerate(track_ids)}
 
-        masks_data = yolo_result.masks.data   # tensor (N, H, W)
-        boxes_xyxy = boxes.xyxy.cpu().numpy() # (N, 4) — original image coords
+        # ── ONE batched GPU→CPU transfer for all masks ────────────────────────
+        # masks_data: (N, H_mask, W_mask) numpy array
+        # Doing masks_data[i].cpu() inside the loop causes N separate GPU→CPU
+        # round-trips which dominate cost at high apple counts.
+        masks_data_np = yolo_result.masks.data.cpu().numpy()   # single transfer
+        boxes_xyxy    = boxes.xyxy.cpu().numpy()               # (N, 4) orig coords
+
+        mask_h, mask_w = masks_data_np.shape[1], masks_data_np.shape[2]
+        orig_h, orig_w = yolo_result.orig_shape[:2]
+
+        # Scale factors: original image coordinates → mask pixel coordinates
+        sx = mask_w / orig_w
+        sy = mask_h / orig_h
+
+        # Log mask resolution once so we can verify scale
+        if not hasattr(self, "_mask_shape_logged"):
+            logger.debug(
+                "Mask shape: %dx%d  orig: %dx%d  scale: %.3fx%.3f",
+                mask_w, mask_h, orig_w, orig_h, sx, sy,
+            )
+            self._mask_shape_logged = True
 
         for t in active_tracks:
             tid = t["track_id"]
 
             if tid in self._committed:
-                continue   # already sized — don't waste time
+                continue   # already sized — skip
 
             idx = tid_to_idx.get(tid)
             if idx is None:
                 continue   # this track not in current YOLO result (lost frame)
 
-            # ── Extract mask ──────────────────────────────────────────────────
-            mask_np = (masks_data[idx].cpu().numpy() * 255).astype(np.uint8)
-
-            # ── Bounding box centre (original image coords → cx for traversal)
+            # ── Bounding box centre in original image coords ───────────────────
             x1, y1, x2, y2 = boxes_xyxy[idx]
             cx_orig = float((x1 + x2) / 2.0)
 
-            # ── Diameter features (fast real-time version) ────────────────────
-            diams = _fast_diameters(mask_np)   # ~0.3ms per apple
+            # ── Crop mask to apple bbox ───────────────────────────────────────
+            # Original masks may be 2048×1536 — warpAffine on the full frame
+            # is prohibitively slow.  Crop first: typical apple bbox is ~100×100.
+            pad  = 4
+            mx1  = max(0,      int(x1 * sx) - pad)
+            my1  = max(0,      int(y1 * sy) - pad)
+            mx2  = min(mask_w, int(x2 * sx) + pad)
+            my2  = min(mask_h, int(y2 * sy) + pad)
+
+            mask_crop = (masks_data_np[idx, my1:my2, mx1:mx2] * 255).astype(np.uint8)
+
+            if mask_crop.size == 0 or mask_crop.max() == 0:
+                continue   # empty crop — apple not segmented
+
+            # ── Diameter features on the small cropped mask ───────────────────
+            diams = _fast_diameters(mask_crop)   # <0.1ms on 100×100 crop
 
             meas = {
                 "cx_px":  cx_orig,
-                # Rename to match fuse_apple()'s expected frame key names
+                # Key names must match fuse_apple() frame format
                 "d_maxw": diams["d_maxwidth"],
                 "d_sym":  diams["d_symmetry"],
                 "d_ell":  diams["d_ellipse"],
