@@ -7,10 +7,11 @@ pyyaml==6.0.3
 PyQt6==6.11.0
 pyqtgraph==0.14.0
 
-# ── AI & Deep Learning (RTX 5060 Ti / Blackwell sm_120 — requires CUDA 12.8) ─────────
+# ── AI & Deep Learning (RTX 5060 Ti / Blackwell sm_120 — CUDA 12.8) ──────────────
+# The +cu128 suffix forces pip to use the PyTorch wheel index, not PyPI's CPU build.
 --extra-index-url https://download.pytorch.org/whl/cu128
-torch>=2.7.0                  # Blackwell (sm_120) support added in 2.7.0
-torchvision                   # version matched automatically by pip
+torch==2.7.0+cu128
+torchvision==0.22.0+cu128
 ultralytics==8.4.53
 supervision==0.28.0
 

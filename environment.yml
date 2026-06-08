@@ -24,9 +24,11 @@ dependencies:
 
     # AI / Vision
     # RTX 5060 Ti (Blackwell, sm_120) requires PyTorch built with CUDA 12.8+
+    # The +cu128 suffix forces pip to fetch from the PyTorch wheel index,
+    # not the CPU-only build on PyPI.
     - --extra-index-url https://download.pytorch.org/whl/cu128
-    - torch>=2.7.0                # cu128 build — Blackwell (sm_120) support
-    - torchvision                 # matched automatically by pip
+    - torch==2.7.0+cu128
+    - torchvision==0.22.0+cu128
     - opencv-python==4.13.0.92
     - numpy==2.2.6
 
