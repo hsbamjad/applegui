@@ -1,4 +1,10 @@
 @echo off
+:: ============================================================
+:: install.bat  —  Infield Apple Sorting System
+:: Michigan State University | ASABE AIM26 | 2026
+::
+:: Run this ONCE on a new machine, then use launch.bat every time.
+:: ============================================================
 title Apple Sorting System -- Installer
 cd /d "%~dp0"
 
@@ -9,39 +15,67 @@ echo   Michigan State University  ^|  ASABE AIM26  ^|  2026
 echo ============================================================
 echo.
 
-:: ── Step 1: Check conda is available ─────────────────────────
-echo [1/4] Checking for Conda...
-where conda >nul 2>&1
-if errorlevel 1 (
-    echo.
-    echo   ERROR: Conda was not found.
-    echo   Please install Miniconda first, then re-run this installer.
-    echo   https://docs.conda.io/en/latest/miniconda.html
-    echo.
-    pause
-    exit /b 1
+:: ── Step 1: Find conda ───────────────────────────────────────
+echo [1/4] Looking for conda installation...
+
+set CONDA_ACTIVATE=
+set CONDA_BASE=
+set CONDA_EXE=
+
+for %%P in (
+    "%USERPROFILE%\miniconda3"
+    "%USERPROFILE%\anaconda3"
+    "%USERPROFILE%\Miniconda3"
+    "%USERPROFILE%\Anaconda3"
+    "C:\ProgramData\miniconda3"
+    "C:\ProgramData\anaconda3"
+    "C:\miniconda3"
+    "C:\anaconda3"
+) do (
+    if exist "%%~P\Scripts\activate.bat" (
+        set CONDA_BASE=%%~P
+        set CONDA_ACTIVATE=%%~P\Scripts\activate.bat
+        set CONDA_EXE=%%~P\Scripts\conda.exe
+        goto found_conda
+    )
 )
-echo        Conda found.
+
+echo.
+echo   ERROR: Could not find a conda installation.
+echo   Please install Miniconda from:
+echo   https://docs.conda.io/en/latest/miniconda.html
+echo.
+pause
+exit /b 1
+
+:found_conda
+echo        Found conda at: %CONDA_BASE%
 
 :: ── Step 2: Create or update the conda environment ───────────
 echo.
-echo [2/4] Creating 'applegui' conda environment...
-echo        This may take 5-15 minutes on the first run.
+echo [2/4] Setting up 'applegui' conda environment...
+echo        (First run may take 5-15 minutes to download packages)
 echo.
 
-conda env create -f environment.yml
+:: Initialize conda for use in this CMD session
+call "%CONDA_ACTIVATE%"
+
+:: Check if env already exists
+"%CONDA_EXE%" env list | findstr /C:"applegui" >nul 2>&1
+if not errorlevel 1 (
+    echo        Environment already exists. Updating...
+    "%CONDA_EXE%" env update -f environment.yml --prune
+) else (
+    "%CONDA_EXE%" env create -f environment.yml
+)
+
 if errorlevel 1 (
     echo.
-    echo        Environment may already exist. Trying update instead...
-    conda env update -f environment.yml --prune
-    if errorlevel 1 (
-        echo.
-        echo   ERROR: Failed to create or update the conda environment.
-        echo   See output above for details.
-        echo.
-        pause
-        exit /b 1
-    )
+    echo   ERROR: Failed to create the conda environment.
+    echo   See output above for details.
+    echo.
+    pause
+    exit /b 1
 )
 echo.
 echo        Environment ready.
@@ -54,8 +88,7 @@ set EBUS_DIR=C:\Program Files\Common Files\Pleora\eBUS SDK\Python
 if exist "%EBUS_DIR%" (
     for %%f in ("%EBUS_DIR%\ebus_python*.whl") do (
         echo        Found: %%~nxf
-        echo        Installing into applegui environment...
-        conda run -n applegui pip install "%%f"
+        "%CONDA_EXE%" run -n applegui pip install "%%f"
         if errorlevel 1 (
             echo        WARNING: eBUS install failed. App will use mock camera mode.
         ) else (
@@ -63,10 +96,9 @@ if exist "%EBUS_DIR%" (
         )
         goto ebus_done
     )
-    echo        No .whl file found. App will use mock camera mode.
+    echo        No .whl found. App will use mock camera mode.
 ) else (
-    echo        eBUS SDK folder not found. App will use mock camera mode.
-    echo        Install JAI eBUS SDK 6.x if you need the live camera.
+    echo        eBUS SDK not installed. App will use mock camera mode.
 )
 :ebus_done
 
@@ -91,9 +123,8 @@ echo.
 echo ============================================================
 echo   Setup complete!
 echo.
-echo   To start the app:
-echo     - Double-click "Apple Sorter" on your Desktop, OR
-echo     - Double-click launch.bat in this folder
+echo   To start the app, double-click:  launch.bat
+echo   or the "Apple Sorter" shortcut on your Desktop.
 echo ============================================================
 echo.
 pause
