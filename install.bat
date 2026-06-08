@@ -1,7 +1,6 @@
 @echo off
 :: ============================================================
 :: install.bat  —  Infield Apple Sorting System
-:: Michigan State University | ASABE AIM26 | 2026
 ::
 :: Run this ONCE on a new machine, then use launch.bat every time.
 :: ============================================================
@@ -80,14 +79,23 @@ if errorlevel 1 (
 echo.
 echo        Environment ready.
 
-:: ── Step 3: Install eBUS SDK wheel if present ─────────────────
+:: ── Step 3: Check / install eBUS SDK ────────────────────────────
 echo.
-echo [3/4] Looking for JAI eBUS SDK wheel...
+echo [3/4] Checking JAI eBUS SDK...
 
+:: First: check if ebus_python is already installed in the env
+"%CONDA_EXE%" run -n applegui pip show ebus_python >nul 2>&1
+if not errorlevel 1 (
+    echo        Already installed in applegui env. Nothing to do.
+    goto ebus_done
+)
+
+:: Not installed — look for the .whl file and install it
 set EBUS_DIR=C:\Program Files\Common Files\Pleora\eBUS SDK\Python
 if exist "%EBUS_DIR%" (
     for %%f in ("%EBUS_DIR%\ebus_python*.whl") do (
-        echo        Found: %%~nxf
+        echo        Found wheel: %%~nxf
+        echo        Installing into applegui environment...
         "%CONDA_EXE%" run -n applegui pip install "%%f"
         if errorlevel 1 (
             echo        WARNING: eBUS install failed. App will use mock camera mode.
@@ -96,9 +104,10 @@ if exist "%EBUS_DIR%" (
         )
         goto ebus_done
     )
-    echo        No .whl found. App will use mock camera mode.
+    echo        No .whl found in SDK folder. App will use mock camera mode.
 ) else (
-    echo        eBUS SDK not installed. App will use mock camera mode.
+    echo        eBUS SDK folder not found. App will use mock camera mode.
+    echo        If you need live camera, install JAI eBUS SDK 6.x then re-run.
 )
 :ebus_done
 
