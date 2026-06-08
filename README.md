@@ -1,7 +1,7 @@
 # Apple Sorting GUI
 
 Real-time multispectral vision system for in-field apple grading and pneumatic sorting.
-Michigan State University | ASABE AIM26 | 2026
+Michigan State University
 
 [![Python](https://img.shields.io/badge/Python-3.10-blue)](https://python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green)](https://pypi.org/project/PyQt6/)
@@ -131,9 +131,3 @@ conveyor:
   camera_to_gate_m: 0.5      # Physical distance from camera to sorter gate (meters)
   speed_apples_per_sec: 1    # 1 | 2 | 3 apples per second per lane
 ```
-
----
-
-## License
-
-MIT License - see [LICENSE](LICENSE)
