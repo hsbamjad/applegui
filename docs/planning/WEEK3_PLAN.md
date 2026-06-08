@@ -1,6 +1,6 @@
-# Week 3 Plan — Multispectral Apple Sorting GUI
+﻿# Week 3 Plan - Multispectral Apple Sorting GUI
 **Week of: May 26, 2026**
-**Status: 🟢 Updated for Model & Data-First Focus — Track A & B Prioritized ✅**
+**Status:  Updated for Model & Data-First Focus - Track A & B Prioritized **
 
 ---
 
@@ -13,7 +13,7 @@ Rather than rushing to wire the physical sorter actuators and serial communicati
 ### The Restructured Week 3 Focus:
 
 ```
-                  OLD PIPELINE (Week 2 Complete ✅)
+                  OLD PIPELINE (Week 2 Complete )
                   ────────────────────────────────
                     Camera Streams → Buffer Sync → GUI Display
                                                        │
@@ -50,15 +50,15 @@ Run test inference in GUI         Compare metrics against paper     Profile infe
 
 ---
 
-## Track A — Model Loading & Inference Script Porting
+## Track A - Model Loading & Inference Script Porting
 
 ### Goal
 Import and port the research team's reference scripts, evaluate custom YOLOv8 model weights, verify exact network dimensions (RGB vs. 5-channel), and integrate the model loading controls directly into our GUI architecture.
 
 ---
 
-### A1 — Port Reference Inference & Tracking Scripts
-*   **Time estimate: 2–3 hrs**
+### A1 - Port Reference Inference & Tracking Scripts
+*   **Time estimate: 2-3 hrs**
 *   Port the existing research team's inference scripts, tracking helpers, and apple grading logic into the project under a sandbox directory (`scripts/sandbox/` or `core/inference/`).
 *   **Key aspects to identify in the reference code:**
     *   Does the model perform **Instance Segmentation** (YOLOv8-seg), **Object Detection** (YOLOv8-detect), or **Classification**?
@@ -68,7 +68,7 @@ Import and port the research team's reference scripts, evaluate custom YOLOv8 mo
 
 ---
 
-### A2 — Build the ModelManager & Verify Input Dimensions
+### A2 - Build the ModelManager & Verify Input Dimensions
 *   **Time estimate: 2 hrs**
 *   Create a robust model loading utility inside `core/inference/model_manager.py`.
 *   Verify the exact channel dimensions required by the trained model:
@@ -111,7 +111,7 @@ Import and port the research team's reference scripts, evaluate custom YOLOv8 mo
 
 ---
 
-### A3 — Construct Fixed Preprocessing Pipeline
+### A3 - Construct Fixed Preprocessing Pipeline
 *   **Time estimate: 2 hrs**
 *   Build a reproducible image preprocessor (`core/inference/preprocessing.py`) to convert raw multispectral frames into standard tensors.
 *   **Critical Constraint**: Unlike the GUI display pipeline which uses adaptive EMA scaling (essential for human viewing), **inference must use absolute physical normalization** so identical apples receive identical pixel ratings regardless of brightness fluctuations.
@@ -119,22 +119,22 @@ Import and port the research team's reference scripts, evaluate custom YOLOv8 mo
 
 ---
 
-## Track B — Labeled Datasets & Offline Video Playback Sandbox
+## Track B - Labeled Datasets & Offline Video Playback Sandbox
 
 ### Goal
 Set up an offline playback sandbox to load real multispectral videos and labeled datasets in the GUI, run live inference on the recorded data, and validate accuracy before running live tests on the conveyor.
 
 ---
 
-### B1 — Implement Offline Video Playback Sandbox
-*   **Time estimate: 2–3 hrs**
+### B1 - Implement Offline Video Playback Sandbox
+*   **Time estimate: 2-3 hrs**
 *   Create a virtual camera backend (`core/camera/video_player.py`) that reads pre-recorded multispectral video files (channels 1, 2, and 3) instead of live camera feeds.
 *   Allows the user to test the GUI, inference workers, tracking lines, and data logging offline directly on their development laptop.
 *   **Deliverable**: "Offline Video Mode" integrated into `config.yaml` and selectable from the GUI connection panel.
 
 ---
 
-### B2 — Run Dataset Validation & Accuracy Audits
+### B2 - Run Dataset Validation & Accuracy Audits
 *   **Time estimate: 2 hrs**
 *   Feed raw test images from the labeled dataset (comprising Fresh, Processing, and Cull classes) through our preprocessing and loaded YOLOv8 models.
 *   Generate confusion matrices and confidence logs. Compare the GUI's local classification output with the benchmarks documented in the ASABE sorting research paper.
@@ -142,14 +142,14 @@ Set up an offline playback sandbox to load real multispectral videos and labeled
 
 ---
 
-## Track C — Async Data Logging & GUI Reporting
+## Track C - Async Data Logging & GUI Reporting
 
 ### Goal
 Implement asynchronous, non-blocking CSV logs and TIFF defect frame saving. Run profiling audits to measure processing latency and ensure the app maintains high performance.
 
 ---
 
-### C1 — Async CSV Data Logger
+### C1 - Async CSV Data Logger
 *   **Time estimate: 1.5 hrs**
 *   Build `core/logging/data_logger.py` to write graded results in the background, utilizing a queue to protect CPU cycles.
 *   Log columns: `timestamp`, `frame_idx`, `lane`, `apple_id`, `assigned_grade`, `confidence_score`.
@@ -157,7 +157,7 @@ Implement asynchronous, non-blocking CSV logs and TIFF defect frame saving. Run 
 
 ---
 
-### C2 — High-Resolution Defect TIFF Capture (Stretch Goal)
+### C2 - High-Resolution Defect TIFF Capture (Stretch Goal)
 *   **Time estimate: 1.5 hrs**
 *   Whenever a fruit is graded as **Cull** (defect), trigger a background worker to bundle the full-resolution uncompressed color and NIR frames into a single 5-channel TIFF file. 
 *   Provides a persistent research archive of physical defects for future model training adjustments.
@@ -165,7 +165,7 @@ Implement asynchronous, non-blocking CSV logs and TIFF defect frame saving. Run 
 
 ---
 
-### C3 — GUI Performance Profiling
+### C3 - GUI Performance Profiling
 *   **Time estimate: 1 hr**
 *   Measure end-to-end processing speeds:
     $$\text{Latency} = \text{Frame Capture} + \text{Demosaic} + \text{Inference} + \text{UI Draw}$$

@@ -1,4 +1,4 @@
-# Week 1 Plan — Multispectral Apple Sorting GUI
+﻿# Week 1 Plan - Multispectral Apple Sorting GUI
 **Week of: May 14, 2026**
 **Status: In Progress**
 
@@ -31,13 +31,13 @@ See `WORKFLOW.md §2` and `PROJECT_BRAINSTORM.md §9` for full reasoning.
 
 ---
 
-## Track A — Laptop Development
+## Track A - Laptop Development
 
 ### Goal
 Have a running PyQt6 application with correct layout skeleton, connected to Git.
 
-### A1 — Create `applegui` Conda Environment
-**Time estimate: 20–30 min**
+### A1 - Create `applegui` Conda Environment
+**Time estimate: 20-30 min**
 
 ```bash
 # Create the environment
@@ -67,7 +67,7 @@ python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 
 ---
 
-### A2 — Create `environment.yml`
+### A2 - Create `environment.yml`
 **Time estimate: 10 min**
 
 Export the working environment so it's reproducible everywhere:
@@ -75,14 +75,14 @@ Export the working environment so it's reproducible everywhere:
 conda env export --from-history > environment.yml
 ```
 
-Then manually clean it up (remove OS-specific build strings) — see `WORKFLOW.md §5.3` for the target format.
+Then manually clean it up (remove OS-specific build strings) - see `WORKFLOW.md §5.3` for the target format.
 
 **Deliverable:** `environment.yml` committed to repo root.
 
 ---
 
-### A3 — Initialize Project Structure + Git
-**Time estimate: 20–30 min**
+### A3 - Initialize Project Structure + Git
+**Time estimate: 20-30 min**
 
 Create all folders and skeleton files:
 ```
@@ -144,10 +144,10 @@ git commit -m "chore: initialize project structure with all stubs"
 
 ---
 
-### A4 — Build Qt Main Window Skeleton
-**Time estimate: 2–3 hrs**
+### A4 - Build Qt Main Window Skeleton
+**Time estimate: 2-3 hrs**
 
-Build the visual layout of the application — **no camera, no AI, just the window structure**. This includes:
+Build the visual layout of the application - **no camera, no AI, just the window structure**. This includes:
 
 **Layout:**
 ```
@@ -170,10 +170,10 @@ Build the visual layout of the application — **no camera, no AI, just the wind
 ```
 
 **What gets implemented this week:**
-- `gui/main_window.py` — `QMainWindow` with `QSplitter` 3-column layout
-- `gui/panels/camera_panel.py` — Left sidebar with placeholder buttons
-- `gui/widgets/image_display.py` — 3 `QLabel` image panels (shows placeholder color blocks)
-- `main.py` — Entry point, launches the window
+- `gui/main_window.py` - `QMainWindow` with `QSplitter` 3-column layout
+- `gui/panels/camera_panel.py` - Left sidebar with placeholder buttons
+- `gui/widgets/image_display.py` - 3 `QLabel` image panels (shows placeholder color blocks)
+- `main.py` - Entry point, launches the window
 
 **What is intentionally NOT implemented yet:**
 - Real camera connection (waiting for Track B data)
@@ -185,7 +185,7 @@ Build the visual layout of the application — **no camera, no AI, just the wind
 
 ---
 
-### A5 — First GitHub Push
+### A5 - First GitHub Push
 **Time estimate: 10 min**
 
 ```bash
@@ -204,7 +204,7 @@ git push origin develop
 
 ---
 
-## Track B — Shuttle PC Hardware Verification
+## Track B - Shuttle PC Hardware Verification
 
 ### Goal
 Confirm the JAI camera works end-to-end from physical connection to Python code, and capture real sample frames to share with the laptop.
@@ -213,8 +213,8 @@ Confirm the JAI camera works end-to-end from physical connection to Python code,
 
 ---
 
-### B1 — Download & Install JAI eBUS SDK
-**Time estimate: 30–45 min**
+### B1 - Download & Install JAI eBUS SDK
+**Time estimate: 30-45 min**
 
 1. Go to: **https://www.jai.com/support-software/jai-software**
 2. Download: **"eBUS SDK for JAI"** (Windows 64-bit, latest version)
@@ -222,16 +222,16 @@ Confirm the JAI camera works end-to-end from physical connection to Python code,
 4. Reboot if prompted
 
 **What gets installed:**
-- GenTL producer: `PvGenTL.cti` (exact path depends on install dir — note it down)
-- **eBUS Player** — standalone camera viewer app
+- GenTL producer: `PvGenTL.cti` (exact path depends on install dir - note it down)
+- **eBUS Player** - standalone camera viewer app
 - JAI SDK headers and libraries
 
 **Deliverable:** eBUS SDK installed, `PvGenTL.cti` file path noted.
 
 ---
 
-### B2 — Configure 10 GigE NIC
-**Time estimate: 20–30 min**
+### B2 - Configure 10 GigE NIC
+**Time estimate: 20-30 min**
 
 Open **Device Manager** → **Network Adapters** → find the 10GE NIC → Properties:
 
@@ -251,8 +251,8 @@ Also configure static IP on the NIC:
 
 ---
 
-### B3 — Camera Verification with eBUS Player
-**Time estimate: 20–30 min**
+### B3 - Camera Verification with eBUS Player
+**Time estimate: 20-30 min**
 
 1. Ensure camera is connected via Cat6A/Cat7 to the 10GE NIC
 2. Ensure camera has power (DC IN/TRIG connector)
@@ -281,7 +281,7 @@ Also configure static IP on the NIC:
 
 ---
 
-### B4 — Ask Advisor Key Questions
+### B4 - Ask Advisor Key Questions
 
 While at the lab, ask your advisor:
 
@@ -297,8 +297,8 @@ While at the lab, ask your advisor:
 
 ---
 
-### B5 — Install Conda + Run Phase 1 Sandbox Script
-**Time estimate: 45–60 min**
+### B5 - Install Conda + Run Phase 1 Sandbox Script
+**Time estimate: 45-60 min**
 
 ```bash
 # If Anaconda/Miniconda not on shuttle, install Miniconda first
@@ -325,7 +325,7 @@ The `camera_test.py` script will:
 
 ---
 
-### B6 — Update TESTING_LOG.md
+### B6 - Update TESTING_LOG.md
 After the session, log results:
 ```bash
 # On shuttle, after testing:

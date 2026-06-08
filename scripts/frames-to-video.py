@@ -4,6 +4,10 @@ import re
 import argparse
 import sys
 
+from core.log import get_logger, configure_root
+
+logger = get_logger(__name__)
+
 
 def create_video_from_frames(input_folder, output_filename, fps=60, lossless=False):
     """
@@ -21,20 +25,20 @@ def create_video_from_frames(input_folder, output_filename, fps=60, lossless=Fal
     images = [img for img in os.listdir(input_folder) if img.lower().endswith(valid_extensions)]
 
     if not images:
-        print(f"  Warning: No images found in '{input_folder}', skipping.")
+        logger.warning(f"No images found in '{input_folder}', skipping.")
         return
 
     # Natural Sorting (e.g., frame_2.png before frame_10.png)
     images.sort(key=lambda f: int(re.sub('\\D', '', f)))
 
-    print(f"  Found {len(images)} images.")
+    logger.info(f"  Found {len(images)} images.")
 
     # 2. Read the first frame to get dimensions
     frame_path = os.path.join(input_folder, images[0])
     frame = cv2.imread(frame_path)
 
     if frame is None:
-        print(f"  Error: Could not read first frame at {frame_path}. Skipping.")
+        logger.error(f"  Could not read first frame at {frame_path}. Skipping.")
         return
 
     height, width, _ = frame.shape
@@ -56,16 +60,16 @@ def create_video_from_frames(input_folder, output_filename, fps=60, lossless=Fal
         frame = cv2.imread(img_path)
 
         if frame is None:
-            print(f"  Warning: Skipping invalid frame '{image_name}'")
+            logger.warning(f"  Skipping invalid frame '{image_name}'")
             continue
 
         out.write(frame)
 
         if (i + 1) % 500 == 0:
-            print(f"  Processed {i + 1}/{len(images)} frames...")
+            logger.info(f"  Processed {i + 1}/{len(images)} frames...")
 
     out.release()
-    print(f"  Saved: {output_filename}")
+    logger.info(f"  Saved: {output_filename}")
 
 
 def batch_process(source_root, output_root, fps=60, lossless=False):
@@ -82,10 +86,10 @@ def batch_process(source_root, output_root, fps=60, lossless=False):
     )
 
     if not groups:
-        print(f"Error: No subfolders found in '{source_root}'")
+        logger.error(f"No subfolders found in '{source_root}'")
         sys.exit(1)
 
-    print(f"Found {len(groups)} groups: {groups}\n")
+    logger.info(f"Found {len(groups)} groups: {groups}\n")
 
     for group in groups:
         input_folder  = os.path.join(source_root, group)
@@ -93,13 +97,15 @@ def batch_process(source_root, output_root, fps=60, lossless=False):
         os.makedirs(output_folder, exist_ok=True)
         output_file   = os.path.join(output_folder, group + ext)
 
-        print(f"[{group}]  {input_folder}")
+        logger.info(f"[{group}]  {input_folder}")
         create_video_from_frames(input_folder, output_file, fps=fps, lossless=lossless)
 
-    print(f"\nAll done. Videos saved under: {output_root}")
+    logger.info(f"All done. Videos saved under: {output_root}")
 
 
 def main():
+    configure_root()
+
     parser = argparse.ArgumentParser(
         description=(
             "Convert image frames to video.\n\n"
@@ -128,7 +134,7 @@ def main():
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
-        print(f"Error: Input path '{args.input}' does not exist.")
+        logger.error(f"Input path '{args.input}' does not exist.")
         sys.exit(1)
 
     os.makedirs(args.output, exist_ok=True)
@@ -137,13 +143,13 @@ def main():
 
     if args.batch:
         if args.name:
-            print("Note: --name is ignored in batch mode (each group uses its own folder name).")
+            logger.info("Note: --name is ignored in batch mode (each group uses its own folder name).")
         batch_process(args.input, args.output, fps=args.fps, lossless=args.lossless)
     else:
         # Single folder mode
         stem          = args.name or os.path.basename(args.input.rstrip("/\\"))
         output_file   = os.path.join(args.output, stem + ext)
-        print(f"[Single] {args.input}")
+        logger.info(f"[Single] {args.input}")
         create_video_from_frames(args.input, output_file, fps=args.fps, lossless=args.lossless)
 
 

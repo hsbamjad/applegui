@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import time
-import logging
+from core.log import get_logger
 import ctypes
 
 import numpy as np
@@ -24,7 +24,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.camera.camera_interface import CameraInterface
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 # Windows high-resolution timer (1ms precision instead of default 15.625ms).
 # Without this, time.sleep() rounds to 15.625ms ticks, causing display FPS

@@ -1,6 +1,6 @@
-# 📅 Week 2 Plan — Multispectral Apple Sorting GUI
+﻿#  Week 2 Plan - Multispectral Apple Sorting GUI
 **Week of: May 19, 2026**
-**Status: 🟡 In Progress — Track A Complete ✅**
+**Status:  In Progress - Track A Complete **
 
 ---
 
@@ -17,7 +17,7 @@ BlockID validation                      3-channel live video in window
 Sync validation test                    Start/Stop camera controls
 ```
 
-> ⚠️ **Professor's Note:** "Pay more attention to channel synchronization; initially, they all encountered minor synchronization issues."
+>  **Professor's Note:** "Pay more attention to channel synchronization; initially, they all encountered minor synchronization issues."
 > **Track A is the highest priority this week.**
 
 **End-of-week goal:**
@@ -25,14 +25,14 @@ Sync validation test                    Start/Stop camera controls
 
 ---
 
-## Track A — Channel Synchronization (Shuttle PC)
+## Track A - Channel Synchronization (Shuttle PC)
 
 ### Goal
 Confirm that CH1, CH2, and CH3 frames are captured at the **exact same timestamp** (hardware-synchronized), and that our Python retrieval code correctly assembles matched triplets.
 
 ---
 
-### A1 — Read the MultiSource Sample
+### A1 - Read the MultiSource Sample
 **Time estimate: 30 min**
 
 On the Shuttle PC, open and read the official JAI MultiSource sample:
@@ -57,10 +57,10 @@ python MultiSource.py
 
 ---
 
-### A2 — Investigate Simultaneous Multi-Stream Opening
-**Time estimate: 1–2 hrs**
+### A2 - Investigate Simultaneous Multi-Stream Opening
+**Time estimate: 1-2 hrs**
 
-Current probe: opens **1 stream**, switches `SourceSelector` (sequential — NOT synchronized).
+Current probe: opens **1 stream**, switches `SourceSelector` (sequential - NOT synchronized).
 Target: open **3 streams** simultaneously (one per source), retrieve one buffer from each per frame cycle.
 
 ```python
@@ -79,8 +79,8 @@ Check if `PvStream.CreateAndOpen` accepts a channel index parameter, or if the S
 
 ---
 
-### A3 — Implement BlockID Frame Matching
-**Time estimate: 1–2 hrs**
+### A3 - Implement BlockID Frame Matching
+**Time estimate: 1-2 hrs**
 
 Each buffer from the camera carries a `GetBlockID()` value. Hardware-synchronized frames from all 3 sensors will share the **same BlockID**. This is the ground truth for synchronization.
 
@@ -96,10 +96,10 @@ b1 = buf1.GetBlockID()
 b2 = buf2.GetBlockID()
 
 if b0 == b1 == b2:
-    # ✅ Hardware-synchronized triplet — safe to process
+    #  Hardware-synchronized triplet - safe to process
     process_triplet(buf0, buf1, buf2)
 else:
-    # ⚠️ Mismatch — drop and log the offset
+    #  Mismatch - drop and log the offset
     print(f"  SYNC MISMATCH: CH1={b0} CH2={b1} CH3={b2}")
     # Discard all 3 and requeue
 ```
@@ -108,7 +108,7 @@ else:
 
 ---
 
-### A4 — Synchronization Validation Test
+### A4 - Synchronization Validation Test
 **Time estimate: 30 min**
 
 Place a **fast-moving object** (hand waving, pendulum, pointer) in front of the camera while acquiring a synchronized triplet.
@@ -134,7 +134,7 @@ cv2.imwrite("scripts/probe_output/sync_test.png", comparison)
 
 ---
 
-### A5 — Update `config.yaml` with Confirmed Values
+### A5 - Update `config.yaml` with Confirmed Values
 **Time estimate: 20 min**
 
 ```yaml
@@ -172,15 +172,15 @@ camera:
 
 ---
 
-## Track B — Live Camera GUI Integration (Laptop)
+## Track B - Live Camera GUI Integration (Laptop)
 
 ### Goal
 Build `CameraWorker(QThread)` using the confirmed eBUS connection pattern and display live 3-channel video in the Qt window.
 
 ---
 
-### B1 — Build `CameraWorker(QThread)`
-**Time estimate: 2–3 hrs**
+### B1 - Build `CameraWorker(QThread)`
+**Time estimate: 2-3 hrs**
 
 Create `gui/workers/camera_worker.py`. Port the confirmed connection logic from `camera_probe_jai.py`:
 
@@ -214,7 +214,7 @@ class CameraWorker(QThread):
 
 ---
 
-### B2 — Connect Worker to Image Display
+### B2 - Connect Worker to Image Display
 **Time estimate: 1 hr**
 
 In `gui/main_window.py` or `gui/panels/camera_panel.py`:
@@ -240,7 +240,7 @@ def set_frame(self, ch1, ch2, ch3):
 
 ---
 
-### B3 — Add Start / Stop Camera Controls
+### B3 - Add Start / Stop Camera Controls
 **Time estimate: 30 min**
 
 Wire the existing camera panel buttons to the worker:
@@ -256,7 +256,7 @@ Add status indicator (green dot = streaming, red = disconnected).
 
 ---
 
-### B4 — FPS Display + Performance Test
+### B4 - FPS Display + Performance Test
 **Time estimate: 30 min**
 
 Add a real-time FPS counter to the GUI:
@@ -277,7 +277,7 @@ if len(self._frame_times) >= 30:
 
 ---
 
-### B5 — Commit + Push All Week 2 Work
+### B5 - Commit + Push All Week 2 Work
 **Time estimate: 10 min**
 
 ```bash
@@ -294,18 +294,18 @@ git push
 |---|---|---|
 | 1 | **Filter wavelengths** (nm) for CH1, CH2, CH3? | Label channels correctly in GUI |
 | 2 | **Conveyor encoder** signal available? Is it on `TriggerSource: Line4`? | Hardware sync instead of free-run |
-| 3 | **Sorter interface** — Arduino serial port? Which COM port? | Begin SorterController wiring |
+| 3 | **Sorter interface** - Arduino serial port? Which COM port? | Begin SorterController wiring |
 | 4 | **Grade categories** for apple sorting? | Start building inference pipeline |
 
 ---
 
 ## End-of-Week Deliverables
 
-### Track A ✅ Checklist
+### Track A  Checklist
 - [x] MultiSource.py sample read and understood
 - [x] 3-stream simultaneous open implemented
 - [x] `NegotiatePacketSize` added before stream open (fixes dark NIR images)
-- [x] BlockID matching confirmed — all 3 sources **blockID=79** ✅
+- [x] BlockID matching confirmed - all 3 sources **blockID=79** 
 - [x] Stream statistics added (FPS=30.0, BW=755Mbps per source, 22% of 10GbE)
 - [x] Hardware-synchronized triplet confirmed (professor's concern resolved)
 - [x] `config.yaml` values confirmed
@@ -318,7 +318,7 @@ git push
 > BW: 755 Mbps × 3 sources = 22% of 10GbE  ← plenty of headroom
 > ```
 
-### Track B ✅ Checklist
+### Track B  Checklist
 - [ ] `gui/workers/camera_worker.py` built with full lifecycle
 - [ ] Live 3-channel video visible in Qt GUI
 - [ ] Start/Stop buttons functional
@@ -330,10 +330,10 @@ git push
 ## Week 2 → Week 3 Gate
 
 **Do NOT start Week 3 (AI inference) until:**
-1. Channel synchronization confirmed (zero BlockID mismatches at steady state) ✅
-2. Live 3-channel video running in GUI at ≥ 30 FPS ✅
-3. Filter wavelengths confirmed with Dr. Lu ✅
-4. Grade categories defined ✅
+1. Channel synchronization confirmed (zero BlockID mismatches at steady state) 
+2. Live 3-channel video running in GUI at ≥ 30 FPS 
+3. Filter wavelengths confirmed with Dr. Lu 
+4. Grade categories defined 
 
 **Week 3 will begin:**
 - YOLOv8 model integration

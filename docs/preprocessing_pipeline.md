@@ -1,4 +1,4 @@
-# JAI FS-3200T Multispectral Camera Preprocessing & Hardware Controls Pipeline Handbook
+﻿# JAI FS-3200T Multispectral Camera Preprocessing & Hardware Controls Pipeline Handbook
 
 **Project:** Apple Sorting GUI - MSU ASABE AIM26
 **Applies to:** `core/camera/camera_interface.py` · `gui/widgets/image_display.py` · `gui/workers/camera_worker.py` · `gui/panels/camera_panel.py`
@@ -54,8 +54,8 @@ graph TD
 
     D0 & D1 & D2 --> GL
     GL --> VS
-    VS -- "LAGGING SOURCE: Advance Frame Buffer" --> GL
-    VS -- "SYNCED: GEV Block IDs Match" --> BDR
+    VS - "LAGGING SOURCE: Advance Frame Buffer" --> GL
+    VS - "SYNCED: GEV Block IDs Match" --> BDR
     BDR --> FT
 
     %% GUI Representation

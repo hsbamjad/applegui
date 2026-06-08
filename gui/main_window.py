@@ -22,7 +22,7 @@ Layout:
 
 from __future__ import annotations
 
-import logging
+from core.log import get_logger
 from pathlib import Path
 
 import numpy as np
@@ -47,7 +47,7 @@ from gui.workers.video_worker  import VideoWorker
 from gui.workers.inference_worker import MockInferenceWorker, RealInferenceWorker
 from gui.workers.tracker import AppleTracker as ConveyorTracker
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 def _load_config(path: str = "config/config.yaml") -> dict:
@@ -425,7 +425,8 @@ class MainWindow(QMainWindow):
         self._cam_w:   CameraWorker | VideoWorker | None = None
         self._inf_w:   MockInferenceWorker | None        = None
         self._infer_w: RealInferenceWorker | None        = None
-        self._tracker: ConveyorTracker | None            = None
+        self._tracker:  ConveyorTracker | None            = None
+        self._size_acc = None   # AppleSizeAccumulator — created in _start_pipeline
         self._infer_fps: float = 0.0
         self._loading_model_name: str = ""
         self._last_ch1:        np.ndarray | None = None
@@ -602,8 +603,18 @@ class MainWindow(QMainWindow):
             cull_ratio_threshold = inf_tracking.get("cull_ratio_threshold", 0.55),
         )
 
+        # ── Apple size accumulator ─────────────────────────────────
+        size_cfg = self._cfg.get("sizing", {})
+        if size_cfg.get("enabled", True):
+            from core.sizing.accumulator import AppleSizeAccumulator
+            self._size_acc = AppleSizeAccumulator(
+                model_path    = size_cfg.get("model_path", "models/size_model.pkl"),
+                min_frames    = size_cfg.get("min_frames", 4),
+                bg_angle_step = size_cfg.get("bg_angle_step", 10),
+            )
+        else:
+            self._size_acc = None
 
-        # ── UI state ───────────────────────────────────────────────
         self._left.set_camera_connected(True)
         sg.set_status("AI Model", "idle",   "Waiting for model")
         sg.set_status("Sorter",   "idle",   "Simulation")
@@ -615,6 +626,9 @@ class MainWindow(QMainWindow):
         if self._infer_w:
             self._infer_w.stop()
             self._infer_w = None
+        if self._size_acc is not None:
+            self._size_acc.clear()
+            self._size_acc = None
         if self._tracker:
             self._tracker.reset()
         if self._inf_w:
@@ -801,11 +815,19 @@ class MainWindow(QMainWindow):
 
         active, graded = self._tracker.update(result, self._last_ch1.shape)
 
+        # ── Size accumulation (per frame) ─────────────────────────
+        if self._size_acc is not None:
+            self._size_acc.update(result, active)
+
         # ── Commit finished grades to stats panel ─────────────────
         for rec in graded:
-            outlet = self._OUTLET_MAP.get(rec.class_name, "?")
+            outlet   = self._OUTLET_MAP.get(rec.class_name, "?")
+            size_mm  = (
+                self._size_acc.commit(rec.track_id, rec.lane)
+                if self._size_acc is not None else None
+            )
             self._right.results_group.add_result(
-                rec.seq_id, rec.lane, rec.class_name, rec.confidence, outlet
+                rec.seq_id, rec.lane, rec.class_name, rec.confidence, outlet, size_mm
             )
             self._right.grade_summary.record(rec.class_name)
             self._right.metrics_group.record_grade(self._left.conveyor_speed)

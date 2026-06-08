@@ -10,13 +10,12 @@
  This sample shows how to receive images from a multi-source device using PvPipeline.
 '''
 
-import logging
+from core.log import get_logger, configure_root
 import eBUS as eb
 import lib.PvSampleUtils as psu
 
-# Configure logging with a clean format for verification output
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-logger = logging.getLogger("multisource_reference")
+configure_root()
+logger = get_logger(__name__)
 
 kb = psu.PvKb()
 

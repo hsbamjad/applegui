@@ -1,4 +1,4 @@
-# Multispectral Apple Sorting GUI - Project Brainstorm & Kickoff Guide
+﻿# Multispectral Apple Sorting GUI - Project Brainstorm & Kickoff Guide
 **Michigan State University | ASABE AIM26 | May 2026**
 
 ---

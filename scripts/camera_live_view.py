@@ -19,15 +19,14 @@ Usage:
 
 import time
 import sys
-import logging
 from pathlib import Path
 
 import numpy as np
 import cv2
 
-# Configure logging with a clean format for verification output
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-logger = logging.getLogger("camera_live_view")
+from core.log import get_logger, configure_root
+configure_root()
+logger = get_logger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 BUFFER_COUNT  = 16

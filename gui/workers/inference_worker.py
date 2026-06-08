@@ -15,13 +15,13 @@ from __future__ import annotations
 import queue
 import random
 import time
-import logging
+from core.log import get_logger
 
 import cv2
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 # ── Mock grade constants ───────────────────────────────────────────────────────
 

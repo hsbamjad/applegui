@@ -24,11 +24,11 @@ Lane assignment uses the orthogonal axis (Y for LR/RL, X for TB/BT).
 from __future__ import annotations
 
 import math
-import logging
+from core.log import get_logger
 from collections import defaultdict
 from dataclasses import dataclass
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 # Supported orientations
 ORIENTATIONS = ("LR", "RL", "TB", "BT")
@@ -42,6 +42,7 @@ class GradeRecord:
     class_name:  str
     confidence:  float
     frames_seen: int
+    track_id:    int = -1   # ByteTrack ID — used by AppleSizeAccumulator
 
 
 class AppleTracker:
@@ -293,6 +294,7 @@ class AppleTracker:
                         class_name  = cls_name,
                         confidence  = float(best_conf),
                         frames_seen = hist["frames_seen"],
+                        track_id    = tid,
                     )
                     graded.append(rec)
                     log.info("Grade #%d  lane=%d  %s  conf=%.2f  frames=%d",
