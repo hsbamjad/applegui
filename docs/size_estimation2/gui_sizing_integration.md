@@ -27,13 +27,13 @@ The solution we built is a **two-phase architecture** that keeps the expensive w
 
 Every time YOLO produces a result, the accumulator runs quickly for each tracked apple:
 
-1. **Get the apple outline** from YOLO's segmentation output. YOLO returns the apple boundary as a list of (x, y) points in the original image coordinate space (2048 × 1536 pixels for our JAI camera).
+1. **Get the apple outline** from YOLO's segmentation output. YOLO returns the apple boundary as a list of (x, y) points in the original image coordinate space (2048 �- 1536 pixels for our JAI camera).
 
 2. **Compute the convex hull.** The raw YOLO polygon sometimes has small dents or jagged edges from the segmentation. Taking the convex hull smooths this out — it finds the tightest convex shape that wraps around all the boundary points. This is exactly what the offline pipeline does too.
 
 3. **Fit an ellipse** to the hull vertices. This gives us the major axis (longest diameter estimate) and minor axis (shortest diameter estimate) directly in pixels, at full camera resolution. These become the `d_ell` and `d_minor` features.
 
-4. **Compute a quality score** for this frame. Quality = (minor axis / major axis) × completeness flag. A perfectly round apple has ratio = 1.0. A tilted apple has a lower ratio. If the apple is partially cut off at the frame edge, completeness = 0.5. This tells us how reliable this particular frame's measurement is — frames with higher quality scores contribute more to the final average.
+4. **Compute a quality score** for this frame. Quality = (minor axis / major axis) �- completeness flag. A perfectly round apple has ratio = 1.0. A tilted apple has a lower ratio. If the apple is partially cut off at the frame edge, completeness = 0.5. This tells us how reliable this particular frame's measurement is — frames with higher quality scores contribute more to the final average.
 
 5. **Render a small crop image** of the hull, padded by 4 pixels on each side. This crop is typically around 150–250 pixels wide — just the apple region, nothing else. This crop is what goes to Phase 2.
 
@@ -106,9 +106,9 @@ At this point the apple has been tracked for hundreds of frames and all the back
 
 ## Why Pixel Values Are the Right Input (Not mm)
 
-The features fed to the model are all in **pixels**, not millimeters. This is intentional. The Ridge model was trained on pixel-space features extracted from the same 2048 × 1536 camera. The model internally learned the pixel-to-mm conversion as part of its regression coefficients, calibrated to our specific camera height and lens.
+The features fed to the model are all in **pixels**, not millimeters. This is intentional. The Ridge model was trained on pixel-space features extracted from the same 2048 �- 1536 camera. The model internally learned the pixel-to-mm conversion as part of its regression coefficients, calibrated to our specific camera height and lens.
 
-This means the live GUI must produce features in the same pixel space as the training data. This was the root cause of the 40 mm bug we hit early on — the live code was reading mask data at YOLO's internal inference resolution (640 × 640) instead of the original camera resolution (2048 × 1536). All diameter values were 3× too small, the model predicted ~20 mm, and the clamp floored everything to 40 mm. The fix was to use `masks.xy` — YOLO's polygon coordinates in the original image space — instead of the downsampled raster mask tensor.
+This means the live GUI must produce features in the same pixel space as the training data. This was the root cause of the 40 mm bug we hit early on — the live code was reading mask data at YOLO's internal inference resolution (640 �- 640) instead of the original camera resolution (2048 �- 1536). All diameter values were 3�- too small, the model predicted ~20 mm, and the clamp floored everything to 40 mm. The fix was to use `masks.xy` — YOLO's polygon coordinates in the original image space — instead of the downsampled raster mask tensor.
 
 ---
 
