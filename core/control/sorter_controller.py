@@ -27,14 +27,14 @@ Grades:
 
 from __future__ import annotations
 
-import logging
+from core.log import get_logger
 import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 class SortOutlet(Enum):

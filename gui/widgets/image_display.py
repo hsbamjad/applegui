@@ -186,8 +186,8 @@ class ChannelPanel(QWidget):
         if self._frames == 0:
             self._draw_placeholder()
 
-    @pyqtSlot(object, float)
-    def update_frame(self, frame: np.ndarray, fps: float = 0.0) -> None:
+    @pyqtSlot(object, float, object)
+    def update_frame(self, frame: np.ndarray, fps: float = 0.0, orig_shape: tuple[int, int] | None = None) -> None:
         if frame is None:
             return
 
@@ -228,11 +228,13 @@ class ChannelPanel(QWidget):
 
         self._display.setPixmap(pixmap)
         self._frames += 1
-        self._lbl_res.setText(f"{w}×{h}")
+        disp_w = orig_shape[0] if orig_shape else w
+        disp_h = orig_shape[1] if orig_shape else h
+        self._lbl_res.setText(f"{disp_w}×{disp_h}")
         self._lbl_fps.setText(f"{fps:.1f} FPS")
         # Track live frame dimensions for accurate overlay aspect-ratio mapping
-        self._frame_w = w
-        self._frame_h = h
+        self._frame_w = disp_w
+        self._frame_h = disp_h
 
     def _draw_roi_overlay(self, pixmap: QPixmap, frame_w: int, frame_h: int) -> QPixmap:
         """
@@ -407,6 +409,11 @@ class MultiChannelDisplay(QWidget):
     ) -> None:
         for panel, frame in zip(self._panels, [ch1, ch2, ch3]):
             panel.update_frame(frame, fps)
+
+    def update_channel_frame(self, ch_idx: int, frame: np.ndarray, fps: float = 0.0, orig_shape: tuple[int, int] | None = None) -> None:
+        """Update a single channel panel with an annotated frame (e.g. from inference)."""
+        if 0 <= ch_idx < len(self._panels):
+            self._panels[ch_idx].update_frame(frame, fps, orig_shape)
 
     def reset_all(self) -> None:
         for panel in self._panels:

@@ -9,12 +9,11 @@ Usage:
 """
 
 import sys
-import logging
 from PyQt6.QtWidgets import QApplication
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-logger = logging.getLogger("main")
+from core.log import get_logger, configure_root
+configure_root()
+logger = get_logger(__name__)
 
 try:
     from gui.main_window import MainWindow

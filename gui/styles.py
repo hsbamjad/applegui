@@ -334,4 +334,36 @@ QFrame[frameShape="4"] {{
     max-height: 1px;
     border: none;
 }}
+
+/* ── Tab Widget ───────────────────────────────────────────────── */
+QTabWidget::pane {{
+    border: none;
+    background-color: {BG_BASE};
+}}
+QTabWidget::tab-bar {{
+    alignment: left;
+}}
+QTabBar {{
+    background: transparent;
+}}
+QTabBar::tab {{
+    background-color: {BG_SURFACE};
+    color: {TEXT_3};
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 6px 20px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    min-width: 120px;
+}}
+QTabBar::tab:selected {{
+    background-color: {BG_BASE};
+    color: {TEXT_1};
+    border-bottom: 2px solid {ACCENT};
+}}
+QTabBar::tab:hover:!selected {{
+    background-color: {BG_CARD};
+    color: {TEXT_2};
+}}
 """

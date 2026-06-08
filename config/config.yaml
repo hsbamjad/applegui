@@ -16,6 +16,17 @@ camera:
     resolution: [2048, 1536]   # Match JAI Sony IMX252 native res
     replay_folder: null         # Path to real captured frames, or null for synthetic
 
+  # Video simulation mode — replaces live camera with pre-recorded video files.
+  # Set enabled: true and update the three video paths to run without hardware.
+  simulation:
+    enabled: false
+    loop: true          # Loop videos when end is reached
+    fps: 30             # Playback frame rate
+    videos:
+      ch1: "D:/HA/apple_gui/videos/Source0/G1/G1.mp4"
+      ch2: "D:/HA/apple_gui/videos/Source1/G1/G1.avi"
+      ch3: "D:/HA/apple_gui/videos/Source2/G1/G1.avi"
+
   jai:
     # Confirmed hardware (Shuttle PC) — from camera_probe_jai.py output
     ip:          "169.254.100.252"   # Update if DHCP changes
@@ -62,7 +73,11 @@ channels:
 # 3-lane screw conveyor; apples spin as they travel
 # ══════════════════════════════════════════════════════════════
 conveyor:
-  lanes: 3                         # Number of physical lanes
+  lanes: 3
+  # Orientation: how apples move through camera view
+  #   LR = left→right   RL = right→left
+  #   TB = top→bottom   BT = bottom→top  ← current camera setup
+  orientation: "LR"   # LR=left→right (test video) | BT=bottom→top (real camera)
   speed_apples_per_sec: 1          # Nominal: 1 | 2 | 3 apples/s/lane
   camera_to_gate_m: 0.5            # Physical distance: camera center → sorter gate (meters)
   # Timing delay (ms) = (camera_to_gate_m / conveyor_speed_m_s) * 1000
@@ -117,16 +132,31 @@ sorter:
 # ══════════════════════════════════════════════════════════════
 inference:
   model_dir: "models/"
-  default_model: null              # Filename of model to auto-load on startup
+  default_model: "best.pt"         # Auto-load on startup
   device: "cuda"                   # "cuda" | "cpu"
-  confidence_threshold: 0.5
+  confidence_threshold: 0.50       # Raise to 0.50 to kill low-confidence ghost flickers
   iou_threshold: 0.45              # NMS IoU threshold
+  input_mode: "RB-nir1"           # Band combo model was trained on
+                                   # Options: RB-nir1 | RG-nir1 | R-nir1-nir2 | RGB | CH1
+  class_names:                     # Index order from model — confirm with training YAML
+    - "Cull"                       # 0
+    - "Fresh"                      # 1
+    - "Processing"                 # 2
 
-  # Multi-view weighted voting (apple tracked across multiple frames)
+  # Robust counting gate — mirrors chestnut pipeline logic
   tracking:
     enabled: true
-    grade_line_x: 0.85             # Normalized X position in frame; apple graded when it crosses
-    vote_weight_confidence: true   # Weight votes by per-frame confidence score
+    exit_frac: 0.85             # Exit band centre (fraction of TRAVEL axis)
+    band_half_frac: 0.025       # ± 2.5% of travel axis — narrow band
+    entry_frac: 0.35            # First detection must be in start zone (<35%)
+    min_frames: 5
+    max_lost_frames: 10
+    max_recover_dist: 80
+    min_count_dist_frac: 0.12
+    count_memory_frames: 40
+    cull_weight: 1.5
+    hit_threshold: 20
+    cull_ratio_threshold: 0.55
 
 # ══════════════════════════════════════════════════════════════
 # DATA LOGGING
@@ -156,3 +186,27 @@ display:
   show_bounding_boxes: true
   show_tracking_id: true
   show_grade_label: true
+
+# ══════════════════════════════════════════════════════════════
+# APPLE SIZING
+# Ridge regression model trained on per-track mask features.
+# Only active when a segmentation YOLO model is loaded (has masks).
+# Shows "—" in results table when disabled or model missing.
+# ══════════════════════════════════════════════════════════════
+sizing:
+  enabled: true
+  model_path: "models/size_model.pkl"
+  min_frames: 4       # Discard tracks shorter than this (too few frames for reliable estimate)
+
+  # Diameter computation angle resolution (background thread — zero FPS impact).
+  # Controls max_width() rotation count = 180 / bg_angle_step.
+  #
+  # Tradeoff:
+  #   bg_angle_step=90  →  2 rotations  (fastest, ~1.4ms/apple, ~0mm error on circular apples)
+  #   bg_angle_step=10  → 18 rotations  (default, ~3.4ms/apple, matches offline quality)
+  #   bg_angle_step= 5  → 36 rotations  (exactly offline pipeline, ~7ms/apple)
+  #
+  # Note: for near-circular apples all three give identical results.
+  # Only matters for partially-occluded or non-circular apples.
+  # Background thread handles the cost regardless of choice.
+  bg_angle_step: 10

@@ -1,4 +1,4 @@
-# Camera Controls — Tier 1 Reference Guide
+# Camera Controls - Tier 1 Reference Guide
 ### JAI FS-3200T Multispectral System · Apple Sorting GUI
 
 > Everything in Sections 1 through 6 of this document happens at the **hardware/firmware level** inside the camera.
@@ -13,11 +13,11 @@ Your JAI FS-3200T camera has **three sensors in one body**:
 
 | Channel | Sensor | What it sees |
 |---|---|---|
-| **CH1** | Color (Bayer RGB) | Visible light — what your eyes see |
-| **CH2** | NIR 1 (Monochrome) | Near-infrared — invisible to eyes, reveals internal fruit structure |
-| **CH3** | NIR 2 (Monochrome) | Near-infrared — different wavelength band |
+| **CH1** | Color (Bayer RGB) | Visible light - what your eyes see |
+| **CH2** | NIR 1 (Monochrome) | Near-infrared - invisible to eyes, reveals internal fruit structure |
+| **CH3** | NIR 2 (Monochrome) | Near-infrared - different wavelength band |
 
-Each sensor has its own analog readout circuit, amplifier, and ADC (Analog-to-Digital Converter). The controls below tune each of those stages — **before the image is ever digitized and sent to your PC**.
+Each sensor has its own analog readout circuit, amplifier, and ADC (Analog-to-Digital Converter). The controls below tune each of those stages - **before the image is ever digitized and sent to your PC**.
 
 ---
 
@@ -44,13 +44,13 @@ The firmware register is `ExposureTime` (in microseconds, µs). We scope to each
 
 **Exposure Time Ramping Helper**: If we change the exposure time too abruptly across all channels, it can trigger device driver timeouts and sync losses. To prevent this, our backend writes exposure changes in small, synchronized steps of maximum `4000 µs` with a brief `30 ms` delay between steps, ensuring the screen brightness transitions smoothly without driver lag or sync glitches.
 
-**Hard constraint:** `ExposureTime ≤ 1,000,000 ÷ FPS`  
+**Hard constraint:** `ExposureTime ≤ 1,000,000 ÷ FPS`
 At 30 FPS → max exposure = 33,333 µs. If you set FPS first and then a higher exposure, the firmware silently clamps it.
 
 ### Practical use
-- Start at **5,000–10,000 µs** for a lit conveyor
+- Start at **5,000-10,000 µs** for a lit conveyor
 - Increase if image is too dark; decrease if it's washed out
-- CH1 (Color) and CH2/CH3 (NIR) may need very different values — NIR LEDs and visible LEDs have different intensities
+- CH1 (Color) and CH2/CH3 (NIR) may need very different values - NIR LEDs and visible LEDs have different intensities
 
 ---
 
@@ -59,7 +59,7 @@ At 30 FPS → max exposure = 33,333 µs. If you set FPS first and then a higher 
 ### What it is in plain English
 **How many complete images the camera captures per second.**
 
-Like a film reel — 30 FPS means the camera takes 30 full snapshots every second. Your apple moves between each snapshot.
+Like a film reel - 30 FPS means the camera takes 30 full snapshots every second. Your apple moves between each snapshot.
 
 ### What it does
 - **Higher FPS** → more images per apple → more chances to catch it perfectly → **shorter max exposure** (tradeoff)
@@ -71,7 +71,7 @@ The firmware register is `AcquisitionFrameRate`. When you change it, the camera 
 ### Practical use
 - **30 FPS** is a good default for a conveyor
 - If apples are blurry at 30 FPS, try increasing FPS (and compensating with gain)
-- FPS affects all 3 channels simultaneously — it's a global clock
+- FPS affects all 3 channels simultaneously - it's a global clock
 
 ---
 
@@ -83,9 +83,9 @@ The firmware register is `AcquisitionFrameRate`. When you change it, the camera 
 The classic analogy: a microphone amplifier. If the sound (light) is quiet, you turn up the gain to make it louder (brighter). But if you turn it up too much, you also amplify the hiss (noise).
 
 ### The physics
-Each photodiode generates electrons when hit by photons. Gain amplifies the electrical signal from those electrons **before the ADC converts it to a digital number**. This is analog amplification — it happens in the real world before any math.
+Each photodiode generates electrons when hit by photons. Gain amplifies the electrical signal from those electrons **before the ADC converts it to a digital number**. This is analog amplification - it happens in the real world before any math.
 
-Unit: **dB (decibels)** — a logarithmic scale.
+Unit: **dB (decibels)** - a logarithmic scale.
 - 0 dB = no amplification (1×)
 - 6 dB ≈ 2× amplification
 - 12 dB ≈ 4× amplification
@@ -107,14 +107,14 @@ Unit: **dB (decibels)** — a logarithmic scale.
 | **Preference** | Use first | Use only when exposure can't go higher |
 
 ### How it's applied
-Firmware register: `GainSelector=AnalogAll` (or `DigitalAll`) → `Gain` (float, dB). We scope each source independently. 
+Firmware register: `GainSelector=AnalogAll` (or `DigitalAll`) → `Gain` (float, dB). We scope each source independently.
 
 To protect your White Balance calibration on the color channel, our gain-changing routine **never** writes to the Red, Green, or Blue sub-channels. It only applies gain to the master channel selectors (`DigitalAll` or `AnalogAll`), ensuring all colors are boosted uniformly without introducing color drift.
 
 ### Practical use
-- Keep gain as low as possible — **noise is the enemy of AI inference**
+- Keep gain as low as possible - **noise is the enemy of AI inference**
 - If you need brightness, try more exposure first, then add gain
-- CH2/CH3 NIR channels at low illumination may need 4–8 dB
+- CH2/CH3 NIR channels at low illumination may need 4-8 dB
 - Color CH1 for fruit color inspection: keep ≤ 6 dB to preserve color fidelity
 
 ---
@@ -124,12 +124,12 @@ To protect your White Balance calibration on the color channel, our gain-changin
 ### What it is in plain English
 **Telling the camera what "white" looks like under your specific lights, so colors appear accurate.**
 
-Your inspection LEDs have a color. Fluorescent lights look slightly green. Incandescent looks orange. Your conveyor LEDs look whatever they look like. Without calibration, the camera inherits that tint into every image — a red apple might look orange, a green apple might look yellow.
+Your inspection LEDs have a color. Fluorescent lights look slightly green. Incandescent looks orange. Your conveyor LEDs look whatever they look like. Without calibration, the camera inherits that tint into every image - a red apple might look orange, a green apple might look yellow.
 
 White Balance removes that tint at the hardware level by adjusting how much Red, Green, and Blue the sensor amplifies relative to each other.
 
 ### The analogy
-Imagine your eyes adjust when you walk from daylight into a room lit by yellow incandescent bulbs. After a few seconds, white paper still looks white to your brain — because your visual system recalibrates. White Balance does the same thing for the camera, except it does it with math (multiply R, G, B channels by different factors).
+Imagine your eyes adjust when you walk from daylight into a room lit by yellow incandescent bulbs. After a few seconds, white paper still looks white to your brain - because your visual system recalibrates. White Balance does the same thing for the camera, except it does it with math (multiply R, G, B channels by different factors).
 
 ### The numbers
 White Balance is expressed as three multipliers: **R ratio, G ratio, B ratio.**
@@ -139,23 +139,23 @@ White Balance is expressed as three multipliers: **R ratio, G ratio, B ratio.**
   → Red is dimmed by 46%, Blue is boosted by 65%
   → This removes blue-heavy tint from your LEDs
 
-### One-Push Auto WB — what actually happens
+### One-Push Auto WB - what actually happens
 1. You point the camera at a **neutral grey or white reference** (piece of white paper, a white calibration tile)
-2. Click **⚡ Auto WB** in the UI
+2. Click ** Auto WB** in the UI
 3. The firmware sets `BalanceWhiteAuto = Once`
 4. The camera measures the R, G, B output from that neutral target
 5. It computes: "how much should I multiply each channel so they all equal neutral?"
 6. It writes those multipliers to `GainSelector=DigitalRed/DigitalBlue` registers
-7. The flag reverts to `Off` — calibration is locked in
+7. The flag reverts to `Off` - calibration is locked in
 8. Our code polls that flag every 50ms, reads the new ratios, and displays them
 
-> **This is 100% hardware.** The firmware does the measurement and the multiplication inside the camera's FPGA. Your PC never touches the raw pixels — only the final calibrated output comes down the GigE cable.
+> **This is 100% hardware.** The firmware does the measurement and the multiplication inside the camera's FPGA. Your PC never touches the raw pixels - only the final calibrated output comes down the GigE cable.
 
 ### Revert button
-Before triggering AWB, we save the current R/G/B ratios internally. If the result looks wrong (e.g., bad reference target), click **↺ Revert** to restore the previous values — written directly back to the firmware registers.
+Before triggering AWB, we save the current R/G/B ratios internally. If the result looks wrong (e.g., bad reference target), click **↺ Revert** to restore the previous values - written directly back to the firmware registers.
 
 ### Why it only applies to CH1 (Color)
-CH2 and CH3 are monochrome NIR sensors. They have no Red/Green/Blue — just a single intensity value per pixel. White Balance is a color concept and physically doesn't exist on monochrome sensors.
+CH2 and CH3 are monochrome NIR sensors. They have no Red/Green/Blue - just a single intensity value per pixel. White Balance is a color concept and physically doesn't exist on monochrome sensors.
 
 ### Practical use for apple sorting
 - Do this **once per inspection session**, before starting
@@ -170,9 +170,9 @@ CH2 and CH3 are monochrome NIR sensors. They have no Red/Green/Blue — just a s
 ### What it is in plain English
 **Setting the camera's definition of "zero light" to actually be zero.**
 
-Even with no light at all — lens cap on, pitch black — a camera sensor reports a small positive number instead of zero. This is called the **dark pedestal**. It comes from:
-- **Thermal noise** — heat causes electrons to randomly appear in the photodiode, even without photons
-- **Amplifier bias** — the readout electronics have a built-in offset to keep the signal in the positive voltage range
+Even with no light at all - lens cap on, pitch black - a camera sensor reports a small positive number instead of zero. This is called the **dark pedestal**. It comes from:
+- **Thermal noise** - heat causes electrons to randomly appear in the photodiode, even without photons
+- **Amplifier bias** - the readout electronics have a built-in offset to keep the signal in the positive voltage range
 
 ### The analogy
 Imagine a kitchen scale that reads "7 grams" when nothing is on it. Every weight you measure is off by 7. You'd calibrate it by pressing "tare" (zero) to subtract that offset. Black Level is the camera's tare.
@@ -187,12 +187,12 @@ Imagine a kitchen scale that reads "7 grams" when nothing is on it. Every weight
 Setting `BlackLevel=7` tells the ADC: "subtract 7 from every pixel output before sending it." True darkness becomes 0. The full 8-bit range is reclaimed.
 
 ### How it's applied
-Firmware registers: `BlackLevelSelector=All` → `BlackLevel` (float, DN). Applied independently per source — NIR channels often have different pedestals than the Color sensor because they use different amplifier circuits.
+Firmware registers: `BlackLevelSelector=All` → `BlackLevel` (float, DN). Applied independently per source - NIR channels often have different pedestals than the Color sensor because they use different amplifier circuits.
 
 ### How to measure the right value
 1. **Block all light** from each channel (lens cap, or cover the conveyor and turn off LEDs)
 2. Look at the **minimum pixel value** in a dark frame
-3. That number is your pedestal — set BlackLevel to it
+3. That number is your pedestal - set BlackLevel to it
 
 From your NIR logs: `CH2 ≈ 7 DN`, `CH3 ≈ 6 DN` → start with those.
 
@@ -200,7 +200,7 @@ From your NIR logs: `CH2 ≈ 7 DN`, `CH3 ≈ 6 DN` → start with those.
 NIR reflectance ratios are the core signal your AI uses for internal quality. If NIR pixel values have a fake 7 DN floor:
 - Dark regions appear brighter than they are
 - Ratio calculations (band 1 ÷ band 2) are biased
-- The AI model was potentially trained on "un-calibrated" data — adding black level correction later could shift the distribution
+- The AI model was potentially trained on "un-calibrated" data - adding black level correction later could shift the distribution
 
 > **For research-grade data:** always apply black level calibration. It ensures the pixels you log today match the pixels from a session three weeks ago.
 
@@ -211,7 +211,7 @@ NIR reflectance ratios are the core signal your AI uses for internal quality. If
 ### What it is in plain English
 **Focusing the camera's eye on a specific sub-rectangle of the scene, physically cutting out irrelevant areas.**
 
-Imagine looking at a stage through a cardboard tube. You physically restrict your field of view to only see the lead actor, completely blocking out the empty stage wings. 
+Imagine looking at a stage through a cardboard tube. You physically restrict your field of view to only see the lead actor, completely blocking out the empty stage wings.
 
 ### The analogy
 Instead of using software to crop an image *after* it arrives on your computer, a hardware ROI tells the physical sensor array: *"Do not even read or transmit the pixels outside this crop box."*
@@ -228,13 +228,13 @@ Firmware registers: `Width`, `Height`, `OffsetX`, `OffsetY` (integers). These pa
 
 > [!CAUTION]
 > **The GenICam Parameter Lock & Sync Constraints**
-> 
+>
 > Because modifying the active pixel grid alters the sensor's electronic readout pathways, the camera **strictly locks** these parameters during active streaming. We have implemented highly specialized hardware sequence guards to handle this.
 
 ### Safe Write Order (The SFNC Protocol)
-The camera's firmware enforces a strict spatial boundary constraint: $\text{OffsetX} + \text{Width} \le \text{MaxWidth}$ and $\text{OffsetY} + \text{Height} \le \text{MaxHeight}$. 
+The camera's firmware enforces a strict spatial boundary constraint: $\text{OffsetX} + \text{Width} \le \text{MaxWidth}$ and $\text{OffsetY} + \text{Height} \le \text{MaxHeight}$.
 
-If you write these in the wrong order (e.g. trying to push the `OffsetX` window to the right before shrinking the `Width` box), the camera will throw a boundary violation exception and reject the command. 
+If you write these in the wrong order (e.g. trying to push the `OffsetX` window to the right before shrinking the `Width` box), the camera will throw a boundary violation exception and reject the command.
 
 Our backend uses a bulletproof write order:
 1.  **Stop streaming** on all channels (`AcquisitionStop`).
@@ -257,9 +257,9 @@ To fix this, our software performs a double-flush action:
 
 ### The Execution Boundary: Hardware vs. Software
 
-When developing a research-grade vision system, it is vital to know exactly **where** your image is being processed. 
+When developing a research-grade vision system, it is vital to know exactly **where** your image is being processed.
 
-If an operation happens **inside the camera (Hardware/FPGA level)**, it physically alters how light is measured and digitized. 
+If an operation happens **inside the camera (Hardware/FPGA level)**, it physically alters how light is measured and digitized.
 If an operation happens **on your computer (Software/PC level)**, it is post-processing. While post-processing is highly useful for visualization and display, **we must never dynamically alter the raw pixel numbers used by your AI model or logged in your research data.**
 
 Here is exactly where the boundary lies in our conveyor system:
@@ -290,8 +290,8 @@ After the JAI camera finishes its physical sensor-level magic, it bundles the ra
 
 #### 2. Channel Standardization (NIR Mono8 to 3-Channel BGR)
 *   **The Plain-English Analogy**: A puzzle board that only accepts 3D blocks. Two of your pieces are flat gray cardboard squares (1-channel monochrome images), and the third is a thick wooden color block (3-channel BGR color image). Instead of breaking the puzzle board, you duplicate the gray cardboard squares three times to glue them together into thick 3D blocks so they fit the slots perfectly.
-*   **What it does**: PySide6 and computer graphics frameworks (like OpenGL/GPU pipelines) expect all display elements to use the same memory structure—typically 3-channel (Red, Green, Blue) format. Because CH2 and CH3 are monochrome Near-Infrared (NIR) sensors, their raw streams are single-channel `Mono8` (just a grayscale brightness value). Our software duplicates this single grayscale channel three times to create a 3-channel BGR structure.
-*   **Why it's in software**: This is purely a compatibility layer for the PySide6 display widgets. By standardizing all three channels to a 3-channel layout, our display code can run at lightning speed, treating color and NIR channels identically. **Crucially, this does not alter or corrupt the underlying monochrome data**—the raw 1-channel grayscale bytes are still saved completely untouched in the background research logs.
+*   **What it does**: PySide6 and computer graphics frameworks (like OpenGL/GPU pipelines) expect all display elements to use the same memory structure-typically 3-channel (Red, Green, Blue) format. Because CH2 and CH3 are monochrome Near-Infrared (NIR) sensors, their raw streams are single-channel `Mono8` (just a grayscale brightness value). Our software duplicates this single grayscale channel three times to create a 3-channel BGR structure.
+*   **Why it's in software**: This is purely a compatibility layer for the PySide6 display widgets. By standardizing all three channels to a 3-channel layout, our display code can run at lightning speed, treating color and NIR channels identically. **Crucially, this does not alter or corrupt the underlying monochrome data**-the raw 1-channel grayscale bytes are still saved completely untouched in the background research logs.
 
 #### 3. Memory-Safe Deep Copying (`.copy()`)
 *   **The Plain-English Analogy**: Passing around a fragile glass vase. If one person is painting the vase while another is trying to take a photo of it, it will slip, drop, and shatter. Instead of passing the actual vase, you take a quick snapshot, make a flawless replica of it (`.copy()`), and hand the replica to the display team. They can look at it as long as they want while you continue work on the next vase.
@@ -314,12 +314,12 @@ After the JAI camera finishes its physical sensor-level magic, it bundles the ra
 
 | Control | Stage | What changes | CH1 Color | CH2 NIR1 | CH3 NIR2 |
 |---|---|---|---|---|---|
-| **Exposure** | Camera Hardware | Brightness via physical photon integration window | ✓ | ✓ | ✓ |
-| **FPS** | Camera Hardware | Master clock timing & maximum exposure budget | ✓ (global) | ✓ (global) | ✓ (global) |
-| **Gain** | Camera Hardware | Analog amplification multiplier, adds noise | ✓ | ✓ | ✓ |
-| **White Balance** | Camera Hardware | Digital multiplier ratios on FPGA chip | ✓ only | ✗ N/A | ✗ N/A |
-| **Black Level** | Camera Hardware | Dark pedestal offset subtraction at ADC | ✓ | ✓ | ✓ |
-| **Region of Interest** | Camera Hardware | Physical crop boundaries and sensor readout size | ✓ | ✓ | ✓ |
+| **Exposure** | Camera Hardware | Brightness via physical photon integration window |  |  |  |
+| **FPS** | Camera Hardware | Master clock timing & maximum exposure budget |  (global) |  (global) |  (global) |
+| **Gain** | Camera Hardware | Analog amplification multiplier, adds noise |  |  |  |
+| **White Balance** | Camera Hardware | Digital multiplier ratios on FPGA chip |  only |  N/A |  N/A |
+| **Black Level** | Camera Hardware | Dark pedestal offset subtraction at ADC |  |  |  |
+| **Region of Interest** | Camera Hardware | Physical crop boundaries and sensor readout size |  |  |  |
 
 ---
 

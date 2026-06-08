@@ -1,10 +1,8 @@
 """Quick environment verification script for applegui conda env."""
 import sys
-import logging
-
-# Configure logging with a clean format for verification output
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-logger = logging.getLogger("verify_env")
+from core.log import get_logger, configure_root
+configure_root()
+logger = get_logger(__name__)
 
 logger.info("=" * 45)
 logger.info("   applegui Environment Verification")

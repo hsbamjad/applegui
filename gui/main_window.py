@@ -22,9 +22,10 @@ Layout:
 
 from __future__ import annotations
 
-import logging
+from core.log import get_logger
 from pathlib import Path
 
+import numpy as np
 import yaml
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -42,16 +43,22 @@ from gui.panels.camera_panel import LeftControlPanel
 from gui.panels.stats_panel  import RightStatsPanel
 from gui.widgets.image_display import MultiChannelDisplay
 from gui.workers.camera_worker import CameraWorker
-from gui.workers.inference_worker import MockInferenceWorker
+from gui.workers.video_worker  import VideoWorker
+from gui.workers.inference_worker import MockInferenceWorker, RealInferenceWorker
+from gui.workers.tracker import AppleTracker as ConveyorTracker
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
-def _load_config(path: str = "config/config.yaml") -> dict:
+def _load_config(path=None) -> dict:
+    """Load config.yaml — defaults to the canonical location via utils.paths."""
+    from utils.paths import CONFIG_PATH
+    resolved = Path(path) if path else CONFIG_PATH
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(resolved, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except FileNotFoundError:
+        log.warning("config.yaml not found at %s", resolved)
         return {}
 
 
@@ -107,6 +114,8 @@ class HeaderBar(QWidget):
         """Update badge at runtime to reflect actual camera mode."""
         if mode == "jai":
             bg, bdr, tc, txt = "#0D2218", "#1A4832", SUCCESS, "JAI  LIVE"
+        elif mode == "simulation":
+            bg, bdr, tc, txt = "#1F1A00", "#4A3C00", "#FBBF24", "VIDEO  SIM"
         else:
             bg, bdr, tc, txt = "#1C2240", "#2E3D68", "#6A7899", "MOCK MODE"
         self._badge.setText(f"  {txt}  ")
@@ -135,7 +144,7 @@ class HeaderBar(QWidget):
         painter.end()
 
 
-# ── Chart placeholder ─────────────────────────────────────────────────────────
+# ── Chart placeholder (used in Analytics tab) ─────────────────────────────────
 
 class ChartPlaceholder(QWidget):
     def __init__(self, title: str, body: str, color: str, parent=None) -> None:
@@ -170,6 +179,177 @@ class ChartPlaceholder(QWidget):
         layout.addLayout(inner)
 
 
+# ── Model Input Panel ─────────────────────────────────────────────────────────
+
+class ModelInputPanel(QWidget):
+    """
+    Displays the exact spectral composite (e.g. RB+NIR1) that the YOLO model
+    sees at inference time, with tracking boxes and grade labels overlaid.
+
+    This makes it immediately clear to the viewer which spectral channels
+    drive the AI decision — scientifically honest and great for demo purposes.
+    """
+
+    # Band-combo → human-readable description
+    _BAND_LABELS: dict[str, str] = {
+        "rb-nir1":     "R · B · NIR1     (660nm Red · 660nm Blue · 800nm NIR)",
+        "rg-nir1":     "R · G · NIR1     (660nm Red · 660nm Green · 800nm NIR)",
+        "r-nir1-nir2": "R · NIR1 · NIR2  (660nm Red · 800nm NIR · 900nm NIR)",
+        "rgb":         "RGB  (full color 660nm)",
+        "ch1":         "CH1  (raw color sensor)",
+    }
+
+    def __init__(self, input_mode: str = "RB-nir1", parent=None) -> None:
+        super().__init__(parent)
+        self._mode      = input_mode
+        self._has_frame = False
+        self.setStyleSheet(f"background-color: {BG_BASE};")
+        self._build()
+
+    def _build(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Top accent bar (indigo — AI colour) ──────────────────────
+        accent = QWidget()
+        accent.setFixedHeight(3)
+        accent.setStyleSheet(f"background-color: {ACCENT}; border: none;")
+        root.addWidget(accent)
+
+        # ── Header row ───────────────────────────────────────────────
+        hdr = QWidget()
+        hdr.setFixedHeight(32)
+        hdr.setStyleSheet(
+            f"background-color: {BG_SURFACE}; "
+            f"border-bottom: 1px solid {BORDER}; border: none;"
+        )
+        hdr_layout = QHBoxLayout(hdr)
+        hdr_layout.setContentsMargins(12, 0, 12, 0)
+        hdr_layout.setSpacing(8)
+
+        icon = QLabel("◆")
+        icon.setStyleSheet(f"color: {ACCENT}; font-size: 10px; background: transparent;")
+
+        title_lbl = QLabel("AI MODEL INPUT")
+        title_lbl.setStyleSheet(
+            f"color: {TEXT_1}; font-size: 10px; font-weight: 700; "
+            f"letter-spacing: 1.2px; background: transparent;"
+        )
+
+        sep = QLabel("·")
+        sep.setStyleSheet(f"color: {TEXT_3}; background: transparent;")
+
+        band_desc = self._BAND_LABELS.get(self._mode.lower(), self._mode)
+        self._band_lbl = QLabel(band_desc)
+        self._band_lbl.setStyleSheet(
+            f"color: {TEXT_2}; font-size: 10px; background: transparent;"
+        )
+
+        hdr_layout.addWidget(icon)
+        hdr_layout.addWidget(title_lbl)
+        hdr_layout.addWidget(sep)
+        hdr_layout.addWidget(self._band_lbl)
+        hdr_layout.addStretch()
+
+        self._count_lbl = QLabel("0 graded")
+        self._count_lbl.setStyleSheet(
+            f"color: {SUCCESS}; font-size: 10px; font-weight: 600; "
+            f"background: transparent;"
+        )
+        self._fps_lbl = QLabel("-- FPS")
+        self._fps_lbl.setStyleSheet(
+            f"color: {TEXT_3}; font-size: 10px; background: transparent;"
+        )
+        hdr_layout.addWidget(self._count_lbl)
+        hdr_layout.addSpacing(12)
+        hdr_layout.addWidget(self._fps_lbl)
+        root.addWidget(hdr)
+
+        # ── Image area ───────────────────────────────────────────────
+        self._display = QLabel()
+        self._display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._display.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self._display.setStyleSheet(
+            "background-color: transparent; border: none;"
+        )
+        root.addWidget(self._display, stretch=1)
+
+        self._draw_placeholder()
+
+    # ------------------------------------------------------------------
+    def _draw_placeholder(self) -> None:
+        from PyQt6.QtGui import QPixmap, QPainter
+        w = max(self._display.width(), 400)
+        h = max(self._display.height(), 160)
+        pixmap = QPixmap(w, h)
+        pixmap.fill(QColor(BG_BASE))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = QFont("Segoe UI Variable", 10)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 5)
+        painter.setFont(font)
+        painter.setPen(QColor(ACCENT + "33"))
+        painter.drawText(
+            pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "WAITING FOR MODEL"
+        )
+        painter.end()
+        self._display.setPixmap(pixmap)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        if not self._has_frame:
+            self._draw_placeholder()
+
+    # ------------------------------------------------------------------
+    def update_frame(
+        self, frame: np.ndarray, fps: float, graded_count: int
+    ) -> None:
+        """Push an annotated model-input composite to the display."""
+        import cv2
+        from PyQt6.QtGui import QPixmap, QImage
+
+        if frame is None:
+            return
+
+        if frame.dtype != np.uint8:
+            frame = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
+
+        h, w = frame.shape[:2]
+        if frame.ndim == 3 and frame.shape[2] == 3:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        elif frame.ndim == 2:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+        else:
+            return
+
+        qt_img = QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
+        disp_size = self._display.size()
+        pixmap = QPixmap.fromImage(qt_img).scaled(
+            disp_size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._display.setPixmap(pixmap)
+        self._fps_lbl.setText(f"{fps:.1f} FPS")
+        self._count_lbl.setText(f"{graded_count} graded")
+        self._has_frame = True
+
+    def reset(self) -> None:
+        self._has_frame = False
+        self._fps_lbl.setText("-- FPS")
+        self._count_lbl.setText("0 graded")
+        self._draw_placeholder()
+
+    def set_mode(self, input_mode: str) -> None:
+        """Update the band-config label in the header — called when a new model is loaded."""
+        self._mode = input_mode
+        band_desc = self._BAND_LABELS.get(input_mode.lower(), input_mode)
+        self._band_lbl.setText(band_desc)
+
+
 # ── Center panel ──────────────────────────────────────────────────────────────
 
 class CenterPanel(QWidget):
@@ -194,27 +374,40 @@ class CenterPanel(QWidget):
             }}
         """)
 
+        # Top: raw 3-channel sensor display
         self.channel_display = MultiChannelDisplay(self)
         splitter.addWidget(self.channel_display)
 
-        chart_row = QWidget()
-        chart_row.setStyleSheet(f"background-color: {BG_BASE};")
-        chart_layout = QHBoxLayout(chart_row)
-        chart_layout.setContentsMargins(1, 1, 1, 1)
-        chart_layout.setSpacing(1)
+        # Bottom: tab widget — AI Model Input | Analytics
+        from PyQt6.QtWidgets import QTabWidget
+        self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)   # removes the pane border for a cleaner look
 
-        chart_layout.addWidget(ChartPlaceholder(
+        # ── Tab 0: AI Model Input ──────────────────────────────────────
+        cfg = _load_config()
+        input_mode = cfg.get("inference", {}).get("input_mode", "RB-nir1")
+        self.model_input_panel = ModelInputPanel(input_mode=input_mode)
+        self._tabs.addTab(self.model_input_panel, "◆  AI Model Input")
+
+        # ── Tab 1: Analytics (Phase 6 placeholder) ─────────────────────
+        analytics_widget = QWidget()
+        analytics_widget.setStyleSheet(f"background-color: {BG_BASE};")
+        analytics_layout = QHBoxLayout(analytics_widget)
+        analytics_layout.setContentsMargins(1, 1, 1, 1)
+        analytics_layout.setSpacing(1)
+        analytics_layout.addWidget(ChartPlaceholder(
             "Grade Distribution",
             "PyQtGraph live chart  ·  Phase 6",
             ACCENT,
         ))
-        chart_layout.addWidget(ChartPlaceholder(
+        analytics_layout.addWidget(ChartPlaceholder(
             "Throughput Over Time",
             "Apples / min rolling window  ·  Phase 6",
             SUCCESS,
         ))
+        self._tabs.addTab(analytics_widget, "⬛  Analytics")
 
-        splitter.addWidget(chart_row)
+        splitter.addWidget(self._tabs)
         splitter.setSizes([700, 300])
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
@@ -231,9 +424,22 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._cfg    = _load_config()
         self._mode   = self._cfg.get("camera", {}).get("mode", "mock")
-        self._cam_w:  CameraWorker | None        = None
-        self._inf_w:  MockInferenceWorker | None = None
+        self._sim_cfg = self._cfg.get("camera", {}).get("simulation", {})
+        self._is_sim  = self._sim_cfg.get("enabled", False)
+        self._cam_w:   CameraWorker | VideoWorker | None = None
+        self._inf_w:   MockInferenceWorker | None        = None
+        self._infer_w: RealInferenceWorker | None        = None
+        self._tracker:  ConveyorTracker | None            = None
+        self._size_acc = None   # AppleSizeAccumulator — created in _start_pipeline
+        self._infer_fps: float = 0.0
+        self._loading_model_name: str = ""
+        self._last_ch1:        np.ndarray | None = None
+        self._last_ch2:        np.ndarray | None = None
+        self._last_ch3:        np.ndarray | None = None
+        self._last_input_frame: np.ndarray | None = None  # spectral composite fed to YOLO
+        self._exit_x_frac: float = 0.85   # set again in _start_pipeline from config
         self._total        = 0
+        self._total_graded = 0             # running count for model input panel badge
         self._wb_reverting = False   # True while a revert_white_balance() call is in flight
 
         self._setup_window()
@@ -315,7 +521,12 @@ class MainWindow(QMainWindow):
         self._left.sig_roi_preview.connect(self._on_roi_preview)
 
     def _post_init(self) -> None:
-        models_dir = Path(self._cfg.get("inference", {}).get("model_dir", "models/"))
+        from utils.paths import APP_ROOT, MODELS_DIR
+        raw_dir = self._cfg.get("inference", {}).get("model_dir", "models/")
+        # If config gives a relative path, resolve it against APP_ROOT
+        models_dir = Path(raw_dir) if Path(raw_dir).is_absolute() else APP_ROOT / raw_dir
+        if not models_dir.exists():
+            models_dir = MODELS_DIR  # fallback to canonical location
         models = [p.name for p in models_dir.glob("*.pt")] + \
                  [p.name for p in models_dir.glob("*.onnx")]
         self._left.populate_models(models)
@@ -348,40 +559,95 @@ class MainWindow(QMainWindow):
         sg.set_status("Camera", "warning", "Connecting…")
         self.statusBar().showMessage("Starting camera pipeline…")
 
-        # ── Camera worker ──────────────────────────────────────────
+        # ── Camera / Video worker ──────────────────────────────────
         display_fps = self._cfg.get("display", {}).get("fps_limit", 24)
-        self._cam_w = CameraWorker(
-            config      = self._cfg.get("camera", {}),
-            display_fps = display_fps,
-        )
+
+        if self._is_sim:
+            sim_vids = self._sim_cfg.get("videos", {})
+            sim_fps  = self._sim_cfg.get("fps", 30)
+            sim_loop = self._sim_cfg.get("loop", True)
+            self._cam_w = VideoWorker(
+                path_ch1 = sim_vids.get("ch1", ""),
+                path_ch2 = sim_vids.get("ch2", ""),
+                path_ch3 = sim_vids.get("ch3", ""),
+                fps      = sim_fps,
+                loop     = sim_loop,
+            )
+            self._header.set_mode("simulation")
+        else:
+            self._cam_w = CameraWorker(
+                config      = self._cfg.get("camera", {}),
+                display_fps = display_fps,
+            )
+            self._cam_w.sig_exposure_readback.connect(self._on_exposure_readback)
+            self._cam_w.sig_gains_readback.connect(self._on_gains_readback)
+            self._cam_w.sig_cam_fps.connect(self._on_cam_fps)
+            self._cam_w.sig_block_ids.connect(self._on_block_ids)
+            self._cam_w.sig_wb_readback.connect(self._on_wb_readback)
+            self._cam_w.sig_black_level_readback.connect(self._on_black_level_readback)
+            self._cam_w.sig_roi_readback.connect(self._on_roi_readback)
+
         self._cam_w.sig_frame.connect(self._on_frame)
         self._cam_w.sig_status.connect(self._on_cam_status)
-        self._cam_w.sig_exposure_readback.connect(self._on_exposure_readback)
-        self._cam_w.sig_gains_readback.connect(self._on_gains_readback)
-        self._cam_w.sig_cam_fps.connect(self._on_cam_fps)
-        self._cam_w.sig_block_ids.connect(self._on_block_ids)
-        self._cam_w.sig_wb_readback.connect(self._on_wb_readback)
-        self._cam_w.sig_black_level_readback.connect(self._on_black_level_readback)
-        self._cam_w.sig_roi_readback.connect(self._on_roi_readback)
         self._cam_w.start()
 
-        # ── Inference worker ───────────────────────────────────────
-        speed = self._left.conveyor_speed
-        self._inf_w = MockInferenceWorker(apples_per_sec=speed)
-        self._inf_w.sig_grade.connect(self._on_grade)
-        self._inf_w.start()
+        # ── Conveyor tracker ───────────────────────────────────────
+        inf_cfg      = self._cfg.get("inference", {})
+        inf_tracking = inf_cfg.get("tracking", {})
+        conv_cfg     = self._cfg.get("conveyor", {})
+        self._exit_x_frac = inf_tracking.get("exit_frac", 0.85)
+        self._tracker = ConveyorTracker(
+            n_lanes              = conv_cfg.get("lanes", 3),
+            orientation          = conv_cfg.get("orientation", "BT"),
+            exit_frac            = inf_tracking.get("exit_frac",            0.85),
+            band_half_frac       = inf_tracking.get("band_half_frac",       0.025),
+            entry_frac           = inf_tracking.get("entry_frac",           0.35),
+            min_frames           = inf_tracking.get("min_frames",           5),
+            max_lost_frames      = inf_tracking.get("max_lost_frames",      10),
+            max_recover_dist     = inf_tracking.get("max_recover_dist",     80),
+            min_count_dist_frac  = inf_tracking.get("min_count_dist_frac",  0.12),
+            count_memory_frames  = inf_tracking.get("count_memory_frames",  40),
+            cull_weight          = inf_tracking.get("cull_weight",          1.5),
+            hit_threshold        = inf_tracking.get("hit_threshold",        20),
+            cull_ratio_threshold = inf_tracking.get("cull_ratio_threshold", 0.55),
+        )
 
-        # ── UI state ───────────────────────────────────────────────
+        # ── Apple size accumulator ─────────────────────────────────
+        size_cfg = self._cfg.get("sizing", {})
+        if size_cfg.get("enabled", True):
+            from core.sizing.accumulator import AppleSizeAccumulator
+            from utils.paths import APP_ROOT, MODELS_DIR
+            raw_size_path = size_cfg.get("model_path", "models/size_model.pkl")
+            size_model_path = (
+                Path(raw_size_path) if Path(raw_size_path).is_absolute()
+                else APP_ROOT / raw_size_path
+            )
+            if not size_model_path.exists():
+                size_model_path = MODELS_DIR / "size_model.pkl"
+            self._size_acc = AppleSizeAccumulator(
+                model_path    = str(size_model_path),
+                min_frames    = size_cfg.get("min_frames", 4),
+                bg_angle_step = size_cfg.get("bg_angle_step", 10),
+            )
+        else:
+            self._size_acc = None
+
         self._left.set_camera_connected(True)
-        sg.set_status("AI Model", "online", "Mock pipeline")
+        sg.set_status("AI Model", "idle",   "Waiting for model")
         sg.set_status("Sorter",   "idle",   "Simulation")
         self._right.metrics_group.start_session()
         self._total = 0
-        self.statusBar().showMessage(
-            f"Pipeline running  ·  {speed} apple/s/lane × 3 lanes"
-        )
+        self.statusBar().showMessage("Camera connected  ·  Load a model to start grading")
 
     def _stop_pipeline(self) -> None:
+        if self._infer_w:
+            self._infer_w.stop()
+            self._infer_w = None
+        if self._size_acc is not None:
+            self._size_acc.clear()
+            self._size_acc = None
+        if self._tracker:
+            self._tracker.reset()
         if self._inf_w:
             self._inf_w.stop()
             self._inf_w = None
@@ -391,6 +657,9 @@ class MainWindow(QMainWindow):
 
         self._left.set_camera_connected(False)
         self._center.channel_display.reset_all()
+        self._center.model_input_panel.reset()
+        self._last_input_frame = None
+        self._total_graded = 0
 
         sg = self._right.status_group
         sg.set_status("Camera",   "offline", "Disconnected")
@@ -404,7 +673,22 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(object, object, object, float)
     def _on_frame(self, ch1, ch2, ch3, fps: float) -> None:
-        self._center.channel_display.update_frames(ch1, ch2, ch3, fps)
+        # Always store latest frames so inference can annotate them
+        self._last_ch1 = ch1
+        self._last_ch2 = ch2
+        self._last_ch3 = ch3
+
+        inference_running = (
+            self._infer_w is not None and self._infer_w.isRunning()
+        )
+
+        if not inference_running:
+            # No inference — show raw video on all channels
+            self._center.channel_display.update_frames(ch1, ch2, ch3, fps)
+
+        # Feed frames to inference worker if running
+        if inference_running:
+            self._infer_w.enqueue(ch1, ch2, ch3)
 
     @pyqtSlot(str, bool)
     def _on_cam_status(self, msg: str, is_error: bool) -> None:
@@ -448,9 +732,256 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def _on_load_model(self, name: str) -> None:
-        self._right.status_group.set_status("AI Model", "warning", "Loading…")
+        if not name or "No model" in name:
+            return
+
+        # Stop any existing inference worker
+        if self._infer_w is not None:
+            self._infer_w.stop()
+            self._infer_w = None
+
+        # Stop mock worker — real inference takes over all stats from here
+        if self._inf_w is not None:
+            self._inf_w.stop()
+            self._inf_w = None
+            # Clear mock data from stats panel so only real data shows
+            self._right.grade_summary.reset()
+            self._right.results_group.clear_results()
+            self._right.metrics_group.reset()
+
+        # Re-read config from disk every time a model is loaded so that changes
+        # to config.yaml (e.g. swapping input_mode) take effect without restarting.
+        fresh_cfg  = _load_config()
+        inf_cfg    = fresh_cfg.get("inference", {})
+        from utils.paths import APP_ROOT, MODELS_DIR
+        raw_dir    = inf_cfg.get("model_dir", "models/")
+        models_dir = Path(raw_dir) if Path(raw_dir).is_absolute() else APP_ROOT / raw_dir
+        if not models_dir.exists():
+            models_dir = MODELS_DIR
+        model_path = str(models_dir / name)
+        input_mode = inf_cfg.get("input_mode", "RB-nir1")
+
+        self._right.status_group.set_status("AI Model", "warning", f"Loading {name}...")
+        self._left.set_model_loading(True)   # disable button + combo while GPU loads
         self.statusBar().showMessage(f"Loading model: {name}")
-        # TODO Phase 4: InferenceWorker with real YOLO model
+        self._loading_model_name = name      # remember for set_model_loaded callback
+
+        self._total_graded = 0
+        self._center.model_input_panel.reset()
+        self._center.model_input_panel.set_mode(input_mode)   # update header label live
+
+        # Pause the video so it does not advance while the GPU loads the model.
+        # For a real JAI camera this is a no-op (CameraWorker has no pause).
+        if isinstance(self._cam_w, VideoWorker):
+            self._cam_w.pause()
+            log.info("_on_load_model: VideoWorker paused while model loads")
+
+        self._infer_w = RealInferenceWorker(
+            model_path     = model_path,
+            conf_threshold = inf_cfg.get("confidence_threshold", 0.5),
+            iou_threshold  = inf_cfg.get("iou_threshold", 0.45),
+            device         = inf_cfg.get("device", "cuda"),
+            input_mode     = input_mode,
+        )
+        self._infer_w.sig_model_ready.connect(self._on_model_ready)  # resume video here
+        self._infer_w.sig_result.connect(self._on_inference_result)
+        self._infer_w.sig_input_frame.connect(self._on_input_frame)
+        self._infer_w.sig_fps.connect(self._on_inference_fps)
+        self._infer_w.sig_status.connect(self._on_inference_status)
+        self._infer_w.start()
+
+    # ── Class colours (BGR): 0=Fresh-green  1=Processing-amber  2=Cull-red ──
+    _CLASS_COLORS = [
+        (52,  211, 153),   # 0 Fresh      — green
+        (251, 191,  36),   # 1 Processing — amber
+        (248, 113, 113),   # 2 Cull       — red
+    ]
+    _CLASS_NAMES = ["Fresh", "Processing", "Cull"]
+    _OUTLET_MAP  = {"Fresh": "A", "Processing": "B", "Cull": "C"}
+
+    @pyqtSlot()
+    def _on_model_ready(self) -> None:
+        """
+        Called (in the main thread via Qt signal) once RealInferenceWorker has
+        finished loading the model and is about to enter the inference loop.
+
+        At this point the VideoWorker is still paused, so no new frames have
+        entered the inference queue since the pause.  We drain any stale frames
+        that were already in the queue before the pause, then resume the video
+        so it continues from exactly where it stopped.
+        """
+        # Drain the inference queue so the model processes only fresh frames.
+        if self._infer_w is not None:
+            q = self._infer_w._queue
+            drained = 0
+            while True:
+                try:
+                    q.get_nowait()
+                    drained += 1
+                except Exception:
+                    break
+            if drained:
+                log.debug("_on_model_ready: drained %d stale frame(s) from inference queue", drained)
+
+        # Resume video from the exact frame it was paused at.
+        if isinstance(self._cam_w, VideoWorker):
+            self._cam_w.resume()
+            log.info("_on_model_ready: VideoWorker resumed")
+
+    @pyqtSlot(object)
+    def _on_inference_result(self, result) -> None:
+        """Vote on tracks, commit grades, annotate CH1 with stored latest frame."""
+        if self._tracker is None or self._last_ch1 is None:
+            return
+
+        active, graded = self._tracker.update(result, self._last_ch1.shape)
+
+        # ── Size accumulation (per frame) ─────────────────────────
+        if self._size_acc is not None:
+            self._size_acc.update(result, active)
+
+        # ── Commit finished grades to stats panel ─────────────────
+        for rec in graded:
+            outlet   = self._OUTLET_MAP.get(rec.class_name, "?")
+            size_mm  = (
+                self._size_acc.commit(rec.track_id, rec.lane)
+                if self._size_acc is not None else None
+            )
+            self._right.results_group.add_result(
+                rec.seq_id, rec.lane, rec.class_name, rec.confidence, outlet, size_mm
+            )
+            self._right.grade_summary.record(rec.class_name)
+            self._right.metrics_group.record_grade(self._left.conveyor_speed)
+            self.statusBar().showMessage(
+                f"#{rec.seq_id}  Lane {rec.lane}  →  {rec.class_name}  "
+                f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
+            )
+
+        # ── Annotate all 3 channels with same boxes ───────────────
+        ann_ch1 = self._annotate_tracked(self._last_ch1, active, show_label=False)
+        ann_ch2 = self._annotate_tracked(self._last_ch2, active, show_label=False)
+        ann_ch3 = self._annotate_tracked(self._last_ch3, active, show_label=False)
+        fps = self._infer_fps
+        # Pass the original full resolution so the UI label stays correct
+        orig_shape = (self._last_ch1.shape[1], self._last_ch1.shape[0])
+        self._center.channel_display.update_channel_frame(0, ann_ch1, fps, orig_shape)
+        self._center.channel_display.update_channel_frame(1, ann_ch2, fps, orig_shape)
+        self._center.channel_display.update_channel_frame(2, ann_ch3, fps, orig_shape)
+
+        # ── Push annotated spectral composite to AI Model Input panel ─
+        if self._last_input_frame is not None:
+            self._total_graded += len(graded)
+            ann_input = self._annotate_tracked(self._last_input_frame, active, show_label=True)
+            self._center.model_input_panel.update_frame(
+                ann_input, fps, self._total_graded
+            )
+
+    @pyqtSlot(object)
+    def _on_input_frame(self, frame: np.ndarray) -> None:
+        """Cache the spectral composite emitted by RealInferenceWorker."""
+        self._last_input_frame = frame
+
+    def _annotate_tracked(
+        self, frame: np.ndarray, active: list, show_label: bool = True
+    ) -> np.ndarray:
+        """
+        Draw bounding boxes on a downscaled copy for speed.
+
+        Args:
+            frame:      Source numpy frame (any channel layout).
+            active:     List of active track dicts from AppleTracker.
+            show_label: If True, draw grade + ID pill above each box.
+                        If False, draw the coloured box only — used for
+                        the raw CH1/CH2/CH3 panels where grading info is
+                        shown exclusively in the AI Model Input panel.
+        """
+        import cv2
+
+        if frame is None:
+            return frame
+
+        if frame.ndim == 2:
+            out = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        else:
+            out = frame.copy()
+
+        if not active:
+            return out
+
+        h, w = out.shape[:2]
+
+        # ── Downscale for fast drawing ─────────────────────────────────────
+        DRAW_W = 512
+        scale_f = DRAW_W / w
+        draw_h  = int(h * scale_f)
+        small   = cv2.resize(out, (DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
+
+        # Drawing params for 512px canvas
+        fs        = 0.55   # font scale
+        box_thick = 2
+        txt_thick = 1
+
+        for t in active:
+            cls      = t["class_id"]
+            conf     = t["conf"]
+            seq      = t["seq_id"]
+            lane     = t["lane"]
+            eligible = t.get("eligible", True)
+            x1, y1, x2, y2 = t["box"]
+
+            # Scale box coords to draw canvas
+            sx1 = int(x1 * scale_f); sy1 = int(y1 * scale_f)
+            sx2 = int(x2 * scale_f); sy2 = int(y2 * scale_f)
+
+            color      = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
+            name       = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
+            draw_color = color if eligible else (120, 120, 120)
+
+            # Box
+            cv2.rectangle(small, (sx1, sy1), (sx2, sy2), draw_color, box_thick)
+
+            # Label pill ─────────────────────────────────────────────────────
+            # show_label=True  (AI Model Input panel): "#3 Fresh 87% L2"
+            # show_label=False (raw CH1/CH2/CH3):      "#3 L2"  — ID + lane only
+            id_part = f"#{seq}" if seq is not None else "?"
+            if show_label:
+                name  = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
+                label = f"{id_part} {name} {conf*100:.0f}% L{lane}"
+            else:
+                label = f"{id_part} L{lane}"
+
+            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, txt_thick)
+            lx = max(0, sx1)
+            ly = max(lh + 4, sy1 - 4)
+
+            # Small filled pill behind text
+            cv2.rectangle(small, (lx, ly - lh - 3), (lx + lw + 4, ly + 2), draw_color, -1)
+            cv2.putText(small, label, (lx + 2, ly - 1),
+                        cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), txt_thick, cv2.LINE_AA)
+
+        # Return the fast 512px render directly — NO expensive upscale!
+        return small
+
+
+    @pyqtSlot(float)
+    def _on_inference_fps(self, fps: float) -> None:
+        self._infer_fps = fps
+        self._right.metrics_group.set_infer_fps(fps)
+        self.statusBar().showMessage(f"Inference: {fps:.1f} FPS")
+
+    @pyqtSlot(str, bool)
+    def _on_inference_status(self, msg: str, is_error: bool) -> None:
+        state = "offline" if is_error else "online"
+        self._right.status_group.set_status("AI Model", state, msg)
+        self.statusBar().showMessage(msg)
+        if is_error:
+            # Re-enable loader so user can try another model
+            self._left.set_model_loading(False)
+        elif "Model loaded" in msg:
+            # Model is in GPU memory and running — update left panel
+            name = getattr(self, "_loading_model_name", "")
+            self._left.set_model_loaded(name)
+            self._left.set_model_loading(False)
 
     @pyqtSlot(bool)
     def _on_sorter_toggle(self, enabled: bool) -> None:
@@ -472,14 +1003,18 @@ class MainWindow(QMainWindow):
     def _on_speed_changed(self, speed: int) -> None:
         if self._inf_w:
             self._inf_w.set_speed(speed)
-            self.statusBar().showMessage(
-                f"Speed updated: {speed} apple/s/lane  "
-                f"({speed * 3 * 60} apple/min total)"
-            )
+        if self._tracker:
+            self._tracker.set_conveyor_speed(speed)
+        self.statusBar().showMessage(
+            f"Speed updated: {speed} apple/s/lane  "
+            f"({speed * 3 * 60} apple/min total)"
+        )
 
     @pyqtSlot(int, int, int)
     def _on_exposure_changed(self, ch1_us: int, ch2_us: int, ch3_us: int) -> None:
         """Forward independent per-channel exposure changes to camera while streaming."""
+        if self._is_sim:
+            return  # no hardware to update in simulation mode
         running = self._cam_w is not None and self._cam_w.isRunning()
         if running:
             self._cam_w.set_exposures(ch1_us, ch2_us, ch3_us)
@@ -491,20 +1026,16 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(float)
     def _on_fps_changed(self, fps: float) -> None:
-        """
-        Set camera hardware acquisition FPS. Does NOT change display render rate.
-        Firmware will silently clamp ExposureTime if current value exceeds
-        1,000,000/fps. CameraWorker reads back actual ExposureTime and emits
-        sig_exposure_readback to sync the GUI spinbox.
-        """
         running = self._cam_w is not None and self._cam_w.isRunning()
-        if running:
+        if running and isinstance(self._cam_w, CameraWorker):
             self._cam_w.set_fps(fps)
             max_exp = int(1_000_000 / max(fps, 1))
             self.statusBar().showMessage(
-                f"Camera hardware FPS set: {fps:.0f} FPS  —  "
+                f"Camera hardware FPS set: {fps:.0f} FPS  "
                 f"max exposure: {max_exp:,} µs"
             )
+        elif self._is_sim:
+            self.statusBar().showMessage("FPS: not applicable in video simulation mode")
         else:
             self.statusBar().showMessage("Frame rate: camera not connected — connect first")
 

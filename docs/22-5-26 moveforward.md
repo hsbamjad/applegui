@@ -1,6 +1,6 @@
-# Multispectral Apple Grading System: Project Roadmap
+﻿# Multispectral Apple Grading System: Project Roadmap
 
-**Platform:** JAI FS-3200T-10GE · 3-Channel Multispectral (Color + NIR1 + NIR2)  
+**Platform:** JAI FS-3200T-10GE · 3-Channel Multispectral (Color + NIR1 + NIR2)
 **Goal:** Automated apple grading and sorting on a 3-lane conveyor belt
 
 ---
@@ -216,7 +216,7 @@ The conveyor-specific logic from the test script that is worth keeping is reimpl
 
 ## Summary
 
-The camera sees. Next, it needs to think. Then act.  
+The camera sees. Next, it needs to think. Then act.
 Phase 1 gives it perception and spatial awareness. Phase 2 gives it judgment. Phase 3 gives it action.
 
 Each phase is a prerequisite for the next. Skipping or parallelizing the software integration would result in debugging two unknowns at once, which always costs more time than the shortcut saves.
