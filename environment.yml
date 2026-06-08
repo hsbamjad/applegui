@@ -23,9 +23,10 @@ dependencies:
     - pyqtgraph==0.14.0
 
     # AI / Vision
-    - --extra-index-url https://download.pytorch.org/whl/cu124
-    - torch==2.6.0+cu124          # RTX 4050 — CUDA 12.4
-    - torchvision==0.21.0+cu124   # Paired with torch version above
+    # RTX 5060 Ti (Blackwell, sm_120) requires PyTorch built with CUDA 12.8+
+    - --extra-index-url https://download.pytorch.org/whl/cu128
+    - torch>=2.7.0                # cu128 build — Blackwell (sm_120) support
+    - torchvision                 # matched automatically by pip
     - opencv-python==4.13.0.92
     - numpy==2.2.6
 
@@ -61,7 +62,8 @@ dependencies:
 #   - nidaqmx → pip install nidaqmx  (only if using NI-DAQ hardware)
 #
 # PyTorch CUDA note:
-#   torch+cu124 requires CUDA 12.x driver. Verified on RTX 4050 Laptop GPU.
+#   RTX 5060 Ti (Blackwell, sm_120) requires torch>=2.7.0 with CUDA 12.8 build.
+#   torch+cu128 requires CUDA 12.x driver. Verified on RTX 5060 Ti (Shuttle PC).
 #   For CPU-only (no GPU), replace with:
-#     - torch==2.6.0
-#     - torchvision==0.21.0
+#     - torch
+#     - torchvision
