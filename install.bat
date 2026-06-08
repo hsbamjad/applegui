@@ -1,71 +1,99 @@
 @echo off
-:: ============================================================
-:: install.bat  —  Infield Apple Sorting System
-:: Michigan State University | ASABE AIM26 | 2026
-::
-:: Double-click this file to set up the app on a new machine.
-:: After this runs once, use launch.bat to start the app.
-::
-:: What this does:
-::   1. Creates the 'applegui' conda environment
-::   2. Installs the JAI eBUS SDK wheel (if found)
-::   3. Creates a Desktop shortcut for launch.bat
-:: ============================================================
-
-title Apple Sorting System — Installer
+title Apple Sorting System -- Installer
 cd /d "%~dp0"
 
-:: Run the embedded PowerShell block with ExecutionPolicy Bypass
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-"$ProjectDir = '%~dp0'.TrimEnd('\'); ^
-$ErrorActionPreference = 'Stop'; ^
-Write-Host ''; ^
-Write-Host '============================================================' -ForegroundColor Cyan; ^
-Write-Host '  Infield Apple Sorting System - Setup' -ForegroundColor Cyan; ^
-Write-Host '  Michigan State University  |  ASABE AIM26  |  2026' -ForegroundColor Cyan; ^
-Write-Host '============================================================' -ForegroundColor Cyan; ^
-Write-Host ''; ^
-Write-Host '[1/4] Checking for Conda...' -ForegroundColor Yellow; ^
-try { $v = & conda --version 2>&1; Write-Host ('      Found: ' + $v) -ForegroundColor Green } ^
-catch { Write-Host '  ERROR: Conda not found. Install Miniconda first:' -ForegroundColor Red; ^
-        Write-Host '  https://docs.conda.io/en/latest/miniconda.html' -ForegroundColor Red; ^
-        Read-Host 'Press Enter to exit'; exit 1 }; ^
-Write-Host ''; ^
-Write-Host '[2/4] Creating applegui conda environment...' -ForegroundColor Yellow; ^
-Write-Host '      (This may take 5-15 minutes on first run)'; ^
-$envFile = Join-Path $ProjectDir 'environment.yml'; ^
-$envExists = conda env list | Select-String 'applegui'; ^
-if ($envExists) { Write-Host '      Already exists - updating...' -ForegroundColor Cyan; conda env update -f $envFile --prune } ^
-else { conda env create -f $envFile }; ^
-if ($LASTEXITCODE -ne 0) { Write-Host '  ERROR: conda env create failed.' -ForegroundColor Red; Read-Host 'Press Enter to exit'; exit 1 }; ^
-Write-Host '      Environment ready.' -ForegroundColor Green; ^
-Write-Host ''; ^
-Write-Host '[3/4] Looking for JAI eBUS SDK wheel...' -ForegroundColor Yellow; ^
-$ebus = 'C:\Program Files\Common Files\Pleora\eBUS SDK\Python'; ^
-if (Test-Path $ebus) { ^
-    $whl = Get-ChildItem $ebus -Filter 'ebus_python*.whl' -EA SilentlyContinue | Select-Object -First 1; ^
-    if ($whl) { Write-Host ('      Found: ' + $whl.Name) -ForegroundColor Green; ^
-                conda run -n applegui pip install $whl.FullName; ^
-                if ($LASTEXITCODE -eq 0) { Write-Host '      eBUS SDK installed.' -ForegroundColor Green } ^
-                else { Write-Host '      WARNING: eBUS install failed - app will use mock camera.' -ForegroundColor DarkYellow } } ^
-    else { Write-Host '      No wheel found - app will use mock camera mode.' -ForegroundColor DarkYellow } } ^
-else { Write-Host '      eBUS SDK not installed - app will use mock camera mode.' -ForegroundColor DarkYellow }; ^
-Write-Host ''; ^
-Write-Host '[4/4] Creating Desktop shortcut...' -ForegroundColor Yellow; ^
-$launchBat = Join-Path $ProjectDir 'launch.bat'; ^
-$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\Apple Sorter.lnk'); ^
-$shortcut.TargetPath = $launchBat; ^
-$shortcut.WorkingDirectory = $ProjectDir; ^
-$shortcut.Description = 'Infield Apple Sorting System'; ^
-$shortcut.Save(); ^
-Write-Host '      Shortcut created on Desktop.' -ForegroundColor Green; ^
-Write-Host ''; ^
-Write-Host '============================================================' -ForegroundColor Green; ^
-Write-Host '  Setup complete!' -ForegroundColor Green; ^
-Write-Host '  Launch the app by double-clicking launch.bat' -ForegroundColor White; ^
-Write-Host '  or the Apple Sorter shortcut on your Desktop.' -ForegroundColor White; ^
-Write-Host '============================================================' -ForegroundColor Green; ^
-Write-Host ''; ^
-Read-Host 'Press Enter to close'"
+echo.
+echo ============================================================
+echo   Infield Apple Sorting System - Setup
+echo   Michigan State University  ^|  ASABE AIM26  ^|  2026
+echo ============================================================
+echo.
 
+:: ── Step 1: Check conda is available ─────────────────────────
+echo [1/4] Checking for Conda...
+where conda >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo   ERROR: Conda was not found.
+    echo   Please install Miniconda first, then re-run this installer.
+    echo   https://docs.conda.io/en/latest/miniconda.html
+    echo.
+    pause
+    exit /b 1
+)
+echo        Conda found.
+
+:: ── Step 2: Create or update the conda environment ───────────
+echo.
+echo [2/4] Creating 'applegui' conda environment...
+echo        This may take 5-15 minutes on the first run.
+echo.
+
+conda env create -f environment.yml
+if errorlevel 1 (
+    echo.
+    echo        Environment may already exist. Trying update instead...
+    conda env update -f environment.yml --prune
+    if errorlevel 1 (
+        echo.
+        echo   ERROR: Failed to create or update the conda environment.
+        echo   See output above for details.
+        echo.
+        pause
+        exit /b 1
+    )
+)
+echo.
+echo        Environment ready.
+
+:: ── Step 3: Install eBUS SDK wheel if present ─────────────────
+echo.
+echo [3/4] Looking for JAI eBUS SDK wheel...
+
+set EBUS_DIR=C:\Program Files\Common Files\Pleora\eBUS SDK\Python
+if exist "%EBUS_DIR%" (
+    for %%f in ("%EBUS_DIR%\ebus_python*.whl") do (
+        echo        Found: %%~nxf
+        echo        Installing into applegui environment...
+        conda run -n applegui pip install "%%f"
+        if errorlevel 1 (
+            echo        WARNING: eBUS install failed. App will use mock camera mode.
+        ) else (
+            echo        eBUS SDK installed successfully.
+        )
+        goto ebus_done
+    )
+    echo        No .whl file found. App will use mock camera mode.
+) else (
+    echo        eBUS SDK folder not found. App will use mock camera mode.
+    echo        Install JAI eBUS SDK 6.x if you need the live camera.
+)
+:ebus_done
+
+:: ── Step 4: Create a Desktop shortcut ─────────────────────────
+echo.
+echo [4/4] Creating Desktop shortcut...
+
+set LAUNCH=%~dp0launch.bat
+set SHORTCUT=%USERPROFILE%\Desktop\Apple Sorter.lnk
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$s=(New-Object -COM WScript.Shell).CreateShortcut('%SHORTCUT%');$s.TargetPath='%LAUNCH%';$s.WorkingDirectory='%~dp0';$s.Save()"
+
+if exist "%SHORTCUT%" (
+    echo        Shortcut created on Desktop.
+) else (
+    echo        Could not create shortcut. Use launch.bat directly.
+)
+
+:: ── Done ──────────────────────────────────────────────────────
+echo.
+echo ============================================================
+echo   Setup complete!
+echo.
+echo   To start the app:
+echo     - Double-click "Apple Sorter" on your Desktop, OR
+echo     - Double-click launch.bat in this folder
+echo ============================================================
+echo.
 pause
