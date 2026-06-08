@@ -113,29 +113,44 @@ if errorlevel 1 (
 echo.
 echo [4/5] Checking JAI eBUS SDK...
 
+:: Skip if already installed
 "%CONDA_EXE%" run -n applegui pip show ebus_python >nul 2>&1
 if not errorlevel 1 (
     echo        Already installed. Nothing to do.
     goto ebus_done
 )
 
+:: Look in project root first (user can drop the .whl next to install.bat)
+for %%f in ("%~dp0ebus_python*.whl") do (
+    echo        Found wheel in project folder: %%~nxf
+    echo        Installing...
+    "%CONDA_EXE%" run -n applegui pip install "%%f"
+    if errorlevel 1 (
+        echo        WARNING: eBUS install failed.
+    ) else (
+        echo        eBUS SDK installed successfully.
+    )
+    goto ebus_done
+)
+
+:: Fall back to Pleora SDK installation path
 set EBUS_DIR=C:\Program Files\Common Files\Pleora\eBUS SDK\Python
 if exist "%EBUS_DIR%" (
     for %%f in ("%EBUS_DIR%\ebus_python*.whl") do (
-        echo        Found wheel: %%~nxf
+        echo        Found wheel in Pleora SDK folder: %%~nxf
+        echo        Installing...
         "%CONDA_EXE%" run -n applegui pip install "%%f"
         if errorlevel 1 (
-            echo        WARNING: eBUS install failed. App will use mock camera mode.
+            echo        WARNING: eBUS install failed.
         ) else (
             echo        eBUS SDK installed successfully.
         )
         goto ebus_done
     )
-    echo        No .whl found in SDK folder. App will use mock camera mode.
-) else (
-    echo        eBUS SDK not found. App will use mock camera mode.
-    echo        Install JAI eBUS SDK 6.x and re-run if you need the live camera.
 )
+
+echo        No eBUS wheel found. App will use mock camera mode.
+echo        To enable live camera: drop ebus_python*.whl next to install.bat and re-run.
 :ebus_done
 
 :: -- Step 5: Create Desktop shortcut -------------------------

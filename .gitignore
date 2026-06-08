@@ -59,3 +59,6 @@ docs/hardware/*.jpg
 # Reference PDFs — large binaries (share separately)
 docs/*.pdf
 scripts/api_doc.txt
+
+# eBUS SDK wheel — proprietary binary, do not commit (drop in project root for install.bat)
+ebus_python*.whl
