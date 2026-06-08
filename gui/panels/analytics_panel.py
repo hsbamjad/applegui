@@ -3,23 +3,22 @@ gui/panels/analytics_panel.py
 ==============================
 Analytics tab — two live PyQtGraph charts:
 
-  Left:  Grade Distribution — stacked / grouped bar chart
-         Fresh (green) / Processing (amber) / Cull (red) counts, updated on
-         every new grade event.
+  Left:  Grade Distribution — bar chart
+         Fresh (green) / Processing (amber) / Cull (red) accumulated counts.
 
-  Right: Throughput Over Time — rolling line chart (apples / min),
-         60-point window (~1 minute at 1-sample-per-second).
-
-Both charts share the app's Obsidian Slate dark theme and are designed for
-embedded use inside the QTabWidget bottom pane of CenterPanel.
+  Right: Throughput Over Time — rolling line chart.
+         True apples/min measured from a sliding 60-second event window.
+         Every grade event appends time.monotonic(); the 1-Hz sampler counts
+         how many timestamps fall within the last 60 s.
 
 Public API (called from MainWindow):
-  panel.record_grade(grade: str, apples_per_min: float) -> None
-  panel.reset()                                         -> None
+  panel.record_grade(grade: str) -> None   # no fake speed arg needed
+  panel.start() / stop() / reset()
 """
 
 from __future__ import annotations
 
+import time
 from collections import deque
 
 import numpy as np
@@ -279,15 +278,28 @@ class GradeBarChart(QWidget):
 
 class ThroughputLineChart(QWidget):
     """
-    Rolling 60-point line chart of apples/min throughput.
-    Records one sample per second via QTimer.
+    Rolling 60-point line chart of TRUE apples/min throughput.
+
+    Mechanism:
+      - Every grade event calls push_grade_event(), which appends
+        time.monotonic() to a deque of timestamps.
+      - A 1-Hz QTimer fires _sample_tick(), which counts timestamps
+        that fall within the last 60 seconds.  That count IS the
+        apples/min value — no conveyor-speed spinner involved.
+      - The 60-point history deque stores one sample per second,
+        giving a full 60-second view of the rate over time.
     """
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._current_apm: float = 0.0          # latest apples/min value
-        self._history:  deque[float] = deque([0.0] * _WINDOW_S, maxlen=_WINDOW_S)
-        self._running   = False
+        # Timestamps of grade events — maxlen keeps only last ~5 min
+        # of events so old ones are auto-dropped
+        self._grade_times: deque[float] = deque(maxlen=3600)
+        # Rolling history: one APM sample per second, 60 slots
+        self._history: deque[float] = deque([0.0] * _WINDOW_S, maxlen=_WINDOW_S)
+        # All-time peak (session)
+        self._peak_apm: float = 0.0
+        self._running = False
 
         self.setStyleSheet(
             f"background-color: {BG_CARD}; border-radius: 8px; border: none;"
@@ -331,7 +343,7 @@ class ThroughputLineChart(QWidget):
 
         root.addLayout(inner)
 
-        # 1-second sampler
+        # 1-Hz sampler
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._sample_tick)
 
@@ -415,13 +427,15 @@ class ThroughputLineChart(QWidget):
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def set_throughput(self, apples_per_min: float) -> None:
-        """Push the latest throughput value (call on each grade event)."""
-        self._current_apm = apples_per_min
-        self._live_lbl.setText(f"{apples_per_min:.0f} apple/min")
+    def push_grade_event(self) -> None:
+        """
+        Call once per committed grade.  Appends time.monotonic() so the
+        1-Hz sampler can count real events in the sliding 60-s window.
+        """
+        self._grade_times.append(time.monotonic())
 
     def start(self) -> None:
-        """Begin sampling; call when pipeline starts."""
+        """Begin 1-Hz sampling; call when pipeline starts."""
         self._running = True
         self._timer.start(_TICK_MS)
 
@@ -431,8 +445,9 @@ class ThroughputLineChart(QWidget):
 
     def reset(self) -> None:
         self.stop()
-        self._current_apm = 0.0
-        self._history     = deque([0.0] * _WINDOW_S, maxlen=_WINDOW_S)
+        self._grade_times.clear()
+        self._history   = deque([0.0] * _WINDOW_S, maxlen=_WINDOW_S)
+        self._peak_apm  = 0.0
         self._live_lbl.setText("-- apple/min")
         if _PG_OK and hasattr(self, "_curve"):
             self._curve.setData(np.zeros(_WINDOW_S))
@@ -445,20 +460,39 @@ class ThroughputLineChart(QWidget):
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _sample_tick(self) -> None:
-        """Append current throughput snapshot to the rolling history."""
-        self._history.append(self._current_apm)
+        """
+        Fires every 1 second.  Counts grade events in the last 60 s to get
+        the true rolling apples/min, then appends to the history buffer.
+        """
+        now    = time.monotonic()
+        cutoff = now - _WINDOW_S          # 60 seconds ago
+
+        # Drop timestamps older than 60 s from the left of the deque
+        while self._grade_times and self._grade_times[0] < cutoff:
+            self._grade_times.popleft()
+
+        # Count remaining = events in last 60 s = apples / min
+        apm = float(len(self._grade_times))
+
+        if apm > self._peak_apm:
+            self._peak_apm = apm
+
+        self._history.append(apm)
+        self._live_lbl.setText(f"{apm:.0f} apple/min")
         self._refresh_plot()
 
     def _refresh_plot(self) -> None:
         if not (_PG_OK and hasattr(self, "_curve")):
             return
 
-        data = np.array(self._history, dtype=float)
-        x    = np.arange(len(data))
+        data  = np.array(self._history, dtype=float)
+        x     = np.arange(len(data))
         self._curve.setData(x, data)
 
-        peak = float(np.max(data))
-        avg  = float(np.mean(data))
+        peak  = self._peak_apm
+        # Average only over non-zero samples to avoid diluting with idle seconds
+        nz    = data[data > 0]
+        avg   = float(np.mean(nz)) if len(nz) else 0.0
         y_max = max(peak * 1.2, 10.0)
 
         self._plot.setYRange(0, y_max, padding=0)
@@ -495,8 +529,8 @@ class AnalyticsPanel(QWidget):
     Contains two side-by-side live charts.
 
     Usage in MainWindow:
-        # On each grade:
-        self._center.analytics_panel.record_grade(grade, apples_per_min)
+        # On each committed grade (no speed arg — measured internally):
+        self._center.analytics_panel.record_grade(grade)
 
         # On pipeline start/stop:
         self._center.analytics_panel.start()
@@ -520,13 +554,17 @@ class AnalyticsPanel(QWidget):
 
     # ── Forwarded public API ──────────────────────────────────────────────────
 
-    def record_grade(self, grade: str, apples_per_min: float) -> None:
-        """Record one graded apple event.  Thread-safe (call from main thread)."""
+    def record_grade(self, grade: str) -> None:
+        """
+        Record one committed grade event.  Internally stamps time.monotonic()
+        so throughput is computed from real event timing — no conveyor-speed
+        spinner involved.
+        """
         self.grade_chart.record_grade(grade)
-        self.throughput_chart.set_throughput(apples_per_min)
+        self.throughput_chart.push_grade_event()
 
     def start(self) -> None:
-        """Start the 1-second throughput sampler (call when pipeline starts)."""
+        """Start the 1-Hz throughput sampler (call when pipeline starts)."""
         self.throughput_chart.start()
 
     def stop(self) -> None:

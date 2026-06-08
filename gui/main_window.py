@@ -710,7 +710,7 @@ class MainWindow(QMainWindow):
         # Metrics
         speed = self._left.conveyor_speed
         self._right.metrics_group.record_grade(speed)
-        self._center.analytics_panel.record_grade(grade, speed * 60)
+        self._center.analytics_panel.record_grade(grade)
 
         # Status bar
         self.statusBar().showMessage(
@@ -844,8 +844,7 @@ class MainWindow(QMainWindow):
             self._right.grade_summary.record(rec.class_name)
             speed = self._left.conveyor_speed
             self._right.metrics_group.record_grade(speed)
-            apm = speed * 60
-            self._center.analytics_panel.record_grade(rec.class_name, apm)
+            self._center.analytics_panel.record_grade(rec.class_name)
             self.statusBar().showMessage(
                 f"#{rec.seq_id}  Lane {rec.lane}  →  {rec.class_name}  "
                 f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
