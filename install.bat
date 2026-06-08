@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================
-:: install.bat  —  Infield Apple Sorting System
+:: install.bat  --  Infield Apple Sorting System
 ::
 :: Run this ONCE on a new machine, then use launch.bat every time.
 :: ============================================================
@@ -10,12 +10,11 @@ cd /d "%~dp0"
 echo.
 echo ============================================================
 echo   Infield Apple Sorting System - Setup
-
 echo ============================================================
 echo.
 
-:: ── Step 1: Find conda ───────────────────────────────────────
-echo [1/4] Looking for conda installation...
+:: -- Step 1: Find conda ---------------------------------------
+echo [1/5] Looking for conda installation...
 
 set CONDA_ACTIVATE=
 set CONDA_BASE=
@@ -50,16 +49,14 @@ exit /b 1
 :found_conda
 echo        Found conda at: %CONDA_BASE%
 
-:: ── Step 2: Create or update the conda environment ───────────
+:: -- Step 2: Create or update the conda environment ----------
 echo.
-echo [2/4] Setting up 'applegui' conda environment...
-echo        (First run may take 5-15 minutes to download packages)
+echo [2/5] Setting up 'applegui' conda environment...
+echo        (Installs all packages except PyTorch)
 echo.
 
-:: Initialize conda for use in this CMD session
 call "%CONDA_ACTIVATE%"
 
-:: Check if env already exists
 "%CONDA_EXE%" env list | findstr /C:"applegui" >nul 2>&1
 if not errorlevel 1 (
     echo        Environment already exists. Updating...
@@ -79,23 +76,51 @@ if errorlevel 1 (
 echo.
 echo        Environment ready.
 
-:: ── Step 3: Check / install eBUS SDK ────────────────────────────
+:: -- Step 3: Install PyTorch CUDA build ----------------------
+::
+:: torch is NOT in environment.yml because conda's pip subprocess
+:: uses --extra-index-url which still hits PyPI first and grabs
+:: the CPU-only build. Using --index-url here (primary index)
+:: forces pip to fetch ONLY from the PyTorch CUDA wheel server.
 echo.
-echo [3/4] Checking JAI eBUS SDK...
+echo [3/5] Installing PyTorch with CUDA support...
 
-:: First: check if ebus_python is already installed in the env
+:: Check if a CUDA-enabled torch is already present
+"%CONDA_EXE%" run -n applegui python -c "import torch; assert torch.cuda.is_available()" >nul 2>&1
+if not errorlevel 1 (
+    echo        PyTorch CUDA already installed and working. Skipping.
+    goto torch_done
+)
+
+echo        Downloading PyTorch CUDA 12.8 build (~2.5 GB)...
+echo        This will take several minutes - you will see a progress bar below.
+echo.
+"%CONDA_EXE%" run -n applegui pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+
+if errorlevel 1 (
+    echo.
+    echo   WARNING: PyTorch CUDA install failed.
+    echo   The app may fall back to CPU mode. Check your connection and retry.
+) else (
+    echo.
+    echo        PyTorch CUDA installed successfully.
+)
+:torch_done
+
+:: -- Step 4: Check / install eBUS SDK ------------------------
+echo.
+echo [4/5] Checking JAI eBUS SDK...
+
 "%CONDA_EXE%" run -n applegui pip show ebus_python >nul 2>&1
 if not errorlevel 1 (
-    echo        Already installed in applegui env. Nothing to do.
+    echo        Already installed. Nothing to do.
     goto ebus_done
 )
 
-:: Not installed — look for the .whl file and install it
 set EBUS_DIR=C:\Program Files\Common Files\Pleora\eBUS SDK\Python
 if exist "%EBUS_DIR%" (
     for %%f in ("%EBUS_DIR%\ebus_python*.whl") do (
         echo        Found wheel: %%~nxf
-        echo        Installing into applegui environment...
         "%CONDA_EXE%" run -n applegui pip install "%%f"
         if errorlevel 1 (
             echo        WARNING: eBUS install failed. App will use mock camera mode.
@@ -106,20 +131,19 @@ if exist "%EBUS_DIR%" (
     )
     echo        No .whl found in SDK folder. App will use mock camera mode.
 ) else (
-    echo        eBUS SDK folder not found. App will use mock camera mode.
-    echo        If you need live camera, install JAI eBUS SDK 6.x then re-run.
+    echo        eBUS SDK not found. App will use mock camera mode.
+    echo        Install JAI eBUS SDK 6.x and re-run if you need the live camera.
 )
 :ebus_done
 
-:: ── Step 4: Create a Desktop shortcut ─────────────────────────
+:: -- Step 5: Create Desktop shortcut -------------------------
 echo.
-echo [4/4] Creating Desktop shortcut...
+echo [5/5] Creating Desktop shortcut...
 
 set LAUNCH=%~dp0launch.bat
 set SHORTCUT=%USERPROFILE%\Desktop\Apple Sorter.lnk
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$s=(New-Object -COM WScript.Shell).CreateShortcut('%SHORTCUT%');$s.TargetPath='%LAUNCH%';$s.WorkingDirectory='%~dp0';$s.Save()"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=(New-Object -COM WScript.Shell).CreateShortcut('%SHORTCUT%');$s.TargetPath='%LAUNCH%';$s.WorkingDirectory='%~dp0';$s.Save()"
 
 if exist "%SHORTCUT%" (
     echo        Shortcut created on Desktop.
@@ -127,7 +151,7 @@ if exist "%SHORTCUT%" (
     echo        Could not create shortcut. Use launch.bat directly.
 )
 
-:: ── Done ──────────────────────────────────────────────────────
+:: -- Done ----------------------------------------------------
 echo.
 echo ============================================================
 echo   Setup complete!

@@ -23,12 +23,8 @@ dependencies:
     - pyqtgraph==0.14.0
 
     # AI / Vision
-    # RTX 5060 Ti (Blackwell, sm_120) requires PyTorch built with CUDA 12.8+
-    # The +cu128 suffix forces pip to fetch from the PyTorch wheel index,
-    # not the CPU-only build on PyPI.
-    - --extra-index-url https://download.pytorch.org/whl/cu128
-    - torch==2.7.0+cu128
-    - torchvision==0.22.0+cu128
+    # NOTE: torch and torchvision are installed separately by install.bat
+    # using --index-url to guarantee the CUDA build (not PyPI's CPU-only build).
     - opencv-python==4.13.0.92
     - numpy==2.2.6
 
