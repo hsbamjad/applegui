@@ -50,11 +50,15 @@ from gui.workers.tracker import AppleTracker as ConveyorTracker
 log = get_logger(__name__)
 
 
-def _load_config(path: str = "config/config.yaml") -> dict:
+def _load_config(path=None) -> dict:
+    """Load config.yaml — defaults to the canonical location via utils.paths."""
+    from utils.paths import CONFIG_PATH
+    resolved = Path(path) if path else CONFIG_PATH
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(resolved, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except FileNotFoundError:
+        log.warning("config.yaml not found at %s", resolved)
         return {}
 
 
@@ -517,7 +521,12 @@ class MainWindow(QMainWindow):
         self._left.sig_roi_preview.connect(self._on_roi_preview)
 
     def _post_init(self) -> None:
-        models_dir = Path(self._cfg.get("inference", {}).get("model_dir", "models/"))
+        from utils.paths import APP_ROOT, MODELS_DIR
+        raw_dir = self._cfg.get("inference", {}).get("model_dir", "models/")
+        # If config gives a relative path, resolve it against APP_ROOT
+        models_dir = Path(raw_dir) if Path(raw_dir).is_absolute() else APP_ROOT / raw_dir
+        if not models_dir.exists():
+            models_dir = MODELS_DIR  # fallback to canonical location
         models = [p.name for p in models_dir.glob("*.pt")] + \
                  [p.name for p in models_dir.glob("*.onnx")]
         self._left.populate_models(models)
@@ -607,8 +616,16 @@ class MainWindow(QMainWindow):
         size_cfg = self._cfg.get("sizing", {})
         if size_cfg.get("enabled", True):
             from core.sizing.accumulator import AppleSizeAccumulator
+            from utils.paths import APP_ROOT, MODELS_DIR
+            raw_size_path = size_cfg.get("model_path", "models/size_model.pkl")
+            size_model_path = (
+                Path(raw_size_path) if Path(raw_size_path).is_absolute()
+                else APP_ROOT / raw_size_path
+            )
+            if not size_model_path.exists():
+                size_model_path = MODELS_DIR / "size_model.pkl"
             self._size_acc = AppleSizeAccumulator(
-                model_path    = size_cfg.get("model_path", "models/size_model.pkl"),
+                model_path    = str(size_model_path),
                 min_frames    = size_cfg.get("min_frames", 4),
                 bg_angle_step = size_cfg.get("bg_angle_step", 10),
             )
@@ -736,7 +753,11 @@ class MainWindow(QMainWindow):
         # to config.yaml (e.g. swapping input_mode) take effect without restarting.
         fresh_cfg  = _load_config()
         inf_cfg    = fresh_cfg.get("inference", {})
-        models_dir = Path(inf_cfg.get("model_dir", "models/"))
+        from utils.paths import APP_ROOT, MODELS_DIR
+        raw_dir    = inf_cfg.get("model_dir", "models/")
+        models_dir = Path(raw_dir) if Path(raw_dir).is_absolute() else APP_ROOT / raw_dir
+        if not models_dir.exists():
+            models_dir = MODELS_DIR
         model_path = str(models_dir / name)
         input_mode = inf_cfg.get("input_mode", "RB-nir1")
 

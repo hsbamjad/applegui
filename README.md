@@ -29,7 +29,29 @@ A modular GUI application integrating a **JAI FSFE-3200T-10GE multispectral came
 | Processing | B | Submodule B fires — paddle deflects apple |
 | Cull | C | No command — apple falls through (default/safe) |
 
-## Quick Start
+## Deploying to a New Machine
+
+Two steps, then double-click every time after:
+
+**Step 1 — Run once (first-time setup):**
+```powershell
+# Right-click install.ps1 → "Run with PowerShell"
+.\install.ps1
+```
+This creates the `applegui` conda environment, installs the eBUS SDK if present,
+and puts an **Apple Sorter** shortcut on the Desktop.
+
+**Step 2 — Run the app:**
+```
+Double-click  launch.bat  (or the Desktop shortcut)
+```
+
+> Requires: Miniconda/Anaconda + NVIDIA driver ≥ 525.x on the target machine.
+> The JAI eBUS SDK is only needed for live camera mode — the app runs in mock mode without it.
+
+---
+
+## Developer Quick Start
 
 ```bash
 git clone https://github.com/<username>/apple_gui.git
