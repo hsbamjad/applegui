@@ -506,6 +506,10 @@ class MainWindow(QMainWindow):
         self._left.sig_roi_changed.connect(self._on_roi_changed)
         self._left.sig_roi_reset.connect(self._on_roi_reset)
         self._left.sig_roi_preview.connect(self._on_roi_preview)
+        # Analytics → right panel throughput sync
+        self._center.analytics_panel.throughput_chart.sig_throughput_updated.connect(
+            self._on_throughput_updated
+        )
 
     def _post_init(self) -> None:
         from utils.paths import APP_ROOT, MODELS_DIR
@@ -708,8 +712,7 @@ class MainWindow(QMainWindow):
         self._right.grade_summary.record(grade)
 
         # Metrics
-        speed = self._left.conveyor_speed
-        self._right.metrics_group.record_grade(speed)
+        self._right.metrics_group.record_grade()
         self._center.analytics_panel.record_grade(grade)
 
         # Status bar
@@ -842,8 +845,7 @@ class MainWindow(QMainWindow):
                 rec.seq_id, rec.lane, rec.class_name, rec.confidence, outlet, size_mm
             )
             self._right.grade_summary.record(rec.class_name)
-            speed = self._left.conveyor_speed
-            self._right.metrics_group.record_grade(speed)
+            self._right.metrics_group.record_grade()
             self._center.analytics_panel.record_grade(rec.class_name)
             self.statusBar().showMessage(
                 f"#{rec.seq_id}  Lane {rec.lane}  →  {rec.class_name}  "
@@ -961,6 +963,11 @@ class MainWindow(QMainWindow):
         self._infer_fps = fps
         self._right.metrics_group.set_infer_fps(fps)
         self.statusBar().showMessage(f"Inference: {fps:.1f} FPS")
+
+    @pyqtSlot(float)
+    def _on_throughput_updated(self, apm: float) -> None:
+        """Receives the true rolling APM from the analytics chart every second."""
+        self._right.metrics_group.set_throughput(apm)
 
     @pyqtSlot(str, bool)
     def _on_inference_status(self, msg: str, is_error: bool) -> None:

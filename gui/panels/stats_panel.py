@@ -332,12 +332,15 @@ class MetricsCard(QWidget):
         self._infer_fps.set_value("-- FPS")
         self._session.set_value("00:00:00")
 
-    def record_grade(self, apples_per_sec_lanes: int) -> None:
-        """Called each time a new grade is recorded."""
+    def record_grade(self) -> None:
+        """Called each time a new grade is recorded — only increments total count.
+        Throughput display is driven by set_throughput() from the real measurement."""
         self._total_n += 1
         self._total.set_value(str(self._total_n))
-        thr = apples_per_sec_lanes * 60
-        self._speed.set_value(f"{thr} apple/min")
+
+    def set_throughput(self, apm: float) -> None:
+        """Update THROUGHPUT display from the real timestamp-based APM value."""
+        self._speed.set_value(f"{apm:.0f} apple/min")
 
     def set_infer_fps(self, fps: float) -> None:
         """Update the INFER FPS metric from RealInferenceWorker throughput."""

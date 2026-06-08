@@ -25,7 +25,7 @@ import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QFrame, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
 try:
     import pyqtgraph as pg
@@ -288,7 +288,11 @@ class ThroughputLineChart(QWidget):
         apples/min value — no conveyor-speed spinner involved.
       - The 60-point history deque stores one sample per second,
         giving a full 60-second view of the rate over time.
+      - sig_throughput_updated(float) is emitted each tick so other
+        widgets (e.g. the right-panel MetricsCard) can stay in sync.
     """
+
+    sig_throughput_updated = pyqtSignal(float)  # emits true APM every second
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -479,6 +483,7 @@ class ThroughputLineChart(QWidget):
 
         self._history.append(apm)
         self._live_lbl.setText(f"{apm:.0f} apple/min")
+        self.sig_throughput_updated.emit(apm)   # → right panel MetricsCard
         self._refresh_plot()
 
     def _refresh_plot(self) -> None:
