@@ -40,7 +40,8 @@ from gui.styles import (
     TEXT_1, TEXT_2, TEXT_3, BORDER, CH_COLORS,
 )
 from gui.panels.camera_panel import LeftControlPanel
-from gui.panels.stats_panel  import RightStatsPanel
+from gui.panels.stats_panel      import RightStatsPanel
+from gui.panels.analytics_panel  import AnalyticsPanel
 from gui.widgets.image_display import MultiChannelDisplay
 from gui.workers.camera_worker import CameraWorker
 from gui.workers.video_worker  import VideoWorker
@@ -389,23 +390,9 @@ class CenterPanel(QWidget):
         self.model_input_panel = ModelInputPanel(input_mode=input_mode)
         self._tabs.addTab(self.model_input_panel, "◆  AI Model Input")
 
-        # ── Tab 1: Analytics (Phase 6 placeholder) ─────────────────────
-        analytics_widget = QWidget()
-        analytics_widget.setStyleSheet(f"background-color: {BG_BASE};")
-        analytics_layout = QHBoxLayout(analytics_widget)
-        analytics_layout.setContentsMargins(1, 1, 1, 1)
-        analytics_layout.setSpacing(1)
-        analytics_layout.addWidget(ChartPlaceholder(
-            "Grade Distribution",
-            "PyQtGraph live chart  ·  Phase 6",
-            ACCENT,
-        ))
-        analytics_layout.addWidget(ChartPlaceholder(
-            "Throughput Over Time",
-            "Apples / min rolling window  ·  Phase 6",
-            SUCCESS,
-        ))
-        self._tabs.addTab(analytics_widget, "⬛  Analytics")
+        # ── Tab 1: Analytics — live PyQtGraph charts ──────────────────
+        self.analytics_panel = AnalyticsPanel()
+        self._tabs.addTab(self.analytics_panel, "▣  Analytics")
 
         splitter.addWidget(self._tabs)
         splitter.setSizes([700, 300])
@@ -636,6 +623,7 @@ class MainWindow(QMainWindow):
         sg.set_status("AI Model", "idle",   "Waiting for model")
         sg.set_status("Sorter",   "idle",   "Simulation")
         self._right.metrics_group.start_session()
+        self._center.analytics_panel.start()
         self._total = 0
         self.statusBar().showMessage("Camera connected  ·  Load a model to start grading")
 
@@ -667,6 +655,7 @@ class MainWindow(QMainWindow):
         sg.set_status("Sorter",   "idle",    "Simulation")
 
         self._right.metrics_group.stop_session()
+        self._center.analytics_panel.stop()
         self.statusBar().showMessage("Pipeline stopped.")
 
     # ── Worker signals ────────────────────────────────────────────────────────
@@ -721,6 +710,7 @@ class MainWindow(QMainWindow):
         # Metrics
         speed = self._left.conveyor_speed
         self._right.metrics_group.record_grade(speed)
+        self._center.analytics_panel.record_grade(grade, speed * 60)
 
         # Status bar
         self.statusBar().showMessage(
@@ -748,6 +738,7 @@ class MainWindow(QMainWindow):
             self._right.grade_summary.reset()
             self._right.results_group.clear_results()
             self._right.metrics_group.reset()
+            self._center.analytics_panel.reset()
 
         # Re-read config from disk every time a model is loaded so that changes
         # to config.yaml (e.g. swapping input_mode) take effect without restarting.
@@ -840,7 +831,7 @@ class MainWindow(QMainWindow):
         if self._size_acc is not None:
             self._size_acc.update(result, active)
 
-        # ── Commit finished grades to stats panel ─────────────────
+        # ── Commit finished grades to stats panel + analytics ─────────
         for rec in graded:
             outlet   = self._OUTLET_MAP.get(rec.class_name, "?")
             size_mm  = (
@@ -851,7 +842,10 @@ class MainWindow(QMainWindow):
                 rec.seq_id, rec.lane, rec.class_name, rec.confidence, outlet, size_mm
             )
             self._right.grade_summary.record(rec.class_name)
-            self._right.metrics_group.record_grade(self._left.conveyor_speed)
+            speed = self._left.conveyor_speed
+            self._right.metrics_group.record_grade(speed)
+            apm = speed * 60
+            self._center.analytics_panel.record_grade(rec.class_name, apm)
             self.statusBar().showMessage(
                 f"#{rec.seq_id}  Lane {rec.lane}  →  {rec.class_name}  "
                 f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
