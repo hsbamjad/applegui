@@ -78,29 +78,31 @@ echo        Environment ready.
 
 :: -- Step 3: Install PyTorch CUDA build ----------------------
 ::
-:: torch is NOT in environment.yml because conda's pip subprocess
-:: uses --extra-index-url which still hits PyPI first and grabs
-:: the CPU-only build. Using --index-url here (primary index)
-:: forces pip to fetch ONLY from the PyTorch CUDA wheel server.
+:: pip's "already satisfied" check ignores the +cpu vs +cu128 local
+:: version suffix, so it skips the install even when a CPU build is
+:: present. We explicitly check for a CPU build and uninstall it first.
 echo.
 echo [3/5] Installing PyTorch with CUDA support...
 
-:: Check if a CUDA-enabled torch is already present
-"%CONDA_EXE%" run -n applegui python -c "import torch; assert torch.cuda.is_available()" >nul 2>&1
+:: Check if the installed torch is already a CUDA build (not +cpu)
+"%CONDA_EXE%" run -n applegui python -c "import torch; v=torch.__version__; assert '+cpu' not in v, v" >nul 2>&1
 if not errorlevel 1 (
-    echo        PyTorch CUDA already installed and working. Skipping.
+    echo        PyTorch CUDA build already installed. Skipping.
     goto torch_done
 )
 
+:: CPU build (or no torch) detected -- uninstall it first
+echo        CPU-only torch detected. Removing it before installing CUDA build...
+"%CONDA_EXE%" run -n applegui pip uninstall torch torchvision torchaudio -y >nul 2>&1
+
 echo        Downloading PyTorch CUDA 12.8 build (~2.5 GB)...
-echo        This will take several minutes - you will see a progress bar below.
+echo        You will see a progress bar below. This takes a few minutes.
 echo.
 "%CONDA_EXE%" run -n applegui pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
 if errorlevel 1 (
     echo.
-    echo   WARNING: PyTorch CUDA install failed.
-    echo   The app may fall back to CPU mode. Check your connection and retry.
+    echo   WARNING: PyTorch CUDA install failed. Check your connection and retry.
 ) else (
     echo.
     echo        PyTorch CUDA installed successfully.
