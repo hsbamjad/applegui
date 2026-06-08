@@ -61,7 +61,7 @@ The app starts in Mock Mode by default. No hardware is required to run it.
 ## Developer Setup
 
 ```bash
-git clone https://github.com/<username>/apple_gui.git
+git clone https://github.com/hsbamjad/applegui.git
 cd apple_gui
 conda env create -f environment.yml
 conda activate applegui
