@@ -197,3 +197,16 @@ sizing:
   enabled: true
   model_path: "models/size_model.pkl"
   min_frames: 4       # Discard tracks shorter than this (too few frames for reliable estimate)
+
+  # Diameter computation angle resolution (background thread — zero FPS impact).
+  # Controls max_width() rotation count = 180 / bg_angle_step.
+  #
+  # Tradeoff:
+  #   bg_angle_step=90  →  2 rotations  (fastest, ~1.4ms/apple, ~0mm error on circular apples)
+  #   bg_angle_step=10  → 18 rotations  (default, ~3.4ms/apple, matches offline quality)
+  #   bg_angle_step= 5  → 36 rotations  (exactly offline pipeline, ~7ms/apple)
+  #
+  # Note: for near-circular apples all three give identical results.
+  # Only matters for partially-occluded or non-circular apples.
+  # Background thread handles the cost regardless of choice.
+  bg_angle_step: 10

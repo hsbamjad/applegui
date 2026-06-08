@@ -608,8 +608,9 @@ class MainWindow(QMainWindow):
         if size_cfg.get("enabled", True):
             from core.sizing.accumulator import AppleSizeAccumulator
             self._size_acc = AppleSizeAccumulator(
-                model_path = size_cfg.get("model_path", "models/size_model.pkl"),
-                min_frames = size_cfg.get("min_frames", 4),
+                model_path    = size_cfg.get("model_path", "models/size_model.pkl"),
+                min_frames    = size_cfg.get("min_frames", 4),
+                bg_angle_step = size_cfg.get("bg_angle_step", 10),
             )
         else:
             self._size_acc = None
