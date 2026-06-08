@@ -39,11 +39,12 @@ from gui.styles import (
     ACCENT, ACCENT_HV, ACCENT_DK, SUCCESS, WARNING, DANGER,
     TEXT_1, TEXT_2, TEXT_3, BORDER, CH_COLORS,
 )
-from gui.panels.camera_panel import LeftControlPanel
-from gui.panels.stats_panel  import RightStatsPanel
-from gui.widgets.image_display import MultiChannelDisplay
-from gui.workers.camera_worker import CameraWorker
-from gui.workers.video_worker  import VideoWorker
+from gui.panels.camera_panel    import LeftControlPanel
+from gui.panels.stats_panel     import RightStatsPanel
+from gui.panels.analytics_panel import AnalyticsPanel
+from gui.widgets.image_display  import MultiChannelDisplay
+from gui.workers.camera_worker  import CameraWorker
+from gui.workers.video_worker   import VideoWorker
 from gui.workers.inference_worker import MockInferenceWorker, RealInferenceWorker
 from gui.workers.tracker import AppleTracker as ConveyorTracker
 
@@ -389,23 +390,9 @@ class CenterPanel(QWidget):
         self.model_input_panel = ModelInputPanel(input_mode=input_mode)
         self._tabs.addTab(self.model_input_panel, "◆  AI Model Input")
 
-        # ── Tab 1: Analytics (Phase 6 placeholder) ─────────────────────
-        analytics_widget = QWidget()
-        analytics_widget.setStyleSheet(f"background-color: {BG_BASE};")
-        analytics_layout = QHBoxLayout(analytics_widget)
-        analytics_layout.setContentsMargins(1, 1, 1, 1)
-        analytics_layout.setSpacing(1)
-        analytics_layout.addWidget(ChartPlaceholder(
-            "Grade Distribution",
-            "PyQtGraph live chart  ·  Phase 6",
-            ACCENT,
-        ))
-        analytics_layout.addWidget(ChartPlaceholder(
-            "Throughput Over Time",
-            "Apples / min rolling window  ·  Phase 6",
-            SUCCESS,
-        ))
-        self._tabs.addTab(analytics_widget, "⬛  Analytics")
+        # ── Tab 1: Analytics — live PyQtGraph charts ───────────────────
+        self.analytics_panel = AnalyticsPanel()
+        self._tabs.addTab(self.analytics_panel, "📊  Analytics")
 
         splitter.addWidget(self._tabs)
         splitter.setSizes([700, 300])
@@ -658,6 +645,7 @@ class MainWindow(QMainWindow):
         self._left.set_camera_connected(False)
         self._center.channel_display.reset_all()
         self._center.model_input_panel.reset()
+        self._center.analytics_panel.reset()
         self._last_input_frame = None
         self._total_graded = 0
 
@@ -851,7 +839,10 @@ class MainWindow(QMainWindow):
                 rec.seq_id, rec.lane, rec.class_name, rec.confidence, outlet, size_mm
             )
             self._right.grade_summary.record(rec.class_name)
-            self._right.metrics_group.record_grade(self._left.conveyor_speed)
+            speed = self._left.conveyor_speed
+            self._right.metrics_group.record_grade(speed)
+            apples_per_min = speed * 3 * 60  # lanes * 60s
+            self._center.analytics_panel.push_grade(rec.class_name, apples_per_min)
             self.statusBar().showMessage(
                 f"#{rec.seq_id}  Lane {rec.lane}  →  {rec.class_name}  "
                 f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
