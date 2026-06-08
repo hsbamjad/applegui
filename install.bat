@@ -11,7 +11,7 @@ cd /d "%~dp0"
 echo.
 echo ============================================================
 echo   Infield Apple Sorting System - Setup
-echo   Michigan State University  ^|  ASABE AIM26  ^|  2026
+
 echo ============================================================
 echo.
 
