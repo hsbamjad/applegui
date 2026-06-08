@@ -5,7 +5,6 @@ Michigan State University
 
 [![Python](https://img.shields.io/badge/Python-3.10-blue)](https://python.org)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green)](https://pypi.org/project/PyQt6/)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-In%20Development-orange)]()
 
 ---
