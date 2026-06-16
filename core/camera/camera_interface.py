@@ -687,6 +687,12 @@ class JAICamera:
             return False
         try:
             nm    = self._device.GetParameters()
+            # Some firmware versions require this enable flag before FPS can be written.
+            # Returns None if the parameter doesn't exist (e.g. Shuttle PC unit) — safe to skip.
+            enable = nm.GetBoolean("AcquisitionFrameRateEnable")
+            if enable:
+                enable.SetValue(True)
+
             param = nm.GetFloat("AcquisitionFrameRate")
             if param is None:
                 log.error("set_fps: AcquisitionFrameRate not found on device")
