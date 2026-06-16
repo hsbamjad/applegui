@@ -158,9 +158,9 @@ class SorterController:
             self._queue.append(cmd)
             self._queue.sort(key=lambda c: c.fire_at_ns)
 
-        log.debug(
+        log.info(
             f"Scheduled: apple={apple_id} lane={lane} grade={grade} "
-            f"digit={digit} delay={delay_ms:.1f}ms"
+            f"digit={digit} delay={delay_ms:.1f}ms conf={confidence:.2f}"
         )
 
     def set_conveyor_speed(self, speed_m_s: float) -> None:
@@ -264,7 +264,7 @@ class SorterController:
         if self._serial and self._serial.is_open:
             try:
                 self._serial.write(cmd.encode("ascii"))
-                log.debug(f"SERIAL TX: {cmd.strip()}")
+                log.info(f"SERIAL TX: '{cmd.strip()}'  (lane={cmd.strip()[0] if len(cmd.strip())==3 else '?'})") 
             except Exception as exc:
                 log.error(f"Serial write error: {exc}")
                 self._stats["missed"] += 1
