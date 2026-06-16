@@ -44,11 +44,13 @@ class SortOutlet(Enum):
     C = "C"   # Cull — default, no command needed
 
 
-# Grade → Outlet mapping (matches physical wiring)
-GRADE_TO_OUTLET: dict[str, SortOutlet] = {
-    "Fresh":      SortOutlet.A,
-    "Processing": SortOutlet.B,
-    "Cull":       SortOutlet.C,
+# Grade → action digit mapping (confirmed with hardware person + Arduino sketch)
+# Arduino doAction(): 1=Fresh, 2=Processing, 3=Cull
+# Command format: "XYZ\n" — 3 chars, one per lane, 0 = no action for that lane
+GRADE_TO_DIGIT: dict[str, int] = {
+    "Fresh":      1,
+    "Processing": 2,
+    "Cull":       3,
 }
 
 
@@ -61,7 +63,7 @@ class GradeCommand:
     confidence:     float        # 0.0–1.0 from model
     graded_at_ns:   int          # time.time_ns() when grade was decided
     fire_at_ns:     int          # time.time_ns() when command must be sent
-    outlet:         SortOutlet   # Computed from grade
+    digit:          int          # Action digit for Arduino: 1/2/3
 
 
 class SorterController:
@@ -133,12 +135,14 @@ class SorterController:
         confidence       : Model confidence (0.0–1.0)
         conveyor_speed_m_s : Live speed override (m/s). Uses config default if None.
         """
-        speed = conveyor_speed_m_s or self._conveyor_speed
-        delay_ms = (self._camera_to_gate_m / speed) * 1000
+        speed    = conveyor_speed_m_s or self._conveyor_speed
+        # camera_to_gate_m is 0.0 — Arduino handles timing via NIR sensor.
+        # delay_ms kept for flexibility; with 0.0 it fires immediately.
+        delay_ms = (self._camera_to_gate_m / speed) * 1000 if speed > 0 else 0.0
 
         now_ns   = time.time_ns()
         fire_ns  = now_ns + int(delay_ms * 1_000_000)
-        outlet   = GRADE_TO_OUTLET.get(grade, SortOutlet.C)
+        digit    = GRADE_TO_DIGIT.get(grade, 3)   # unknown grade defaults to Cull
 
         cmd = GradeCommand(
             apple_id     = apple_id,
@@ -147,7 +151,7 @@ class SorterController:
             confidence   = confidence,
             graded_at_ns = now_ns,
             fire_at_ns   = fire_ns,
-            outlet       = outlet,
+            digit        = digit,
         )
 
         with self._lock:
@@ -162,6 +166,22 @@ class SorterController:
     def set_conveyor_speed(self, speed_m_s: float) -> None:
         """Update the live conveyor speed used for timing calculations."""
         self._conveyor_speed = speed_m_s
+
+    def set_mode(self, mode: str) -> None:
+        """
+        Switch between 'simulation' and 'serial' at runtime.
+        Called by the GUI Sorter toggle button.
+        """
+        if mode == self._mode:
+            return
+        if mode == "serial":
+            self._connect_serial()
+        elif mode == "simulation":
+            if self._serial and self._serial.is_open:
+                self._serial.close()
+                log.info("Serial port closed — switching to simulation mode.")
+        self._mode = mode
+        log.info(f"SorterController mode → '{self._mode}'")
 
     @property
     def stats(self) -> dict:
@@ -190,23 +210,32 @@ class SorterController:
             time.sleep(0.001)   # 1ms polling resolution
 
     def _fire(self, cmd: GradeCommand) -> None:
-        """Execute the sort command for one apple."""
+        """
+        Build and send the 3-char Arduino command for one graded apple.
+
+        Format: "XYZ\n"
+          X = Lane 1 action digit (0 if not this lane)
+          Y = Lane 2 action digit (0 if not this lane)
+          Z = Lane 3 action digit (0 if not this lane)
+
+        Digits: 1=Fresh  2=Processing  3=Cull  0=no action (not queued by Arduino)
+        """
         self._stats["total"] += 1
         grade_key = cmd.grade.lower()
         if grade_key in self._stats:
             self._stats[grade_key] += 1
 
-        if cmd.outlet == SortOutlet.C:
-            # Cull: no command needed — apple falls to Outlet C by default
-            log.debug(f"Apple {cmd.apple_id} → Cull (Outlet C) — no command sent.")
-            return
-
-        serial_cmd = f"{cmd.lane}{cmd.outlet.value}\n"
+        # Build 3-char command: digit in the correct lane slot, zeros elsewhere
+        digits = ['0', '0', '0']
+        digits[cmd.lane - 1] = str(cmd.digit)
+        serial_cmd = "".join(digits) + "\n"
 
         if self._mode == "simulation":
-            log.info(f"[SIM] FIRE: lane={cmd.lane} outlet={cmd.outlet.value} "
-                     f"cmd='{serial_cmd.strip()}' apple={cmd.apple_id} "
-                     f"grade={cmd.grade} conf={cmd.confidence:.2f}")
+            log.info(
+                f"[SIM] FIRE: apple={cmd.apple_id} lane={cmd.lane} "
+                f"grade={cmd.grade} digit={cmd.digit} cmd='{serial_cmd.strip()}' "
+                f"conf={cmd.confidence:.2f}"
+            )
         else:
             self._send_serial(serial_cmd)
 
