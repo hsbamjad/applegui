@@ -21,6 +21,7 @@ Threading:
 from __future__ import annotations
 
 import time
+import os
 from core.log import get_logger
 import threading
 from dataclasses import dataclass
@@ -30,6 +31,39 @@ import numpy as np
 import cv2
 
 log = get_logger(__name__)
+
+
+# ── eBUS DLL path registration ─────────────────────────────────────────────────
+# Python 3.8+ on Windows uses a restricted DLL search path.
+# JAI/Pleora eBUS SDK installs DLLs under Program Files but does NOT add them
+# to the Python DLL search path automatically.
+# os.add_dll_directory() registers these paths so the _ebus_python64.pyd
+# extension can load its dependent DLLs.
+
+_EBUS_DLL_PATHS = [
+    r"C:\Program Files\JAI\eBUS SDK",
+    r"C:\Program Files\JAI\eBUS SDK\lib",
+    r"C:\Program Files\JAI\eBUS SDK\bin",
+    r"C:\Program Files\Pleora Technologies\eBUS SDK",
+    r"C:\Program Files\Pleora Technologies\eBUS SDK\Libraries",
+    r"C:\Program Files (x86)\JAI\eBUS SDK",
+    r"C:\Program Files (x86)\Pleora Technologies\eBUS SDK",
+]
+
+def _register_ebus_dll_paths() -> None:
+    """Register known JAI/Pleora SDK DLL directories with Python's DLL loader."""
+    registered = []
+    for p in _EBUS_DLL_PATHS:
+        if os.path.isdir(p):
+            try:
+                os.add_dll_directory(p)
+                registered.append(p)
+            except Exception:
+                pass
+    if registered:
+        log.debug("eBUS DLL paths registered: %s", registered)
+
+_register_ebus_dll_paths()
 
 
 @dataclass
@@ -207,8 +241,16 @@ class JAICamera:
     def connect(self) -> bool:
         try:
             import eBUS as eb
-        except ImportError:
-            log.error("eBUS SDK not installed — cannot connect to JAI camera")
+        except ImportError as e:
+            e_str = str(e)
+            if "DLL load failed" in e_str or "specified procedure" in e_str:
+                log.error(
+                    "eBUS DLL mismatch — wheel version doesn't match installed JAI SDK DLLs.\n"
+                    "  Fix: install the matching eBUS SDK runtime (same version as the .whl).\n"
+                    "  Error: %s", e_str
+                )
+            else:
+                log.error("eBUS SDK not installed — cannot connect to JAI camera. Error: %s", e_str)
             return False
 
         jai_cfg    = self._cfg.get("jai", {})
