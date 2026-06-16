@@ -65,9 +65,10 @@ class AppleTracker:
         max_recover_dist:     int   = 80,
         min_count_dist_frac:  float = 0.12,    # proximity buffer: 12 % of travel axis
         count_memory_frames:  int   = 40,
-        cull_weight:          float = 1.5,
+        cull_weight:          float = 1.0,     # no amplification — Cull competes on equal terms
         hit_threshold:        int   = 20,
         cull_ratio_threshold: float = 0.55,
+        min_vote_conf:        float = 0.20,    # frames below this confidence don't vote
     ) -> None:
         assert orientation in ORIENTATIONS, \
             f"orientation must be one of {ORIENTATIONS}, got '{orientation}'"
@@ -85,6 +86,7 @@ class AppleTracker:
         self._cull_weight         = cull_weight
         self._hit_threshold       = hit_threshold
         self._cull_ratio_thresh   = cull_ratio_threshold
+        self._min_vote_conf       = min_vote_conf
 
         self._history:  dict[int, dict] = defaultdict(self._new_history)
         self._lost:     dict[int, dict] = {}
@@ -219,9 +221,12 @@ class AppleTracker:
             hist["last_frame"]  = self._frame_no
             hist["lane"]        = lane
 
-            # Weighted vote accumulation
-            weight = self._cull_weight if cls_id == 2 else 1.0
-            hist["votes"][cls_id] += conf * weight
+            # Weighted vote accumulation — ignore very-low-confidence frames
+            # (background noise classified as Cull at conf < min_vote_conf would
+            # otherwise accumulate hundreds of votes and drown out real grades).
+            if conf >= self._min_vote_conf:
+                weight = self._cull_weight if cls_id == 2 else 1.0
+                hist["votes"][cls_id] += conf * weight
             if cls_id == 2 and conf > 0.6:
                 hist["hit_cull"] += 1
 
