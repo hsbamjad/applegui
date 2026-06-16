@@ -1384,6 +1384,12 @@ class LeftControlPanel(QWidget):
         )
         self._refresh_btn()
 
+    def set_sorter_enabled(self, enabled: bool) -> None:
+        """Programmatically set the Enable Sorting checkbox without re-emitting the signal."""
+        self._chk_sorter.blockSignals(True)
+        self._chk_sorter.setChecked(enabled)
+        self._chk_sorter.blockSignals(False)
+
     def set_model_loaded(self, name: str) -> None:
         self._model_status.set_state("online", "Loaded")
         self._lbl_model_detail.setText(f"▶  {name}")

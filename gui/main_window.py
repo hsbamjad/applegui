@@ -646,6 +646,8 @@ class MainWindow(QMainWindow):
         if self._sorter:
             self._sorter.stop()
             self._sorter = None
+        self._sorting_enabled = False
+        self._left.set_sorter_enabled(False)   # uncheck toggle on disconnect
         if self._infer_w:
             self._infer_w.stop()
             self._infer_w = None
@@ -1011,11 +1013,19 @@ class MainWindow(QMainWindow):
         self._sorting_enabled = enabled
         if self._sorter:
             self._sorter.set_mode("serial" if enabled else "simulation")
-        self._right.status_group.set_status(
-            "Sorter",
-            "online" if enabled else "idle",
-            "Active (Serial)" if enabled else "Simulation",
-        )
+            actual_mode = self._sorter._mode   # may differ from requested if connect failed
+        else:
+            actual_mode = "simulation"
+
+        if not enabled:
+            state, label = "idle", "Simulation"
+        elif actual_mode == "serial":
+            state, label = "online", "Active (Serial)"
+        else:
+            # requested serial but fell back — warn the user
+            state, label = "warning", "Simulation (no Arduino)"
+
+        self._right.status_group.set_status("Sorter", state, label)
 
     @pyqtSlot(bool)
     def _on_logging_toggle(self, enabled: bool) -> None:
