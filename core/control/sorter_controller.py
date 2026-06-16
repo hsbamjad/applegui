@@ -171,17 +171,22 @@ class SorterController:
         """
         Switch between 'simulation' and 'serial' at runtime.
         Called by the GUI Sorter toggle button.
+        Note: if serial connect fails, _connect_serial() falls back to
+        simulation internally — self._mode will reflect the actual state.
         """
         if mode == self._mode:
             return
         if mode == "serial":
+            # _connect_serial() sets self._mode='simulation' on failure (fallback)
+            # so do NOT overwrite self._mode here unconditionally.
             self._connect_serial()
         elif mode == "simulation":
             if self._serial and self._serial.is_open:
                 self._serial.close()
-                log.info("Serial port closed — switching to simulation mode.")
-        self._mode = mode
-        log.info(f"SorterController mode → '{self._mode}'")
+                log.info("Serial port closed — reverting to simulation mode.")
+            self._mode = "simulation"
+        # Log the mode we actually ended up in (may differ from requested if connect failed)
+        log.info(f"SorterController active mode → '{self._mode}'")
 
     @property
     def stats(self) -> dict:
