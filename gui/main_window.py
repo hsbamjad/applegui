@@ -867,14 +867,22 @@ class MainWindow(QMainWindow):
                 f"#{rec.seq_id}  Lane {rec.lane}  →  {rec.class_name}  "
                 f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
             )
-            # ── Send sort command to Arduino ──────────────────────────
+            # -- Send sort command to Arduino --
+            # Layer 3 defence: require min conf before firing physical actuator.
+            _MIN_DISPATCH_CONF = 0.30
             if self._sorter and self._sorting_enabled:
-                self._sorter.schedule(
-                    apple_id   = rec.seq_id,
-                    lane       = rec.lane,
-                    grade      = rec.class_name,
-                    confidence = rec.confidence,
-                )
+                if rec.confidence >= _MIN_DISPATCH_CONF:
+                    self._sorter.schedule(
+                        apple_id   = rec.seq_id,
+                        lane       = rec.lane,
+                        grade      = rec.class_name,
+                        confidence = rec.confidence,
+                    )
+                else:
+                    log.warning(
+                        "Grade #%d rejected -- conf=%.2f < %.2f minimum",
+                        rec.seq_id, rec.confidence, _MIN_DISPATCH_CONF,
+                    )
 
         # ── Annotate all 3 channels with same boxes ───────────────
         ann_ch1 = self._annotate_tracked(self._last_ch1, active, show_label=False)

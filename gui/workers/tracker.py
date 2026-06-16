@@ -60,7 +60,7 @@ class AppleTracker:
         exit_frac:            float = 0.85,    # exit band centre (fraction of travel axis)
         band_half_frac:       float = 0.025,   # ± 2.5 % of travel axis
         entry_frac:           float = 0.35,    # first detection must be < this (travel axis)
-        min_frames:           int   = 5,
+        min_frames:           int   = 25,      # raised from 5: ~2s at 15 FPS before committing
         max_lost_frames:      int   = 10,
         max_recover_dist:     int   = 80,
         min_count_dist_frac:  float = 0.12,    # proximity buffer: 12 % of travel axis
@@ -69,6 +69,7 @@ class AppleTracker:
         hit_threshold:        int   = 20,
         cull_ratio_threshold: float = 0.55,
         min_vote_conf:        float = 0.20,    # frames below this confidence don't vote
+        min_det_conf:         float = 0.35,    # YOLO boxes below this are ignored entirely
     ) -> None:
         assert orientation in ORIENTATIONS, \
             f"orientation must be one of {ORIENTATIONS}, got '{orientation}'"
@@ -87,6 +88,7 @@ class AppleTracker:
         self._hit_threshold       = hit_threshold
         self._cull_ratio_thresh   = cull_ratio_threshold
         self._min_vote_conf       = min_vote_conf
+        self._min_det_conf        = min_det_conf
 
         self._history:  dict[int, dict] = defaultdict(self._new_history)
         self._lost:     dict[int, dict] = {}
@@ -177,6 +179,17 @@ class AppleTracker:
         cls_ids   = boxes.cls.astype(int).tolist()
         xyxys     = boxes.xyxy.tolist()
         confs     = boxes.conf.tolist()
+
+        # ── Layer 1 defence: drop low-confidence YOLO boxes entirely ──────────
+        # ByteTrack can pass sub-threshold boxes through secondary association;
+        # we discard anything below min_det_conf before it touches our state.
+        filtered = [
+            (t, c, x, f) for t, c, x, f in zip(track_ids, cls_ids, xyxys, confs)
+            if f >= self._min_det_conf
+        ]
+        if not filtered:
+            return active, graded
+        track_ids, cls_ids, xyxys, confs = map(list, zip(*filtered))
 
         # ── Step 1: Lost-track recovery for brand-new YOLO IDs ───────────────
         for i, tid in enumerate(track_ids):
