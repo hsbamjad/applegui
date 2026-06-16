@@ -686,23 +686,38 @@ class JAICamera:
             log.warning("set_fps: no device connected")
             return False
         try:
-            log.debug("set_fps: writing %.1f FPS to device", fps)
-            nm = self._device.GetParameters()
-            # Must enable frame rate control before setting value
-            enable = nm.GetBoolean("AcquisitionFrameRateEnable")
-            if enable:
-                enable.SetValue(True)
+            nm    = self._device.GetParameters()
             param = nm.GetFloat("AcquisitionFrameRate")
             if param is None:
-                log.error("set_fps: AcquisitionFrameRate parameter not found on device")
+                log.error("set_fps: AcquisitionFrameRate not found on device")
                 return False
-            r = param.SetValue(float(fps))
+
+            # Clamp requested FPS to camera's actual min/max.
+            # The FS-3200T in MultiSource mode has a firmware-enforced max FPS
+            # (typically ~27.6 at full 2048x1536 with 3 simultaneous sources).
+            # Requesting above this results in GENERIC_ERROR.
+            try:
+                _, min_fps = param.GetMin()
+                _, max_fps = param.GetMax()
+                clamped = float(max(float(min_fps), min(float(max_fps), fps)))
+                if abs(clamped - fps) > 0.01:
+                    log.warning(
+                        "set_fps: %.1f FPS outside camera range [%.2f, %.2f] — clamping to %.2f",
+                        fps, float(min_fps), float(max_fps), clamped,
+                    )
+                fps = clamped
+            except Exception as ce:
+                log.debug("set_fps: could not read min/max — %s", ce)
+
+            r = param.SetValue(fps)
             if r.IsOK():
                 _, actual = param.GetValue()
-                log.info("Camera: AcquisitionFrameRate = %.1f FPS (max exposure now %.0f us)",
-                         actual, 1_000_000 / max(actual, 1))
+                log.info(
+                    "Camera: AcquisitionFrameRate = %.2f FPS (max exposure now %.0f µs)",
+                    float(actual), 1_000_000 / max(float(actual), 1),
+                )
                 return True
-            log.error("set_fps: camera rejected %.1f FPS: %s", fps, r.GetCodeString())
+            log.error("set_fps: camera rejected %.1f FPS: %s", fps, str(r.GetCodeString()))
             return False
         except Exception as e:
             log.error("set_fps exception: %s", e)
