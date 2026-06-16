@@ -540,11 +540,11 @@ class LeftControlPanel(QWidget):
         vlayout.addWidget(_SectionHeader("AI Model"))
         vlayout.addWidget(self._model_card())
 
-        vlayout.addWidget(_SectionHeader("Conveyor"))
-        vlayout.addWidget(self._conveyor_card())
-
         vlayout.addWidget(_SectionHeader("Sorter"))
         vlayout.addWidget(self._sorter_card())
+
+        vlayout.addWidget(_SectionHeader("Conveyor"))
+        vlayout.addWidget(self._conveyor_card())
 
         vlayout.addWidget(_SectionHeader("Data Logging"))
         vlayout.addWidget(self._logging_card())
@@ -1288,7 +1288,7 @@ class LeftControlPanel(QWidget):
         self._combo_sorter = QComboBox()
         self._combo_sorter.addItems([
             "Simulation  (log only)",
-            "Serial — Arduino (COM3)",
+            "Serial - Arduino (COM3)",
         ])
         self._combo_sorter.setToolTip(
             "Simulation: commands logged, no hardware fired\n"

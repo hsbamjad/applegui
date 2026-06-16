@@ -419,6 +419,7 @@ class MainWindow(QMainWindow):
         self._infer_w: RealInferenceWorker | None        = None
         self._tracker:  ConveyorTracker | None            = None
         self._sorter:   SorterController | None           = None
+        self._sorting_enabled: bool                       = False   # gated by Enable Sorting toggle
         self._size_acc = None   # AppleSizeAccumulator — created in _start_pipeline
         self._infer_fps: float = 0.0
         self._loading_model_name: str = ""
@@ -865,7 +866,7 @@ class MainWindow(QMainWindow):
                 f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
             )
             # ── Send sort command to Arduino ──────────────────────────
-            if self._sorter:
+            if self._sorter and self._sorting_enabled:
                 self._sorter.schedule(
                     apple_id   = rec.seq_id,
                     lane       = rec.lane,
@@ -1007,6 +1008,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot(bool)
     def _on_sorter_toggle(self, enabled: bool) -> None:
         """Switch SorterController between simulation and live serial mode."""
+        self._sorting_enabled = enabled
         if self._sorter:
             self._sorter.set_mode("serial" if enabled else "simulation")
         self._right.status_group.set_status(
