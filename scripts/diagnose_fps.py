@@ -1,10 +1,10 @@
 """
-scripts/diagnose_fps.py
-=======================
-Connects to the JAI camera and lists all FPS / frame-rate related
-parameters with their names, types, access mode, and current values.
+scripts/diagnose_fps.py  (v2)
+=============================
+Connects to the JAI camera and probes all FPS-related parameters.
+Also tries writing AcquisitionFrameRate directly.
 
-Run:
+Run (close GUI first):
     conda activate applegui
     python scripts/diagnose_fps.py
 """
@@ -12,7 +12,7 @@ Run:
 import os
 import sys
 
-# ── Register eBUS DLL paths ────────────────────────────────────────────────
+# ── Register eBUS DLL paths ───────────────────────────────────────────────
 _DLL_PATHS = [
     r"C:\Program Files\Common Files\Pleora\eBUS SDK",
     r"C:\Program Files\JAI\eBUS SDK",
@@ -32,10 +32,9 @@ except ImportError as e:
     print(f"ERROR: Cannot import eBUS — {e}")
     sys.exit(1)
 
-print("eBUS imported OK")
-print()
+print("eBUS imported OK\n")
 
-# ── Discover camera ───────────────────────────────────────────────────────
+# ── Discover & connect ────────────────────────────────────────────────────
 print("Scanning network for JAI camera...")
 sys_obj = eb.PvSystem()
 sys_obj.Find()
@@ -45,95 +44,117 @@ for i in range(sys_obj.GetInterfaceCount()):
     iface = sys_obj.GetInterface(i)
     for j in range(iface.GetDeviceCount()):
         dev_info = iface.GetDeviceInfo(j)
-        print(f"  Found: {dev_info.GetDisplayID()}  IP={dev_info.GetIPAddress()}  MAC={dev_info.GetMACAddress()}")
+        print(f"  Found: {dev_info.GetDisplayID()}  IP={dev_info.GetIPAddress()}")
         if connection_id is None:
             connection_id = dev_info.GetConnectionID()
 
 if connection_id is None:
-    print("ERROR: No camera found on network.")
+    print("ERROR: No camera found.")
     sys.exit(1)
 
-# ── Connect ───────────────────────────────────────────────────────────────
-print(f"\nConnecting to camera...")
+print("\nConnecting...")
 result, device = eb.PvDevice.CreateAndConnect(connection_id)
 if device is None:
-    print(f"ERROR: Could not connect — {result.GetCodeString()}")
+    print(f"ERROR: {result.GetCodeString()}")
     sys.exit(1)
-print("Connected OK")
-print()
+print("Connected OK\n")
 
 nm = device.GetParameters()
 
-# ── Check specific FPS-related parameter names ────────────────────────────
-fps_param_names = [
+
+def safe_read(param):
+    """Try every known way to read a parameter value string."""
+    for method in ("GetValue", "GetValueString"):
+        try:
+            ret = getattr(param, method)()
+            if isinstance(ret, tuple):
+                _, v = ret
+                return str(v)
+            return str(ret)
+        except Exception:
+            continue
+    return "?"
+
+
+# ── Probe specific parameter names ────────────────────────────────────────
+print("=" * 65)
+print("FPS PARAMETER PROBE")
+print("=" * 65)
+candidates = [
     "AcquisitionFrameRate",
     "AcquisitionFrameRateEnable",
     "AcquisitionFrameRateEnabled",
     "AcquisitionFrameRateMode",
+    "AcquisitionFrameRateControlMode",
     "AcquisitionFrameRateAuto",
     "ResultingFrameRate",
+    "ResultingAcquisitionFrameRate",
     "ResultingFramePeriod",
+    "TriggerMode",
+    "TriggerSelector",
 ]
-
-print("=" * 60)
-print("FPS PARAMETER PROBE")
-print("=" * 60)
-for name in fps_param_names:
+for name in candidates:
     param = nm.Get(name)
-    if param is None:
-        print(f"  {name:45s}  NOT FOUND")
-    else:
-        try:
-            access = param.GetAccessMode()
-            type_str = type(param).__name__
-            val_str = "?"
-            try:
-                r, v = param.GetValue()
-                val_str = str(v) if r.IsOK() else f"read error: {r.GetCodeString()}"
-            except Exception:
-                try:
-                    r, v = param.GetValueString()
-                    val_str = v if r.IsOK() else "?"
-                except Exception:
-                    pass
-            print(f"  {name:45s}  FOUND  type={type_str}  val={val_str}")
-        except Exception as ex:
-            print(f"  {name:45s}  FOUND  (error reading: {ex})")
+    status = f"FOUND   val={safe_read(param)}" if param is not None else "NOT FOUND"
+    print(f"  {name:50s}  {status}")
 
-# ── Dump ALL parameters containing "frame" or "rate" ─────────────────────
+# ── Write test ────────────────────────────────────────────────────────────
 print()
-print("=" * 60)
-print("ALL PARAMETERS CONTAINING 'frame' OR 'rate' (case-insensitive)")
-print("=" * 60)
-try:
-    count_result, total = nm.GetCount()
-    for idx in range(total):
-        result, param = nm.Get(idx)
-        if param is None:
-            continue
+print("=" * 65)
+print("WRITE TEST — try SetValue(30.0) on AcquisitionFrameRate")
+print("=" * 65)
+param = nm.GetFloat("AcquisitionFrameRate")
+if param is None:
+    print("  AcquisitionFrameRate (float) not found")
+else:
+    try:
+        mn_ret = param.GetMin()
+        mx_ret = param.GetMax()
+        mn = mn_ret[1] if isinstance(mn_ret, tuple) else mn_ret
+        mx = mx_ret[1] if isinstance(mx_ret, tuple) else mx_ret
+        print(f"  Min={mn}  Max={mx}")
+    except Exception as e:
+        print(f"  Could not read min/max: {e}")
+    try:
+        r = param.SetValue(30.0)
         try:
-            r, pname = param.GetName()
-            if not r.IsOK():
+            ok = r.IsOK()
+            code = r.GetCodeString()
+        except Exception:
+            ok = False
+            code = str(r)
+        print(f"  SetValue(30.0) → {'OK' if ok else 'FAILED: ' + code}")
+    except Exception as ex:
+        print(f"  Exception: {ex}")
+
+# ── Enumerate all params with 'frame' or 'rate' ───────────────────────────
+print()
+print("=" * 65)
+print("ALL PARAMS CONTAINING 'frame' OR 'rate'")
+print("=" * 65)
+try:
+    total = nm.GetCount()
+    if isinstance(total, tuple):
+        total = total[1]
+    found = 0
+    for idx in range(int(total)):
+        try:
+            param = nm.Get(idx)
+            if param is None:
                 continue
-            if "frame" in pname.lower() or "rate" in pname.lower():
-                type_str = type(param).__name__
-                val_str = "?"
-                try:
-                    rv, v = param.GetValue()
-                    val_str = str(v) if rv.IsOK() else "n/a"
-                except Exception:
-                    try:
-                        rv, v = param.GetValueString()
-                        val_str = v if rv.IsOK() else "n/a"
-                    except Exception:
-                        pass
-                print(f"  {pname:50s}  {type_str:25s}  val={val_str}")
+            name_ret = param.GetName()
+            pname = name_ret[1] if isinstance(name_ret, tuple) else name_ret
+            if "frame" in str(pname).lower() or "rate" in str(pname).lower():
+                val = safe_read(param)
+                print(f"  {str(pname):55s}  val={val}")
+                found += 1
         except Exception:
             continue
+    print(f"\n  Total found: {found}")
 except Exception as ex:
-    print(f"  (Could not enumerate all parameters: {ex})")
+    print(f"  Enumeration failed: {ex}")
 
 print()
 device.Disconnect()
 eb.PvDevice.Free(device)
-print("Done. Paste the full output above.")
+print("Done.")
