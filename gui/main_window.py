@@ -47,6 +47,7 @@ from gui.workers.camera_worker import CameraWorker
 from gui.workers.video_worker  import VideoWorker
 from gui.workers.inference_worker import MockInferenceWorker, RealInferenceWorker
 from gui.workers.tracker import AppleTracker as ConveyorTracker
+from core.control import SorterController
 
 log = get_logger(__name__)
 
@@ -417,6 +418,7 @@ class MainWindow(QMainWindow):
         self._inf_w:   MockInferenceWorker | None        = None
         self._infer_w: RealInferenceWorker | None        = None
         self._tracker:  ConveyorTracker | None            = None
+        self._sorter:   SorterController | None           = None
         self._size_acc = None   # AppleSizeAccumulator — created in _start_pipeline
         self._infer_fps: float = 0.0
         self._loading_model_name: str = ""
@@ -631,7 +633,18 @@ class MainWindow(QMainWindow):
         self._total = 0
         self.statusBar().showMessage("Camera connected  ·  Load a model to start grading")
 
+        # ── Sorter controller ─────────────────────────────────────
+        self._sorter = SorterController(
+            sorter_cfg   = self._cfg.get("sorter", {}),
+            conveyor_cfg = self._cfg.get("conveyor", {}),
+        )
+        self._sorter.start()
+        log.info("SorterController started (mode=%s)", self._cfg.get("sorter", {}).get("mode", "simulation"))
+
     def _stop_pipeline(self) -> None:
+        if self._sorter:
+            self._sorter.stop()
+            self._sorter = None
         if self._infer_w:
             self._infer_w.stop()
             self._infer_w = None
@@ -851,6 +864,14 @@ class MainWindow(QMainWindow):
                 f"#{rec.seq_id}  Lane {rec.lane}  →  {rec.class_name}  "
                 f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
             )
+            # ── Send sort command to Arduino ──────────────────────────
+            if self._sorter:
+                self._sorter.schedule(
+                    apple_id   = rec.seq_id,
+                    lane       = rec.lane,
+                    grade      = rec.class_name,
+                    confidence = rec.confidence,
+                )
 
         # ── Annotate all 3 channels with same boxes ───────────────
         ann_ch1 = self._annotate_tracked(self._last_ch1, active, show_label=False)
@@ -985,10 +1006,13 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(bool)
     def _on_sorter_toggle(self, enabled: bool) -> None:
+        """Switch SorterController between simulation and live serial mode."""
+        if self._sorter:
+            self._sorter.set_mode("serial" if enabled else "simulation")
         self._right.status_group.set_status(
             "Sorter",
             "online" if enabled else "idle",
-            "Active" if enabled else "Simulation",
+            "Active (Serial)" if enabled else "Simulation",
         )
 
     @pyqtSlot(bool)
@@ -1005,6 +1029,8 @@ class MainWindow(QMainWindow):
             self._inf_w.set_speed(speed)
         if self._tracker:
             self._tracker.set_conveyor_speed(speed)
+        if self._sorter:
+            self._sorter.set_conveyor_speed(speed)
         self.statusBar().showMessage(
             f"Speed updated: {speed} apple/s/lane  "
             f"({speed * 3 * 60} apple/min total)"
