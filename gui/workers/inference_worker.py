@@ -15,6 +15,7 @@ from __future__ import annotations
 import queue
 import random
 import time
+from pathlib import Path
 from core.log import get_logger
 
 import cv2
@@ -270,9 +271,14 @@ class RealInferenceWorker(QThread):
             # YOLO tracking with persist=True keeps internal tracker state
             # across frames — far more stable than detect+external-tracker
             try:
+                # Use our custom bytetrack.yaml which raises track_low_thresh
+                # from 0.1 to 0.35 to eliminate conveyor-belt background noise.
+                _tracker_cfg = str(
+                    Path(__file__).parent.parent.parent / "bytetrack.yaml"
+                )
                 results = model.track(
                     source   = frame,
-                    tracker  = "bytetrack.yaml",
+                    tracker  = _tracker_cfg,
                     persist  = True,
                     conf     = self._conf,
                     iou      = self._iou,

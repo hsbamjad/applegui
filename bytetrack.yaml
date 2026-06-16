@@ -1,0 +1,33 @@
+# bytetrack.yaml — Custom ByteTrack config for Apple Sorting System
+#
+# Key changes from defaults:
+#   track_low_thresh  : 0.1 → 0.35  (stop accepting background noise at low confidence)
+#   track_buffer      : 30  → 15    (tracks die faster when apple leaves frame)
+#   new_track_thresh  : 0.6 → 0.55  (slightly easier to start a new track)
+#
+# Why: The conveyor belt texture generates continuous low-confidence (~0.1–0.2)
+# Cull detections. With the default 0.1 low threshold, ByteTrack keeps these tracks
+# alive indefinitely (400+ frames), polluting the grade vote with Cull noise.
+# Raising to 0.35 eliminates background noise while keeping real apple detections.
+
+tracker_type: bytetrack
+
+# Detection threshold for "high confidence" bucket — used for new track creation
+# and primary association. Matches our YOLO inference conf threshold.
+track_high_thresh: 0.50
+
+# Detection threshold for "low confidence" bucket — used only for secondary
+# association with already-active tracks. Raised from default 0.1 to 0.35 to
+# eliminate conveyor belt background false positives.
+track_low_thresh: 0.35
+
+# Minimum confidence required to start a brand-new track.
+new_track_thresh: 0.55
+
+# Number of frames a track survives without any detection before being deleted.
+# Reduced from 30 to 15: at ~15 FPS this is 1 second — enough to bridge
+# momentary occlusions but not keep phantom tracks alive across the whole FOV.
+track_buffer: 15
+
+# IOU threshold for track-detection association matching.
+match_thresh: 0.80
