@@ -160,7 +160,7 @@ class SorterController:
 
         log.debug(
             f"Scheduled: apple={apple_id} lane={lane} grade={grade} "
-            f"outlet={outlet.value} delay={delay_ms:.1f}ms"
+            f"digit={digit} delay={delay_ms:.1f}ms"
         )
 
     def set_conveyor_speed(self, speed_m_s: float) -> None:
