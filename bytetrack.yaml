@@ -31,3 +31,7 @@ track_buffer: 15
 
 # IOU threshold for track-detection association matching.
 match_thresh: 0.80
+
+# Fuse detection score with track IoU score during association.
+# False = use IoU only (more stable for slow-moving objects on conveyor).
+fuse_score: False
