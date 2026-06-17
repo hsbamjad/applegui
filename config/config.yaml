@@ -158,9 +158,8 @@ inference:
     hit_threshold: 25           # was 20 — need more high-conf Cull hits to force override
     cull_ratio_threshold: 0.65  # was 0.55 — need clear majority to force Cull
     peak_conf_override: 0.50    # if any non-Cull class peaks here, Cull cannot be forced
-    overwhelming_cull_threshold: 60  # hit_cull above this bypasses peak_conf_override
-                                     # A genuine Fresh/Processing apple won't reach 60+ high-conf
-                                     # Cull hits on a screw conveyor — apple 2 had hit_cull=125
+    overwhelming_cull_threshold: 40   # hit_cull above this bypasses peak_conf_override
+                                     # A genuine Fresh apple will not have 40+ high-conf Cull hits
 
 # ══════════════════════════════════════════════════════════════
 # DATA LOGGING

@@ -71,7 +71,7 @@ class AppleTracker:
         min_vote_conf:              float = 0.20,
         min_det_conf:               float = 0.35,
         peak_conf_override:         float = 0.50,
-        overwhelming_cull_threshold: int  = 60,   # hit_cull above this bypasses peak protection
+        overwhelming_cull_threshold: int  = 40,   # hit_cull above this bypasses peak protection
     ) -> None:
         assert orientation in ORIENTATIONS, \
             f"orientation must be one of {ORIENTATIONS}, got '{orientation}'"
