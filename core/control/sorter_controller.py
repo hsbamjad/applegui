@@ -99,25 +99,34 @@ class SorterController:
         self._thread: Optional[threading.Thread] = None
 
         # Statistics
-        self._stats = {"total": 0, "fresh": 0, "processing": 0, "cull": 0, "missed": 0}
+        self._stats = {"total": 0, "fresh": 0, "processing": 0, "cull": 0,
+                       "missed": 0, "confirmed": 0}
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        """Connect to Arduino (if serial mode) and start dispatch thread."""
+        """Connect to Arduino (if serial mode) and start dispatch + reader threads."""
         if self._mode == "serial":
             self._connect_serial()
 
         self._running = True
-        self._thread  = threading.Thread(target=self._dispatch_loop, daemon=True)
+        self._thread = threading.Thread(target=self._dispatch_loop, daemon=True)
         self._thread.start()
+
+        # Dedicated reader thread — logs every 'OK' the Arduino sends back
+        # (Arduino fires 'OK\r\n' via Serial.println("OK") each time a solenoid fires)
+        self._reader_thread = threading.Thread(target=self._read_arduino_loop, daemon=True)
+        self._reader_thread.start()
+
         log.info(f"SorterController started in '{self._mode}' mode.")
 
     def stop(self) -> None:
-        """Stop dispatch thread and close serial connection."""
+        """Stop dispatch/reader threads and close serial connection."""
         self._running = False
         if self._thread:
             self._thread.join(timeout=2.0)
+        if hasattr(self, '_reader_thread') and self._reader_thread:
+            self._reader_thread.join(timeout=1.0)
         if self._serial and self._serial.is_open:
             self._serial.close()
         log.info("SorterController stopped.")
@@ -219,6 +228,43 @@ class SorterController:
                 self._fire(cmd)
 
             time.sleep(0.001)   # 1ms polling resolution
+
+    def _read_arduino_loop(self) -> None:
+        """
+        Dedicated background thread: reads Arduino serial responses.
+
+        The Arduino firmware calls Serial.println("OK") each time it detects
+        an apple on the NIR gate sensor and fires a solenoid via doAction().
+        Logging these responses confirms end-to-end hardware execution.
+
+        If you see SERIAL TX but never ARDUINO RX: 'OK', the apple is NOT
+        triggering the NIR gate sensor (sensor mis-positioned, sensitivity
+        issue, or apple passes before command is queued).
+        """
+        while self._running:
+            if self._mode != "serial" or not self._serial or not self._serial.is_open:
+                time.sleep(0.05)
+                continue
+            try:
+                if self._serial.in_waiting > 0:
+                    raw = self._serial.readline()
+                    line = raw.decode("ascii", errors="ignore").strip()
+                    if line:
+                        if line == "OK":
+                            self._stats["confirmed"] += 1
+                            log.info(
+                                f"ARDUINO RX: 'OK'  "
+                                f"(confirmed={self._stats['confirmed']}  "
+                                f"total_fired={self._stats['total']})"
+                            )
+                        else:
+                            # Log any other Arduino output (debug messages, errors)
+                            log.debug(f"ARDUINO RX (raw): '{line}'")
+                else:
+                    time.sleep(0.002)
+            except Exception as exc:
+                log.warning(f"Arduino serial read error: {exc}")
+                time.sleep(0.1)
 
     def _fire(self, cmd: GradeCommand) -> None:
         """
