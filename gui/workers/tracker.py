@@ -375,7 +375,7 @@ class AppleTracker:
                 hit_cull_v   = hist["hit_cull"]
 
                 # Mirror the same guards used at commit time
-                overwhelming_v    = hit_cull_v >= self._overwhelming_cull_threshold
+                overwhelming_v    = hit_cull_v >= self._overwhelming_cull
                 non_cull_peak_v   = max(
                     (hist["peak_conf"].get(k, 0.0) for k in [0, 1]), default=0.0
                 )
