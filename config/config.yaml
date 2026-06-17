@@ -23,15 +23,15 @@ camera:
     loop: true          # Loop videos when end is reached
     fps: 30             # Playback frame rate
     videos:
-      ch1: "D:/HA/apple_gui/videos/Source0/G1/G1.mp4"
-      ch2: "D:/HA/apple_gui/videos/Source1/G1/G1.avi"
-      ch3: "D:/HA/apple_gui/videos/Source2/G1/G1.avi"
+      ch1: "D:/HA/applegui/videos/Source0/G1/G1.mp4"
+      ch2: "D:/HA/applegui/videos/Source1/G1/G1.avi"
+      ch3: "D:/HA/applegui/videos/Source2/G1/G1.avi"
 
   jai:
     # Confirmed hardware (Shuttle PC) — from camera_probe_jai.py output
-    ip:          "169.254.100.252"   # Update if DHCP changes
-    mac:         "00:0c:df:0a:b8:e9"
-    serial:      "U320484"
+    ip:          "169.254.101.209"   # Update if DHCP changes
+    mac:         "00:0c:df:0a:f3:f8"
+    serial:      "U320500"
     fps:         30                  # Confirmed: 30.0 FPS stable at full res
     exposure_us: 9229                # Confirmed default (ExposureAuto=Off)
     trigger_mode: "Off"             # Free-run (encoder trigger = future)
@@ -91,7 +91,7 @@ conveyor:
 # Control path: PC → USB/Serial → Arduino → Solenoid valve → Air cylinder → Paddle
 # ══════════════════════════════════════════════════════════════
 sorter:
-  mode: "simulation"    # Options: "simulation" | "serial" (Arduino)
+  mode: "serial"    # Options: "simulation" | "serial" (Arduino)
 
   # Grade → outlet mapping (DO NOT CHANGE without physical verification)
   grade_outlet_map:
