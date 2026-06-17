@@ -296,7 +296,13 @@ class SorterController:
         if self._serial and self._serial.is_open:
             try:
                 self._serial.write(cmd.encode("ascii"))
-                log.info(f"SERIAL TX: '{cmd.strip()}'  (lane={cmd.strip()[0] if len(cmd.strip())==3 else '?'})") 
+                # Find the lane carrying a non-zero digit (1-indexed)
+                stripped = cmd.strip()
+                lane_num = next(
+                    (i + 1 for i, ch in enumerate(stripped) if ch != '0'),
+                    '?'
+                )
+                log.info(f"SERIAL TX: '{stripped}'  (lane={lane_num})")
             except Exception as exc:
                 log.error(f"Serial write error: {exc}")
                 self._stats["missed"] += 1

@@ -55,42 +55,44 @@ class AppleTracker:
 
     def __init__(
         self,
-        n_lanes:              int   = 3,
-        orientation:          str   = "BT",
-        exit_frac:            float = 0.85,
-        band_half_frac:       float = 0.025,
-        entry_frac:           float = 0.35,
-        min_frames:           int   = 25,
-        max_lost_frames:      int   = 10,
-        max_recover_dist:     int   = 80,
-        min_count_dist_frac:  float = 0.12,
-        count_memory_frames:  int   = 40,
-        cull_weight:          float = 1.0,
-        hit_threshold:        int   = 20,
-        cull_ratio_threshold: float = 0.65,   # raised: needs 65% majority to force Cull
-        min_vote_conf:        float = 0.20,
-        min_det_conf:         float = 0.35,
-        peak_conf_override:   float = 0.50,   # if any non-Cull class peaks here, Cull cannot be forced
+        n_lanes:                    int   = 3,
+        orientation:                str   = "BT",
+        exit_frac:                  float = 0.85,
+        band_half_frac:             float = 0.025,
+        entry_frac:                 float = 0.35,
+        min_frames:                 int   = 25,
+        max_lost_frames:            int   = 10,
+        max_recover_dist:           int   = 80,
+        min_count_dist_frac:        float = 0.12,
+        count_memory_frames:        int   = 40,
+        cull_weight:                float = 1.0,
+        hit_threshold:              int   = 20,
+        cull_ratio_threshold:       float = 0.65,
+        min_vote_conf:              float = 0.20,
+        min_det_conf:               float = 0.35,
+        peak_conf_override:         float = 0.50,
+        overwhelming_cull_threshold: int  = 60,   # hit_cull above this bypasses peak protection
     ) -> None:
         assert orientation in ORIENTATIONS, \
             f"orientation must be one of {ORIENTATIONS}, got '{orientation}'"
 
-        self._n_lanes             = n_lanes
-        self._ori                 = orientation
-        self._exit_frac           = exit_frac
-        self._band_half_frac      = band_half_frac
-        self._entry_frac          = entry_frac
-        self._min_frames          = min_frames
-        self._max_lost            = max_lost_frames
-        self._max_recover         = max_recover_dist
-        self._min_count_dist_frac = min_count_dist_frac
-        self._count_mem           = count_memory_frames
-        self._cull_weight         = cull_weight
-        self._hit_threshold       = hit_threshold
-        self._cull_ratio_thresh   = cull_ratio_threshold
-        self._min_vote_conf       = min_vote_conf
-        self._min_det_conf        = min_det_conf
-        self._peak_conf_override  = peak_conf_override
+        self._n_lanes                  = n_lanes
+        self._ori                      = orientation
+        self._exit_frac                = exit_frac
+        self._band_half_frac           = band_half_frac
+        self._entry_frac               = entry_frac
+        self._min_frames               = min_frames
+        self._max_lost                 = max_lost_frames
+        self._max_recover              = max_recover_dist
+        self._min_count_dist_frac      = min_count_dist_frac
+        self._count_mem                = count_memory_frames
+        self._cull_weight              = cull_weight
+        self._hit_threshold            = hit_threshold
+        self._cull_ratio_thresh        = cull_ratio_threshold
+        self._min_vote_conf            = min_vote_conf
+        self._min_det_conf             = min_det_conf
+        self._peak_conf_override       = peak_conf_override
+        self._overwhelming_cull        = overwhelming_cull_threshold
 
         self._history:  dict[int, dict] = defaultdict(self._new_history)
         self._lost:     dict[int, dict] = {}
@@ -305,18 +307,31 @@ class AppleTracker:
                     ) if hist["peak_conf"] else 0.0
                     clearly_non_cull = max_non_cull_peak >= self._peak_conf_override
 
+                    # Overwhelming cull: hit_cull so high it can only be a cull apple.
+                    # Lifts peak_conf_override protection — a genuine Fresh/Processing apple
+                    # will never accumulate this many high-conf Cull hits on a screw conveyor.
+                    overwhelming_cull = hist["hit_cull"] >= self._overwhelming_cull
+
                     force_cull = (
                         cull_ratio >= self._cull_ratio_thresh
                         or hist["hit_cull"] >= self._hit_threshold
-                    ) and not clearly_non_cull   # peak override blocks BOTH paths
+                    ) and (not clearly_non_cull or overwhelming_cull)
+
+                    # Non-cull vote split for diagnostics
+                    non_cull = {k: v for k, v in hist["votes"].items() if k != 2}
+                    non_cull_str = "  ".join(
+                        f"{self.CLASS_NAMES[k]}={v/total:.2f}"
+                        for k, v in sorted(non_cull.items(), key=lambda x: -x[1])
+                    ) if non_cull else "(none)"
 
                     log.info(
                         "Vote commit: apple=%s lane=%d  cull_ratio=%.2f  hit_cull=%d  "
-                        "peak_non_cull=%.2f  clearly_non_cull=%s  force_cull=%s",
+                        "overwhelming=%s  peak_non_cull=%.2f  clearly_non_cull=%s  "
+                        "force_cull=%s  | non_cull split: %s",
                         seq_id, lane, cull_ratio, hist["hit_cull"],
-                        max_non_cull_peak, clearly_non_cull, force_cull,
+                        overwhelming_cull, max_non_cull_peak,
+                        clearly_non_cull, force_cull, non_cull_str,
                     )
-                    non_cull = {k: v for k, v in hist["votes"].items() if k != 2}
 
                     if force_cull:
                         best_cls, best_conf = 2, cull_ratio
