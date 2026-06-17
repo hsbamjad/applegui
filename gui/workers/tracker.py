@@ -364,11 +364,36 @@ class AppleTracker:
                     log.info("Grade #%d  lane=%d  %s  conf=%.2f  frames=%d",
                              seq_id, lane, cls_name, best_conf, hist["frames_seen"])
 
-            # Live display grade
+            # Live display grade — mirrors commit force_cull logic so on-screen label
+            # always matches what the committed grade will be.
+            # Previously used raw max(votes) which showed "Fresh" even while Cull
+            # evidence was accumulating, creating a confusing mismatch.
             if hist["votes"]:
-                disp_cls  = max(hist["votes"], key=hist["votes"].get)
-                total_v   = sum(hist["votes"].values())
-                disp_conf = hist["votes"][disp_cls] / total_v
+                total_v      = sum(hist["votes"].values())
+                cull_v       = hist["votes"].get(2, 0)
+                cull_ratio_v = cull_v / total_v if total_v > 0 else 0.0
+                hit_cull_v   = hist["hit_cull"]
+
+                # Mirror the same guards used at commit time
+                overwhelming_v    = hit_cull_v >= self._overwhelming_cull_threshold
+                non_cull_peak_v   = max(
+                    (hist["peak_conf"].get(k, 0.0) for k in [0, 1]), default=0.0
+                )
+                clearly_non_cull_v = non_cull_peak_v >= self._peak_conf_override
+                force_cull_v = (
+                    (cull_ratio_v >= self._cull_ratio_threshold
+                     or hit_cull_v >= self._hit_threshold)
+                    and (not clearly_non_cull_v or overwhelming_v)
+                )
+
+                if force_cull_v or overwhelming_v:
+                    # Cull evidence is strong enough that commit will override to Cull —
+                    # show Cull on screen now so the label matches the final grade.
+                    disp_cls  = 2
+                    disp_conf = cull_ratio_v
+                else:
+                    disp_cls  = max(hist["votes"], key=hist["votes"].get)
+                    disp_conf = hist["votes"][disp_cls] / total_v
             else:
                 disp_cls, disp_conf = cls_id, conf
 
