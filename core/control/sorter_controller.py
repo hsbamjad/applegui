@@ -48,15 +48,15 @@ class SortOutlet(Enum):
 # Arduino doAction() cases:
 #   case 1 → LOW,  LOW   (resting / default → Cull outlet)  ← NOT used
 #   case 2 → HIGH, HIGH  → Processing outlet
-#   case 3 → LOW,  HIGH  → Fresh outlet
+#   case 3 → LOW,  HIGH  → Cull outlet       ← confirmed physical wiring
 #   digit 0 → Arduino guard (actionInput > 0) skips it → NO solenoid fired
 #
-# Cull = default (no command) → apple falls to Cull outlet without any solenoid.
-# Sending ANY non-zero digit would fire a valve, so Cull must use 0.
+# Fresh = default (no command) → apple falls to Fresh outlet without any solenoid.
+# Sending digit=3 fires the Cull solenoid; digit=2 fires the Processing solenoid.
 GRADE_TO_DIGIT: dict[str, int] = {
-    "Fresh":      3,   # case 3 → LOW, HIGH  → Fresh outlet
+    "Fresh":      0,   # digit 0 → Arduino ignores → no solenoid → default Fresh outlet
     "Processing": 2,   # case 2 → HIGH, HIGH → Processing outlet
-    "Cull":       0,   # digit 0 → Arduino ignores → no solenoid → default Cull outlet
+    "Cull":       3,   # case 3 → LOW,  HIGH → Cull outlet
 }
 
 
@@ -275,28 +275,28 @@ class SorterController:
           Y = Lane 2 action digit (0 if not this lane)
           Z = Lane 3 action digit (0 if not this lane)
 
-        Digits: 3=Fresh  2=Processing  0=Cull (no-op — Arduino skips digit 0)
+        Digits: 0=Fresh (no-op)  2=Processing  3=Cull
 
-        Cull apples require NO serial command.  The Arduino's queue guard
+        Fresh apples require NO serial command.  The Arduino's queue guard
         ``if (actionInput > 0 && actionInput <= 3)`` silently discards digit 0,
         so the solenoid is never fired and the apple falls to the default
-        Cull outlet.  Sending any non-zero digit would actuate a valve.
+        Fresh outlet.  digit=3 fires the Cull solenoid; digit=2 fires Processing.
         """
         self._stats["total"] += 1
         grade_key = cmd.grade.lower()
         if grade_key in self._stats:
             self._stats[grade_key] += 1
 
-        # Cull → no command — apple falls to default outlet, no solenoid fires.
+        # Fresh → no command — apple falls to default Fresh outlet, no solenoid fires.
         if cmd.digit == 0:
             if self._mode == "simulation":
                 log.info(
-                    f"[SIM] CULL (no-op): apple={cmd.apple_id} lane={cmd.lane} "
+                    f"[SIM] FRESH (no-op): apple={cmd.apple_id} lane={cmd.lane} "
                     f"conf={cmd.confidence:.2f}  — no serial command sent"
                 )
             else:
                 log.info(
-                    f"CULL (no-op): apple={cmd.apple_id} lane={cmd.lane} "
+                    f"FRESH (no-op): apple={cmd.apple_id} lane={cmd.lane} "
                     f"— no serial command sent"
                 )
             return
