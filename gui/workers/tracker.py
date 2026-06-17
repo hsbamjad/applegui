@@ -381,7 +381,7 @@ class AppleTracker:
                 )
                 clearly_non_cull_v = non_cull_peak_v >= self._peak_conf_override
                 force_cull_v = (
-                    (cull_ratio_v >= self._cull_ratio_threshold
+                    (cull_ratio_v >= self._cull_ratio_thresh
                      or hit_cull_v >= self._hit_threshold)
                     and (not clearly_non_cull_v or overwhelming_v)
                 )
