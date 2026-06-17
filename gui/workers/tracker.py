@@ -307,24 +307,26 @@ class AppleTracker:
 
                     force_cull = (
                         cull_ratio >= self._cull_ratio_thresh
-                        and not clearly_non_cull   # peak override blocks force_cull
-                    ) or hist["hit_cull"] >= self._hit_threshold
+                        or hist["hit_cull"] >= self._hit_threshold
+                    ) and not clearly_non_cull   # peak override blocks BOTH paths
+
+                    log.info(
+                        "Vote commit: apple=%s lane=%d  cull_ratio=%.2f  hit_cull=%d  "
+                        "peak_non_cull=%.2f  clearly_non_cull=%s  force_cull=%s",
+                        seq_id, lane, cull_ratio, hist["hit_cull"],
+                        max_non_cull_peak, clearly_non_cull, force_cull,
+                    )
+                    non_cull = {k: v for k, v in hist["votes"].items() if k != 2}
 
                     if force_cull:
                         best_cls, best_conf = 2, cull_ratio
                     else:
-                        non_cull = {k: v for k, v in hist["votes"].items() if k != 2}
                         if non_cull:
                             best_cls  = max(non_cull, key=non_cull.get)
                             best_conf = non_cull[best_cls] / total
                         else:
                             best_cls  = max(hist["votes"], key=hist["votes"].get)
                             best_conf = hist["votes"][best_cls] / total
-
-                    log.debug(
-                        "Vote commit: cull_ratio=%.2f peak_non_cull=%.2f clearly_non_cull=%s force_cull=%s",
-                        cull_ratio, max_non_cull_peak, clearly_non_cull, force_cull,
-                    )
 
                     hist["committed"] = True
                     cls_name = (self.CLASS_NAMES[best_cls]
