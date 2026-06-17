@@ -869,9 +869,14 @@ class MainWindow(QMainWindow):
             )
             # -- Send sort command to Arduino --
             # Layer 3 defence: require min conf before firing physical actuator.
-            _MIN_DISPATCH_CONF = 0.28   # slightly below 0.30 to absorb float precision (0.2999... passes)
+            # Dispatch gate: Fresh/Processing need minimum confidence to avoid
+            # false actuations. Cull is ALWAYS dispatched regardless of confidence
+            # because Cull = safe default — if sorter stays in last position (Fresh/
+            # Processing), the Cull apple ends up in the wrong bin.
+            _MIN_DISPATCH_CONF = 0.28
             if self._sorter and self._sorting_enabled:
-                if rec.confidence >= _MIN_DISPATCH_CONF:
+                is_cull = rec.class_name == "Cull"
+                if is_cull or rec.confidence >= _MIN_DISPATCH_CONF:
                     self._sorter.schedule(
                         apple_id   = rec.seq_id,
                         lane       = rec.lane,
