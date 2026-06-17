@@ -336,11 +336,16 @@ class AppleTracker:
                     if force_cull:
                         best_cls, best_conf = 2, cull_ratio
                     else:
-                        if non_cull:
-                            best_cls  = max(non_cull, key=non_cull.get)
-                            best_conf = non_cull[best_cls] / total
+                        # Let all classes compete including Cull.
+                        # Previously this code used max(non_cull) which stripped Cull out of
+                        # the race entirely — so if Cull had 40% of votes (live display showed
+                        # Cull) but force_cull=False, Fresh at 35% would win the committed
+                        # grade. That caused "tracked as Cull on screen → committed as Fresh."
+                        best_cls = max(hist["votes"], key=hist["votes"].get)
+                        if best_cls == 2:
+                            # Cull won the vote count even without hitting force_cull threshold
+                            best_conf = cull_ratio
                         else:
-                            best_cls  = max(hist["votes"], key=hist["votes"].get)
                             best_conf = hist["votes"][best_cls] / total
 
                     hist["committed"] = True
