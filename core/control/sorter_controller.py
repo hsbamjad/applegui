@@ -46,17 +46,19 @@ class SortOutlet(Enum):
 
 # Grade → action digit mapping (confirmed with hardware person + Arduino sketch)
 # Arduino doAction() cases:
-#   case 1 → LOW,  LOW   (resting / default → Cull outlet)  ← NOT used
-#   case 2 → HIGH, HIGH  → Processing outlet
-#   case 3 → LOW,  HIGH  → Cull outlet       ← confirmed physical wiring
+#   case 1 → LOW,  LOW   → paddle RESET to resting position → Fresh outlet
+#   case 2 → HIGH, HIGH  → both solenoids ON              → Processing outlet
+#   case 3 → LOW,  HIGH  → pin2 ON only                   → Cull outlet (confirmed)
 #   digit 0 → Arduino guard (actionInput > 0) skips it → NO solenoid fired
 #
-# Fresh = default (no command) → apple falls to Fresh outlet without any solenoid.
-# Sending digit=3 fires the Cull solenoid; digit=2 fires the Processing solenoid.
+# IMPORTANT: The paddle does NOT auto-reset between apples. After a Cull apple
+# fires case 3 (LOW, HIGH), the pins stay LOW/HIGH until the next doAction().
+# Fresh MUST send digit=1 to explicitly reset the paddle to the Fresh position.
+# digit=0 (no command) is NEVER used because the paddle may be stuck at Cull.
 GRADE_TO_DIGIT: dict[str, int] = {
-    "Fresh":      0,   # digit 0 → Arduino ignores → no solenoid → default Fresh outlet
-    "Processing": 2,   # case 2 → HIGH, HIGH → Processing outlet
-    "Cull":       3,   # case 3 → LOW,  HIGH → Cull outlet
+    "Fresh":      1,   # case 1: LOW, LOW → reset paddle to resting → Fresh outlet
+    "Processing": 2,   # case 2: HIGH, HIGH → Processing outlet
+    "Cull":       3,   # case 3: LOW, HIGH → Cull outlet (confirmed physical wiring)
 }
 
 
@@ -287,18 +289,14 @@ class SorterController:
         if grade_key in self._stats:
             self._stats[grade_key] += 1
 
-        # Fresh → no command — apple falls to default Fresh outlet, no solenoid fires.
+        # digit=0 path removed — Fresh now uses digit=1 to actively reset the paddle.
+        # A digit=0 here would mean an unknown grade defaulted to 0; log a warning.
         if cmd.digit == 0:
-            if self._mode == "simulation":
-                log.info(
-                    f"[SIM] FRESH (no-op): apple={cmd.apple_id} lane={cmd.lane} "
-                    f"conf={cmd.confidence:.2f}  — no serial command sent"
-                )
-            else:
-                log.info(
-                    f"FRESH (no-op): apple={cmd.apple_id} lane={cmd.lane} "
-                    f"— no serial command sent"
-                )
+            log.warning(
+                f"grade={cmd.grade} produced digit=0 (no-op) — "
+                f"apple={cmd.apple_id} lane={cmd.lane}. "
+                f"Check GRADE_TO_DIGIT mapping."
+            )
             return
 
         # Build 3-char command: digit in the correct lane slot, zeros elsewhere
