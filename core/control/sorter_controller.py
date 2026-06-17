@@ -148,7 +148,7 @@ class SorterController:
 
         now_ns   = time.time_ns()
         fire_ns  = now_ns + int(delay_ms * 1_000_000)
-        digit    = GRADE_TO_DIGIT.get(grade, 3)   # unknown grade defaults to Cull
+        digit    = GRADE_TO_DIGIT.get(grade, 0)   # unknown grade defaults to Cull no-op (0)
 
         cmd = GradeCommand(
             apple_id     = apple_id,
@@ -279,6 +279,13 @@ class SorterController:
                 baudrate = self._baudrate,
                 timeout  = 1.0,
             )
+            # *** MUST set mode here on success ***
+            # set_mode() calls _connect_serial() but does NOT overwrite self._mode
+            # unconditionally (it relies on this method to set the correct mode).
+            # Without this line the controller stays in 'simulation' even after a
+            # successful Arduino connect, so _fire() always logs [SIM] and never
+            # writes to the serial port.
+            self._mode = "serial"
             log.info(f"Arduino connected on {self._port} @ {self._baudrate} baud.")
         except Exception as exc:
             log.error(f"Failed to connect to Arduino on {self._port}: {exc}")
