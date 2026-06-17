@@ -596,14 +596,15 @@ class MainWindow(QMainWindow):
             exit_frac            = inf_tracking.get("exit_frac",            0.85),
             band_half_frac       = inf_tracking.get("band_half_frac",       0.025),
             entry_frac           = inf_tracking.get("entry_frac",           0.35),
-            min_frames           = inf_tracking.get("min_frames",           5),
+            min_frames           = inf_tracking.get("min_frames",           15),
             max_lost_frames      = inf_tracking.get("max_lost_frames",      10),
             max_recover_dist     = inf_tracking.get("max_recover_dist",     80),
             min_count_dist_frac  = inf_tracking.get("min_count_dist_frac",  0.12),
             count_memory_frames  = inf_tracking.get("count_memory_frames",  40),
-            cull_weight          = inf_tracking.get("cull_weight",          1.5),
-            hit_threshold        = inf_tracking.get("hit_threshold",        20),
-            cull_ratio_threshold = inf_tracking.get("cull_ratio_threshold", 0.55),
+            cull_weight          = inf_tracking.get("cull_weight",          1.0),
+            hit_threshold        = inf_tracking.get("hit_threshold",        25),
+            cull_ratio_threshold = inf_tracking.get("cull_ratio_threshold", 0.65),
+            peak_conf_override   = inf_tracking.get("peak_conf_override",   0.50),
         )
 
         # ── Apple size accumulator ─────────────────────────────────

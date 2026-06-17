@@ -138,10 +138,10 @@ inference:
   iou_threshold: 0.45              # NMS IoU threshold
   input_mode: "RB-nir1"           # Band combo model was trained on
                                    # Options: RB-nir1 | RG-nir1 | R-nir1-nir2 | RGB | CH1
-  class_names:                     # Index order from model — confirm with training YAML
-    - "Cull"                       # 0
-    - "Fresh"                      # 1
-    - "Processing"                 # 2
+  class_names:                     # Index order from model — confirmed with training YAML
+    - "Fresh"                      # 0  ← matches model output & tracker CLASS_NAMES
+    - "Processing"                 # 1
+    - "Cull"                       # 2
 
   # Robust counting gate — mirrors chestnut pipeline logic
   tracking:
@@ -149,14 +149,15 @@ inference:
     exit_frac: 0.85             # Exit band centre (fraction of TRAVEL axis)
     band_half_frac: 0.025       # ± 2.5% of travel axis — narrow band
     entry_frac: 0.35            # First detection must be in start zone (<35%)
-    min_frames: 5
+    min_frames: 15              # was 5 — wait longer before committing (reduces noise-driven Cull)
     max_lost_frames: 10
     max_recover_dist: 80
     min_count_dist_frac: 0.12
     count_memory_frames: 40
-    cull_weight: 1.5
-    hit_threshold: 20
-    cull_ratio_threshold: 0.55
+    cull_weight: 1.0            # was 1.5 — don't over-weight Cull votes vs Fresh/Processing
+    hit_threshold: 25           # was 20 — need more high-conf Cull hits to force override
+    cull_ratio_threshold: 0.65  # was 0.55 — need clear majority to force Cull
+    peak_conf_override: 0.50    # if any non-Cull class peaks here, Cull cannot be forced
 
 # ══════════════════════════════════════════════════════════════
 # DATA LOGGING

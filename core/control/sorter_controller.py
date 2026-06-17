@@ -45,12 +45,18 @@ class SortOutlet(Enum):
 
 
 # Grade → action digit mapping (confirmed with hardware person + Arduino sketch)
-# Arduino doAction(): 1=Fresh, 2=Processing, 3=Cull
-# Command format: "XYZ\n" — 3 chars, one per lane, 0 = no action for that lane
+# Arduino doAction() cases:
+#   case 1 → LOW,  LOW   (resting / default → Cull outlet)  ← NOT used
+#   case 2 → HIGH, HIGH  → Processing outlet
+#   case 3 → LOW,  HIGH  → Fresh outlet
+#   digit 0 → Arduino guard (actionInput > 0) skips it → NO solenoid fired
+#
+# Cull = default (no command) → apple falls to Cull outlet without any solenoid.
+# Sending ANY non-zero digit would fire a valve, so Cull must use 0.
 GRADE_TO_DIGIT: dict[str, int] = {
-    "Fresh":      1,
-    "Processing": 2,
-    "Cull":       3,
+    "Fresh":      3,   # case 3 → LOW, HIGH  → Fresh outlet
+    "Processing": 2,   # case 2 → HIGH, HIGH → Processing outlet
+    "Cull":       0,   # digit 0 → Arduino ignores → no solenoid → default Cull outlet
 }
 
 
@@ -223,12 +229,31 @@ class SorterController:
           Y = Lane 2 action digit (0 if not this lane)
           Z = Lane 3 action digit (0 if not this lane)
 
-        Digits: 1=Fresh  2=Processing  3=Cull  0=no action (not queued by Arduino)
+        Digits: 3=Fresh  2=Processing  0=Cull (no-op — Arduino skips digit 0)
+
+        Cull apples require NO serial command.  The Arduino's queue guard
+        ``if (actionInput > 0 && actionInput <= 3)`` silently discards digit 0,
+        so the solenoid is never fired and the apple falls to the default
+        Cull outlet.  Sending any non-zero digit would actuate a valve.
         """
         self._stats["total"] += 1
         grade_key = cmd.grade.lower()
         if grade_key in self._stats:
             self._stats[grade_key] += 1
+
+        # Cull → no command — apple falls to default outlet, no solenoid fires.
+        if cmd.digit == 0:
+            if self._mode == "simulation":
+                log.info(
+                    f"[SIM] CULL (no-op): apple={cmd.apple_id} lane={cmd.lane} "
+                    f"conf={cmd.confidence:.2f}  — no serial command sent"
+                )
+            else:
+                log.info(
+                    f"CULL (no-op): apple={cmd.apple_id} lane={cmd.lane} "
+                    f"— no serial command sent"
+                )
+            return
 
         # Build 3-char command: digit in the correct lane slot, zeros elsewhere
         digits = ['0', '0', '0']
