@@ -56,20 +56,21 @@ class AppleTracker:
     def __init__(
         self,
         n_lanes:              int   = 3,
-        orientation:          str   = "BT",    # see module docstring
-        exit_frac:            float = 0.85,    # exit band centre (fraction of travel axis)
-        band_half_frac:       float = 0.025,   # ± 2.5 % of travel axis
-        entry_frac:           float = 0.35,    # first detection must be < this (travel axis)
-        min_frames:           int   = 25,      # raised from 5: ~2s at 15 FPS before committing
+        orientation:          str   = "BT",
+        exit_frac:            float = 0.85,
+        band_half_frac:       float = 0.025,
+        entry_frac:           float = 0.35,
+        min_frames:           int   = 25,
         max_lost_frames:      int   = 10,
         max_recover_dist:     int   = 80,
-        min_count_dist_frac:  float = 0.12,    # proximity buffer: 12 % of travel axis
+        min_count_dist_frac:  float = 0.12,
         count_memory_frames:  int   = 40,
-        cull_weight:          float = 1.0,     # no amplification — Cull competes on equal terms
+        cull_weight:          float = 1.0,
         hit_threshold:        int   = 20,
-        cull_ratio_threshold: float = 0.55,
-        min_vote_conf:        float = 0.20,    # frames below this confidence don't vote
-        min_det_conf:         float = 0.35,    # YOLO boxes below this are ignored entirely
+        cull_ratio_threshold: float = 0.65,   # raised: needs 65% majority to force Cull
+        min_vote_conf:        float = 0.20,
+        min_det_conf:         float = 0.35,
+        peak_conf_override:   float = 0.50,   # if any non-Cull class peaks here, Cull cannot be forced
     ) -> None:
         assert orientation in ORIENTATIONS, \
             f"orientation must be one of {ORIENTATIONS}, got '{orientation}'"
@@ -89,6 +90,7 @@ class AppleTracker:
         self._cull_ratio_thresh   = cull_ratio_threshold
         self._min_vote_conf       = min_vote_conf
         self._min_det_conf        = min_det_conf
+        self._peak_conf_override  = peak_conf_override
 
         self._history:  dict[int, dict] = defaultdict(self._new_history)
         self._lost:     dict[int, dict] = {}
@@ -128,14 +130,15 @@ class AppleTracker:
     @staticmethod
     def _new_history() -> dict:
         return {
-            "votes":       defaultdict(float),
-            "hit_cull":    0,
-            "frames_seen": 0,
-            "first_travel": -1,   # travel_pos at very first detection
-            "last_pos":    (0, 0),
-            "last_frame":  0,
-            "committed":   False,
-            "lane":        1,
+            "votes":        defaultdict(float),
+            "peak_conf":    defaultdict(float),  # highest conf seen per class_id
+            "hit_cull":     0,
+            "frames_seen":  0,
+            "first_travel": -1,
+            "last_pos":     (0, 0),
+            "last_frame":   0,
+            "committed":    False,
+            "lane":         1,
         }
 
     @staticmethod
@@ -240,6 +243,9 @@ class AppleTracker:
             if conf >= self._min_vote_conf:
                 weight = self._cull_weight if cls_id == 2 else 1.0
                 hist["votes"][cls_id] += conf * weight
+            # Always track peak confidence per class (even below min_vote_conf)
+            if conf > hist["peak_conf"][cls_id]:
+                hist["peak_conf"][cls_id] = conf
             if cls_id == 2 and conf > 0.6:
                 hist["hit_cull"] += 1
 
@@ -287,10 +293,23 @@ class AppleTracker:
                 total = sum(hist["votes"].values())
                 if total > 0:
                     cull_ratio = hist["votes"].get(2, 0.0) / total
+
+                    # Peak-confidence override: if any non-Cull class was ever
+                    # seen at >= peak_conf_override, the apple is clearly NOT Cull.
+                    # This prevents background noise from forcing Cull on a track
+                    # that had a strong Fresh/Processing sighting.
+                    max_non_cull_peak = max(
+                        hist["peak_conf"].get(cls, 0.0)
+                        for cls in range(len(self.CLASS_NAMES))
+                        if cls != 2
+                    ) if hist["peak_conf"] else 0.0
+                    clearly_non_cull = max_non_cull_peak >= self._peak_conf_override
+
                     force_cull = (
                         cull_ratio >= self._cull_ratio_thresh
-                        or hist["hit_cull"] >= self._hit_threshold
-                    )
+                        and not clearly_non_cull   # peak override blocks force_cull
+                    ) or hist["hit_cull"] >= self._hit_threshold
+
                     if force_cull:
                         best_cls, best_conf = 2, cull_ratio
                     else:
@@ -301,6 +320,11 @@ class AppleTracker:
                         else:
                             best_cls  = max(hist["votes"], key=hist["votes"].get)
                             best_conf = hist["votes"][best_cls] / total
+
+                    log.debug(
+                        "Vote commit: cull_ratio=%.2f peak_non_cull=%.2f clearly_non_cull=%s force_cull=%s",
+                        cull_ratio, max_non_cull_peak, clearly_non_cull, force_cull,
+                    )
 
                     hist["committed"] = True
                     cls_name = (self.CLASS_NAMES[best_cls]
