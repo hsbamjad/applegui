@@ -99,15 +99,14 @@ class RealInferenceWorker(QThread):
     Emits an annotated frame and raw supervision Detections per pass.
 
     Signals:
-      sig_result(annotated_frame, detections)
-           annotated_frame : numpy BGR array with boxes + labels drawn
-           detections      : supervision.Detections object (raw, pre-tracker)
+      sig_frame_result(ultralytics Result, input_frame_bgr)
+           result     : ultralytics Results object for one frame
+           input_frame: spectral composite fed to YOLO (caller-owned copy)
       sig_fps(float)   -- inference throughput in frames/sec
       sig_status(str, bool) -- status messages and errors
     """
 
-    sig_result      = pyqtSignal(object)   # ultralytics Results object only
-    sig_input_frame = pyqtSignal(object)   # numpy array: the spectral composite fed to YOLO
+    sig_frame_result = pyqtSignal(object, object)   # (ultralytics Result, input frame BGR copy)
     sig_fps         = pyqtSignal(float)
     sig_status      = pyqtSignal(str, bool)
     sig_model_ready = pyqtSignal()         # fired once: model loaded, inference loop about to start
@@ -291,12 +290,8 @@ class RealInferenceWorker(QThread):
                 log.warning("Inference error: %s", e)
                 continue
 
-            # Emit only the result object — no heavy frame copies through Qt signal
-            self.sig_result.emit(results[0])
-
-            # Emit the spectral composite that was fed to YOLO so the UI can
-            # display the "model-eye" view in the AI Model Input panel.
-            self.sig_input_frame.emit(frame.copy())
+            # One cross-thread copy for tracker logging + model-input display
+            self.sig_frame_result.emit(results[0], frame.copy())
 
             frame_count += 1
             elapsed = time.perf_counter() - fps_start

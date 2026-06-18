@@ -43,5 +43,8 @@ MODELS_DIR: Path = APP_ROOT / "models"
 DATA_DIR: Path = APP_ROOT / "data"
 """Absolute path to the data/ output directory"""
 
+SESSIONS_DIR: Path = DATA_DIR / "sessions"
+"""Absolute path to per-session grading export output"""
+
 LOGS_DIR: Path = APP_ROOT / "logs"
 """Absolute path to the logs/ directory"""

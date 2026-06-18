@@ -65,6 +65,7 @@ class AppleTracker:
         max_recover_dist:           int   = 80,
         min_count_dist_frac:        float = 0.12,
         count_memory_frames:        int   = 40,
+        count_merge_frames:         int   = 5,    # only merge to existing seq within N frames
         cull_weight:                float = 1.0,
         hit_threshold:              int   = 20,
         cull_ratio_threshold:       float = 0.65,
@@ -86,6 +87,7 @@ class AppleTracker:
         self._max_recover              = max_recover_dist
         self._min_count_dist_frac      = min_count_dist_frac
         self._count_mem                = count_memory_frames
+        self._count_merge_frames       = count_merge_frames
         self._cull_weight              = cull_weight
         self._hit_threshold            = hit_threshold
         self._cull_ratio_thresh        = cull_ratio_threshold
@@ -263,9 +265,16 @@ class AppleTracker:
             enough_frames = hist["frames_seen"] >= self._min_frames
 
             if in_band and entered_start and enough_frames and seq_id is None:
-                # Proximity check — same physical apple already counted nearby?
+                # Proximity check — prevent double-fire on the SAME apple only.
+                # Require same lane, very recent count, and close position so that
+                # lag/bunching does not assign one seq_id to different apples.
                 matched_seq = None
                 for recent in self._recent:
+                    age = self._frame_no - recent["frame"]
+                    if age > self._count_merge_frames:
+                        continue
+                    if recent.get("lane") != lane:
+                        continue
                     if self._dist((cx, cy), recent["pos"]) < min_cdist:
                         matched_seq = recent["seq_id"]
                         break
@@ -273,7 +282,8 @@ class AppleTracker:
                 if matched_seq is not None:
                     self._id_map[tid] = matched_seq
                     seq_id = matched_seq
-                    log.debug("Track %d linked to existing #%d", tid, matched_seq)
+                    log.debug("Track %d linked to existing #%d (lane=%d age=%d)",
+                              tid, matched_seq, lane, age)
                 else:
                     self._count += 1
                     seq_id = self._count
@@ -282,6 +292,7 @@ class AppleTracker:
                         "pos":    (cx, cy),
                         "frame":  self._frame_no,
                         "seq_id": seq_id,
+                        "lane":   lane,
                     })
                     log.debug("NEW apple #%d  ori=%s  travel=%d  first=%d  frames=%d",
                               seq_id, self._ori, travel, hist["first_travel"], hist["frames_seen"])
@@ -398,15 +409,17 @@ class AppleTracker:
                 disp_cls, disp_conf = cls_id, conf
 
             active.append({
-                "track_id":  tid,
-                "seq_id":    seq_id,
-                "class_id":  disp_cls,
-                "conf":      disp_conf,
-                "box":       (x1, y1, x2, y2),
-                "center":    (cx, cy),
-                "lane":      lane,
-                "frames":    hist["frames_seen"],
-                "eligible":  entered_start,
+                "track_id":     tid,
+                "seq_id":       seq_id,
+                "class_id":     disp_cls,
+                "conf":         disp_conf,
+                "raw_class_id": cls_id,
+                "raw_conf":     conf,
+                "box":          (x1, y1, x2, y2),
+                "center":       (cx, cy),
+                "lane":         lane,
+                "frames":       hist["frames_seen"],
+                "eligible":     entered_start,
             })
 
         # ── Step 3: Move disappeared tracks to lost buffer ────────────────────

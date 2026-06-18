@@ -8,7 +8,7 @@
 # CAMERA
 # ══════════════════════════════════════════════════════════════
 camera:
-  mode: "jai"           # Options: "mock" | "jai"  — falls back to mock if camera not found
+  mode: "mock"           # Options: "mock" | "jai"  — falls back to mock if camera not found
 
 
   mock:
@@ -19,13 +19,13 @@ camera:
   # Video simulation mode — replaces live camera with pre-recorded video files.
   # Set enabled: true and update the three video paths to run without hardware.
   simulation:
-    enabled: false
+    enabled: true
     loop: true          # Loop videos when end is reached
     fps: 30             # Playback frame rate
     videos:
-      ch1: "D:/HA/applegui/videos/Source0/G1/G1.mp4"
-      ch2: "D:/HA/applegui/videos/Source1/G1/G1.avi"
-      ch3: "D:/HA/applegui/videos/Source2/G1/G1.avi"
+      ch1: "D:/HA/apple_gui/videos/Source0/G1/G1.mp4"
+      ch2: "D:/HA/apple_gui/videos/Source1/G1/G1.avi"
+      ch3: "D:/HA/apple_gui/videos/Source2/G1/G1.avi"
 
   jai:
     # Confirmed hardware (Shuttle PC) — from camera_probe_jai.py output
@@ -154,6 +154,7 @@ inference:
     max_recover_dist: 80
     min_count_dist_frac: 0.12
     count_memory_frames: 40
+    count_merge_frames: 5          # merge to existing seq_id only within N frames + same lane
     cull_weight: 1.0            # was 1.5 — don't over-weight Cull votes vs Fresh/Processing
     hit_threshold: 25           # was 20 — need more high-conf Cull hits to force override
     cull_ratio_threshold: 0.65  # was 0.55 — need clear majority to force Cull
@@ -166,18 +167,13 @@ inference:
 # ══════════════════════════════════════════════════════════════
 logging:
   enabled: false
-  output_dir: "data/"
-  save_images: false
-  save_every_n: 10                 # Save 3-channel TIFF every N apples
-  csv_columns:
-    - timestamp
-    - apple_id
-    - lane
-    - grade
-    - confidence
-    - diameter_px
-    - conveyor_speed_aps
-    - outlet_fired
+  output_dir: "data/sessions"
+  save_frames: true
+  image_format: "jpg"
+  jpeg_quality: 92
+  crop_padding_frac: 0.20    # padding around bbox for saved crop
+  crop_max_dim: 512          # max crop dimension (px) — good quality, not full screen
+  max_pending_batches: 2     # logging backpressure — drops export frames, not counts
 
 # ══════════════════════════════════════════════════════════════
 # DISPLAY

@@ -22,6 +22,8 @@ Layout:
 
 from __future__ import annotations
 
+import time
+
 from core.log import get_logger
 from pathlib import Path
 
@@ -31,7 +33,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QLabel, QStatusBar, QSizePolicy, QFrame,
 )
-from PyQt6.QtCore import Qt, pyqtSlot
+from PyQt6.QtCore import Qt, pyqtSlot, QTimer
 from PyQt6.QtGui import QFont, QColor, QPainter, QLinearGradient
 
 from gui.styles import (
@@ -48,6 +50,7 @@ from gui.workers.video_worker  import VideoWorker
 from gui.workers.inference_worker import MockInferenceWorker, RealInferenceWorker
 from gui.workers.tracker import AppleTracker as ConveyorTracker
 from core.control import SorterController
+from core.logging import GradingRecorder
 
 log = get_logger(__name__)
 
@@ -420,6 +423,8 @@ class MainWindow(QMainWindow):
         self._tracker:  ConveyorTracker | None            = None
         self._sorter:   SorterController | None           = None
         self._sorting_enabled: bool                       = False   # gated by Enable Sorting toggle
+        self._logging_enabled: bool                        = False   # gated by Enable Logging toggle
+        self._grading_recorder: GradingRecorder | None   = None
         self._size_acc = None   # AppleSizeAccumulator — created in _start_pipeline
         self._infer_fps: float = 0.0
         self._loading_model_name: str = ""
@@ -431,6 +436,13 @@ class MainWindow(QMainWindow):
         self._total        = 0
         self._total_graded = 0             # running count for model input panel badge
         self._wb_reverting = False   # True while a revert_white_balance() call is in flight
+        self._display_pending = False
+        self._graded_ui_pending = False
+        self._graded_ui_queue: list = []
+        self._size_update_pending = False
+        self._pending_size_result = None
+        self._pending_size_active = None
+        self._last_display_ts = 0.0
 
         self._setup_window()
         self._build_ui()
@@ -495,7 +507,6 @@ class MainWindow(QMainWindow):
         self._left.sig_load_model.connect(self._on_load_model)
         self._left.sig_sorter_toggled.connect(self._on_sorter_toggle)
         self._left.sig_logging_toggled.connect(self._on_logging_toggle)
-        self._left.sig_speed_changed.connect(self._on_speed_changed)
         # Camera hardware controls — forwarded to CameraWorker while streaming
         self._left.sig_exposure_changed.connect(self._on_exposure_changed)
         self._left.sig_fps_changed.connect(self._on_fps_changed)
@@ -530,6 +541,12 @@ class MainWindow(QMainWindow):
         sg.set_status("AI Model", "idle",    "No model")
         sg.set_status("Sorter",   "idle",    "Simulation")
         sg.set_status("Logger",   "idle",    "Off")
+
+        log_cfg = self._cfg.get("logging", {})
+        if log_cfg.get("enabled", False):
+            self._left.set_logging_enabled(True)
+            self._logging_enabled = True
+            self._right.status_group.set_status("Logger", "idle", "Armed")
 
     def closeEvent(self, event) -> None:
         """Guarantee camera disconnect on window close — releases eBUS device lock."""
@@ -601,6 +618,7 @@ class MainWindow(QMainWindow):
             max_recover_dist            = inf_tracking.get("max_recover_dist",             80),
             min_count_dist_frac         = inf_tracking.get("min_count_dist_frac",          0.12),
             count_memory_frames         = inf_tracking.get("count_memory_frames",          40),
+            count_merge_frames          = inf_tracking.get("count_merge_frames",            5),
             cull_weight                 = inf_tracking.get("cull_weight",                  1.0),
             hit_threshold               = inf_tracking.get("hit_threshold",                25),
             cull_ratio_threshold        = inf_tracking.get("cull_ratio_threshold",         0.65),
@@ -644,7 +662,50 @@ class MainWindow(QMainWindow):
         self._sorter.start()
         log.info("SorterController started (mode=%s)", self._cfg.get("sorter", {}).get("mode", "simulation"))
 
+        if self._logging_enabled and self._grading_recorder is None:
+            self._start_grading_session()
+
+    def _start_grading_session(self) -> None:
+        """Create GradingRecorder and a timestamped session folder."""
+        from utils.paths import APP_ROOT, SESSIONS_DIR
+
+        log_cfg = self._cfg.get("logging", {})
+        raw_out = log_cfg.get("output_dir", "data/sessions")
+        base_dir = Path(raw_out) if Path(raw_out).is_absolute() else APP_ROOT / raw_out
+        if not base_dir.exists():
+            base_dir = SESSIONS_DIR
+
+        self._grading_recorder = GradingRecorder(
+            image_format=log_cfg.get("image_format", "jpg"),
+            jpeg_quality=int(log_cfg.get("jpeg_quality", 92)),
+            save_frames=bool(log_cfg.get("save_frames", True)),
+            crop_padding_frac=float(log_cfg.get("crop_padding_frac", 0.20)),
+            crop_max_dim=int(log_cfg.get("crop_max_dim", 512)),
+            max_pending_batches=int(log_cfg.get("max_pending_batches", 2)),
+        )
+        session_dir = self._grading_recorder.start_session(base_dir)
+        try:
+            rel = session_dir.relative_to(APP_ROOT)
+        except ValueError:
+            rel = session_dir
+        self._left.set_logging_path(str(rel))
+        self._right.status_group.set_status("Logger", "online", "Recording")
+
+    def _stop_grading_session(self) -> None:
+        """Flush and tear down the grading recorder."""
+        if self._grading_recorder is not None:
+            self._grading_recorder.stop_session()
+            self._grading_recorder = None
+        log_cfg = self._cfg.get("logging", {})
+        raw_out = log_cfg.get("output_dir", "data/sessions")
+        self._left.set_logging_path(raw_out)
+        if self._logging_enabled:
+            self._right.status_group.set_status("Logger", "idle", "Armed")
+        else:
+            self._right.status_group.set_status("Logger", "idle", "Off")
+
     def _stop_pipeline(self) -> None:
+        self._stop_grading_session()
         if self._sorter:
             self._sorter.stop()
             self._sorter = None
@@ -796,8 +857,7 @@ class MainWindow(QMainWindow):
             input_mode     = input_mode,
         )
         self._infer_w.sig_model_ready.connect(self._on_model_ready)  # resume video here
-        self._infer_w.sig_result.connect(self._on_inference_result)
-        self._infer_w.sig_input_frame.connect(self._on_input_frame)
+        self._infer_w.sig_frame_result.connect(self._on_inference_result)
         self._infer_w.sig_fps.connect(self._on_inference_fps)
         self._infer_w.sig_status.connect(self._on_inference_status)
         self._infer_w.start()
@@ -840,80 +900,167 @@ class MainWindow(QMainWindow):
             self._cam_w.resume()
             log.info("_on_model_ready: VideoWorker resumed")
 
-    @pyqtSlot(object)
-    def _on_inference_result(self, result) -> None:
-        """Vote on tracks, commit grades, annotate CH1 with stored latest frame."""
+    @pyqtSlot(object, object)
+    def _on_inference_result(self, result, frame: np.ndarray) -> None:
+        """Tracker + logging on the hot path; UI / sizing deferred."""
         if self._tracker is None or self._last_ch1 is None:
             return
 
+        self._last_input_frame = frame
         active, graded = self._tracker.update(result, self._last_ch1.shape)
 
-        # ── Size accumulation (per frame) ─────────────────────────
-        if self._size_acc is not None:
-            self._size_acc.update(result, active)
+        if self._grading_recorder is not None and active:
+            self._grading_recorder.record_batch(frame, active)
 
-        # ── Commit finished grades to stats panel + analytics ─────────
         for rec in graded:
-            outlet   = self._OUTLET_MAP.get(rec.class_name, "?")
-            size_mm  = (
-                self._size_acc.commit(rec.track_id, rec.lane)
-                if self._size_acc is not None else None
-            )
-            self._right.results_group.add_result(
-                rec.seq_id, rec.lane, rec.class_name, rec.confidence, outlet, size_mm
-            )
-            self._right.grade_summary.record(rec.class_name)
-            self._right.metrics_group.record_grade()
-            self._center.analytics_panel.record_grade(rec.class_name)
-            self.statusBar().showMessage(
-                f"#{rec.seq_id}  Lane {rec.lane}  →  {rec.class_name}  "
-                f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
-            )
-            # -- Send sort command to Arduino --
-            # Layer 3 defence: require min conf before firing physical actuator.
-            # Dispatch gate: Fresh/Processing need minimum confidence to avoid
-            # false actuations. Cull is ALWAYS dispatched regardless of confidence
-            # because Cull = safe default — if sorter stays in last position (Fresh/
-            # Processing), the Cull apple ends up in the wrong bin.
-            _MIN_DISPATCH_CONF = 0.28
+            if self._grading_recorder is not None:
+                self._grading_recorder.on_grade_committed(
+                    seq_id=rec.seq_id,
+                    lane=rec.lane,
+                    class_name=rec.class_name,
+                    confidence=rec.confidence,
+                    track_id=rec.track_id,
+                )
             if self._sorter and self._sorting_enabled:
+                _MIN_DISPATCH_CONF = 0.28
                 is_cull = rec.class_name == "Cull"
                 if is_cull or rec.confidence >= _MIN_DISPATCH_CONF:
                     self._sorter.schedule(
-                        apple_id   = rec.seq_id,
-                        lane       = rec.lane,
-                        grade      = rec.class_name,
-                        confidence = rec.confidence,
+                        apple_id=rec.seq_id,
+                        lane=rec.lane,
+                        grade=rec.class_name,
+                        confidence=rec.confidence,
                     )
                 else:
                     log.warning(
                         "Grade #%d rejected -- conf=%.2f < %.2f minimum",
                         rec.seq_id, rec.confidence, _MIN_DISPATCH_CONF,
                     )
+            self._graded_ui_queue.append(rec)
 
-        # ── Annotate all 3 channels with same boxes ───────────────
-        ann_ch1 = self._annotate_tracked(self._last_ch1, active, show_label=False)
-        ann_ch2 = self._annotate_tracked(self._last_ch2, active, show_label=False)
-        ann_ch3 = self._annotate_tracked(self._last_ch3, active, show_label=False)
-        fps = self._infer_fps
-        # Pass the original full resolution so the UI label stays correct
-        orig_shape = (self._last_ch1.shape[1], self._last_ch1.shape[0])
-        self._center.channel_display.update_channel_frame(0, ann_ch1, fps, orig_shape)
-        self._center.channel_display.update_channel_frame(1, ann_ch2, fps, orig_shape)
-        self._center.channel_display.update_channel_frame(2, ann_ch3, fps, orig_shape)
+        if graded:
+            self._schedule_graded_ui()
 
-        # ── Push annotated spectral composite to AI Model Input panel ─
-        if self._last_input_frame is not None:
-            self._total_graded += len(graded)
-            ann_input = self._annotate_tracked(self._last_input_frame, active, show_label=True)
-            self._center.model_input_panel.update_frame(
-                ann_input, fps, self._total_graded
+        if self._size_acc is not None and active:
+            if graded:
+                # Must run before deferred commit() in _flush_graded_ui
+                self._size_acc.update(result, active)
+            else:
+                self._pending_size_result = result
+                self._pending_size_active = active
+                self._schedule_size_update()
+
+        self._schedule_display_update(active, self._infer_fps)
+
+    def _schedule_graded_ui(self) -> None:
+        if not self._graded_ui_pending:
+            self._graded_ui_pending = True
+            QTimer.singleShot(0, self._flush_graded_ui)
+
+    def _flush_graded_ui(self) -> None:
+        self._graded_ui_pending = False
+        queue = self._graded_ui_queue
+        self._graded_ui_queue = []
+        for rec in queue:
+            outlet = self._OUTLET_MAP.get(rec.class_name, "?")
+            size_mm = (
+                self._size_acc.commit(rec.track_id, rec.lane)
+                if self._size_acc is not None else None
+            )
+            self._right.results_group.add_result(
+                rec.seq_id, rec.lane, rec.class_name, rec.confidence, outlet, size_mm,
+            )
+            self._right.grade_summary.record(rec.class_name)
+            self._right.metrics_group.record_grade()
+            self._center.analytics_panel.record_grade(rec.class_name)
+            self._total_graded += 1
+            self.statusBar().showMessage(
+                f"#{rec.seq_id}  Lane {rec.lane}  →  {rec.class_name}  "
+                f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
             )
 
-    @pyqtSlot(object)
-    def _on_input_frame(self, frame: np.ndarray) -> None:
-        """Cache the spectral composite emitted by RealInferenceWorker."""
-        self._last_input_frame = frame
+    def _schedule_size_update(self) -> None:
+        if not self._size_update_pending:
+            self._size_update_pending = True
+            QTimer.singleShot(0, self._flush_size_update)
+
+    def _flush_size_update(self) -> None:
+        self._size_update_pending = False
+        result = self._pending_size_result
+        active = self._pending_size_active
+        if self._size_acc is not None and result is not None and active:
+            self._size_acc.update(result, active)
+
+    def _schedule_display_update(self, active: list, fps: float) -> None:
+        """Coalesce display repaints; throttle when many apples are on screen."""
+        n = len(active)
+        if n > 12:
+            now = time.monotonic()
+            if now - self._last_display_ts < 0.08:
+                return
+            self._last_display_ts = now
+
+        self._display_active = active
+        self._display_fps = fps
+        if not self._display_pending:
+            self._display_pending = True
+            QTimer.singleShot(0, self._render_deferred_display)
+
+    def _render_deferred_display(self) -> None:
+        self._display_pending = False
+        active = getattr(self, "_display_active", None)
+        if active is None or self._last_ch1 is None:
+            return
+
+        fps = self._display_fps
+        ann_ch1 = self._annotate_tracked(self._last_ch1, active, show_label=False)
+        orig_shape = (self._last_ch1.shape[1], self._last_ch1.shape[0])
+        self._center.channel_display.update_channel_frame(0, ann_ch1, fps, orig_shape)
+
+        # Skip CH2/CH3 when crowded — same boxes, saves 2 annotate passes
+        if len(active) <= 12:
+            ann_ch2 = self._annotate_tracked(self._last_ch2, active, show_label=False)
+            ann_ch3 = self._annotate_tracked(self._last_ch3, active, show_label=False)
+            self._center.channel_display.update_channel_frame(1, ann_ch2, fps, orig_shape)
+            self._center.channel_display.update_channel_frame(2, ann_ch3, fps, orig_shape)
+
+        if self._last_input_frame is not None:
+            ann_input = self._annotate_tracked(
+                self._last_input_frame, active, show_label=True,
+            )
+            self._center.model_input_panel.update_frame(
+                ann_input, fps, self._total_graded,
+            )
+
+    _DRAW_W = 512
+
+    def _downscale_frame(self, frame: np.ndarray) -> tuple[np.ndarray, float]:
+        """Downscale to 512px-wide canvas (same as annotation path)."""
+        import cv2
+
+        h, w = frame.shape[:2]
+        scale_f = self._DRAW_W / w
+        draw_h = int(h * scale_f)
+        if frame.ndim == 2:
+            out = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        else:
+            out = frame
+        small = cv2.resize(out, (self._DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
+        return small, scale_f
+
+    @staticmethod
+    def _scale_active_boxes(active: list, scale_f: float) -> list[dict]:
+        scaled = []
+        for t in active:
+            x1, y1, x2, y2 = t["box"]
+            scaled.append({
+                **t,
+                "box": (
+                    int(x1 * scale_f), int(y1 * scale_f),
+                    int(x2 * scale_f), int(y2 * scale_f),
+                ),
+            })
+        return scaled
 
     def _annotate_tracked(
         self, frame: np.ndarray, active: list, show_label: bool = True
@@ -934,21 +1081,20 @@ class MainWindow(QMainWindow):
         if frame is None:
             return frame
 
+        h, w = frame.shape[:2]
+        DRAW_W = self._DRAW_W
+        scale_f = DRAW_W / w
+        draw_h = int(h * scale_f)
+
         if frame.ndim == 2:
-            out = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            src = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
         else:
-            out = frame.copy()
+            src = frame
+
+        small = cv2.resize(src, (DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
 
         if not active:
-            return out
-
-        h, w = out.shape[:2]
-
-        # ── Downscale for fast drawing ─────────────────────────────────────
-        DRAW_W = 512
-        scale_f = DRAW_W / w
-        draw_h  = int(h * scale_f)
-        small   = cv2.resize(out, (DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
+            return small
 
         # Drawing params for 512px canvas
         fs        = 0.55   # font scale
@@ -1001,7 +1147,6 @@ class MainWindow(QMainWindow):
     def _on_inference_fps(self, fps: float) -> None:
         self._infer_fps = fps
         self._right.metrics_group.set_infer_fps(fps)
-        self.statusBar().showMessage(f"Inference: {fps:.1f} FPS")
 
     @pyqtSlot(float)
     def _on_throughput_updated(self, apm: float) -> None:
@@ -1044,24 +1189,15 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(bool)
     def _on_logging_toggle(self, enabled: bool) -> None:
-        self._right.status_group.set_status(
-            "Logger",
-            "online" if enabled else "idle",
-            "Recording" if enabled else "Off",
-        )
-
-    @pyqtSlot(int)
-    def _on_speed_changed(self, speed: int) -> None:
-        if self._inf_w:
-            self._inf_w.set_speed(speed)
-        if self._tracker:
-            self._tracker.set_conveyor_speed(speed)
-        if self._sorter:
-            self._sorter.set_conveyor_speed(speed)
-        self.statusBar().showMessage(
-            f"Speed updated: {speed} apple/s/lane  "
-            f"({speed * 3 * 60} apple/min total)"
-        )
+        self._logging_enabled = enabled
+        if enabled:
+            if self._cam_w is not None and self._grading_recorder is None:
+                self._start_grading_session()
+            elif self._grading_recorder is None:
+                self._right.status_group.set_status("Logger", "idle", "Armed")
+        else:
+            self._stop_grading_session()
+            self._right.status_group.set_status("Logger", "idle", "Off")
 
     @pyqtSlot(int, int, int)
     def _on_exposure_changed(self, ch1_us: int, ch2_us: int, ch3_us: int) -> None:

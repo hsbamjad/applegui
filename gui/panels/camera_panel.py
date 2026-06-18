@@ -5,7 +5,6 @@ Left control sidebar — hardware-aware layout.
 
 Sections:
   CAMERA   — connect/disconnect, exposure, FPS
-  CONVEYOR — speed (1/2/3 apples/s/lane), camera-to-gate distance
   AI MODEL — model selector, load
   SORTER   — enable, mode, outlet legend
   LOGGING  — enable, output path
@@ -440,7 +439,6 @@ class LeftControlPanel(QWidget):
     sig_load_model            = pyqtSignal(str)
     sig_sorter_toggled        = pyqtSignal(bool)
     sig_logging_toggled       = pyqtSignal(bool)
-    sig_speed_changed         = pyqtSignal(int)
     sig_exposure_changed      = pyqtSignal(int, int, int)    # CH1/CH2/CH3 µs — emitted on Apply
     sig_fps_changed           = pyqtSignal(float)            # FPS — emitted on Apply
     sig_gains_changed         = pyqtSignal(float, float, float)   # CH1/CH2/CH3 dB — emitted on Apply
@@ -542,9 +540,6 @@ class LeftControlPanel(QWidget):
 
         vlayout.addWidget(_SectionHeader("Sorter"))
         vlayout.addWidget(self._sorter_card())
-
-        vlayout.addWidget(_SectionHeader("Conveyor"))
-        vlayout.addWidget(self._conveyor_card())
 
         vlayout.addWidget(_SectionHeader("Data Logging"))
         vlayout.addWidget(self._logging_card())
@@ -1212,47 +1207,6 @@ class LeftControlPanel(QWidget):
             spn.blockSignals(False)
         self._update_roi_label()
 
-    def _conveyor_card(self) -> QWidget:
-        card = _Card()
-
-        # Lane count — fixed hardware
-        lane_row = QHBoxLayout()
-        lane_row.setContentsMargins(0, 0, 0, 0)
-        lane_row.setSpacing(8)
-        lane_lbl = QLabel("Lanes")
-        lane_lbl.setFixedWidth(LABEL_W)
-        lane_lbl.setStyleSheet(f"color: {TEXT_2}; font-size: 11px; background: transparent;")
-        lane_val = QLabel("3  (hardware fixed)")
-        lane_val.setStyleSheet(f"color: {TEXT_1}; font-size: 11px; font-weight: 600; background: transparent;")
-        lane_row.addWidget(lane_lbl)
-        lane_row.addWidget(lane_val)
-        lane_row.addStretch()
-        card.add_layout(lane_row)
-
-        # Speed: use a ComboBox — no suffix clipping issues
-        self._combo_speed = QComboBox()
-        self._combo_speed.addItems(["1  apple / s", "2  apples / s", "3  apples / s"])
-        self._combo_speed.setToolTip(
-            "Conveyor speed per lane:\n"
-            "  1/s → sort accuracy 99.9%\n"
-            "  2/s → sort accuracy 99.7%\n"
-            "  3/s → sort accuracy 97.4%"
-        )
-        self._combo_speed.currentIndexChanged.connect(
-            lambda i: self.sig_speed_changed.emit(i + 1)
-        )
-        self._combo_speed.setMinimumWidth(WIDGET_MIN_W)
-        card.add(_field("Speed", self._combo_speed))
-
-        # Gate distance
-        self._spn_gate = _dspinbox(0.10, 2.00, 0.50, 0.05, 2, " m")
-        self._spn_gate.setToolTip(
-            "Physical distance from camera center to sorter gate.\n"
-            "Measure on the physical setup and update."
-        )
-        card.add(_field("Camera → Gate", self._spn_gate))
-        return card
-
     def _model_card(self) -> QWidget:
         card = _Card()
 
@@ -1334,10 +1288,12 @@ class LeftControlPanel(QWidget):
     def _logging_card(self) -> QWidget:
         card = _Card()
         self._chk_logging = QCheckBox("Enable Logging")
-        self._chk_logging.setToolTip("Log grades to CSV + save 3-channel TIFF images")
+        self._chk_logging.setToolTip(
+            "Save per-apple grading frames + CSV to data/sessions/"
+        )
         self._chk_logging.toggled.connect(self.sig_logging_toggled.emit)
         card.add(self._chk_logging)
-        self._lbl_log_path = QLabel("Output:  data/")
+        self._lbl_log_path = QLabel("Output:  data/sessions/")
         self._lbl_log_path.setStyleSheet(
             f"color: {TEXT_3}; font-size: 10px; background: transparent;"
         )
@@ -1390,6 +1346,16 @@ class LeftControlPanel(QWidget):
         self._chk_sorter.setChecked(enabled)
         self._chk_sorter.blockSignals(False)
 
+    def set_logging_enabled(self, enabled: bool) -> None:
+        """Programmatically set the Enable Logging checkbox without re-emitting the signal."""
+        self._chk_logging.blockSignals(True)
+        self._chk_logging.setChecked(enabled)
+        self._chk_logging.blockSignals(False)
+
+    def set_logging_path(self, path: str) -> None:
+        """Update the session output path label in the Data Logging card."""
+        self._lbl_log_path.setText(f"Output:  {path}")
+
     def set_model_loaded(self, name: str) -> None:
         self._model_status.set_state("online", "Loaded")
         self._lbl_model_detail.setText(f"▶  {name}")
@@ -1412,11 +1378,3 @@ class LeftControlPanel(QWidget):
             self._combo_model.addItems(names)
         else:
             self._combo_model.addItem("No models in  models/")
-
-    @property
-    def conveyor_speed(self) -> int:
-        return self._combo_speed.currentIndex() + 1
-
-    @property
-    def gate_distance(self) -> float:
-        return self._spn_gate.value()
