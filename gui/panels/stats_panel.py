@@ -294,9 +294,10 @@ class MetricsCard(QWidget):
         self._speed      = MetricItem("THROUGHPUT",     "-- apple/min",  SUCCESS)
         self._total      = MetricItem("TOTAL GRADED",   "0",             TEXT_1)
         self._infer_fps  = MetricItem("INFER FPS",      "-- FPS",        ACCENT)
+        self._view_fps   = MetricItem("VIEW FPS",      "-- FPS",        TEXT_2)
         self._session    = MetricItem("SESSION TIME",   "00:00:00",      TEXT_2)
 
-        for m in [self._speed, self._total, self._infer_fps, self._session]:
+        for m in [self._speed, self._total, self._infer_fps, self._view_fps, self._session]:
             layout.addWidget(m)
             sep = QFrame()
             sep.setFrameShape(QFrame.Shape.HLine)
@@ -330,6 +331,7 @@ class MetricsCard(QWidget):
         self._speed.set_value("-- apple/min")
         self._total.set_value("0")
         self._infer_fps.set_value("-- FPS")
+        self._view_fps.set_value("-- FPS")
         self._session.set_value("00:00:00")
 
     def record_grade(self) -> None:
@@ -343,8 +345,13 @@ class MetricsCard(QWidget):
         self._speed.set_value(f"{apm:.0f} apple/min")
 
     def set_infer_fps(self, fps: float) -> None:
-        """Update the INFER FPS metric from RealInferenceWorker throughput."""
+        """YOLO pipeline throughput (1 s avg) — how fast AI processes frames."""
         self._infer_fps.set_value(f"{fps:.1f} FPS")
+
+    def set_view_fps(self, fps: float) -> None:
+        """Model-input panel repaint rate — how smooth the AI video looks."""
+        if fps > 0:
+            self._view_fps.set_value(f"{fps:.1f} FPS")
 
 
 # ── Right Stats Panel ─────────────────────────────────────────────────────────

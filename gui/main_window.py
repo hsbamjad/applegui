@@ -22,6 +22,7 @@ Layout:
 
 from __future__ import annotations
 
+import threading
 import time
 
 from core.log import get_logger
@@ -49,6 +50,7 @@ from gui.workers.camera_worker import CameraWorker
 from gui.workers.video_worker  import VideoWorker
 from gui.workers.inference_worker import MockInferenceWorker, RealInferenceWorker
 from gui.workers.tracker import AppleTracker as ConveyorTracker
+from gui.drawing import annotate_tracked
 from core.control import SorterController
 from core.logging import GradingRecorder
 
@@ -208,6 +210,8 @@ class ModelInputPanel(QWidget):
         super().__init__(parent)
         self._mode      = input_mode
         self._has_frame = False
+        self._disp_times: list[float] = []
+        self._last_display_fps = 0.0
         self.setStyleSheet(f"background-color: {BG_BASE};")
         self._build()
 
@@ -310,7 +314,7 @@ class ModelInputPanel(QWidget):
 
     # ------------------------------------------------------------------
     def update_frame(
-        self, frame: np.ndarray, fps: float, graded_count: int
+        self, frame: np.ndarray, graded_count: int, fps: float = 0.0,
     ) -> None:
         """Push an annotated model-input composite to the display."""
         import cv2
@@ -338,12 +342,27 @@ class ModelInputPanel(QWidget):
             Qt.TransformationMode.SmoothTransformation,
         )
         self._display.setPixmap(pixmap)
-        self._fps_lbl.setText(f"{fps:.1f} FPS")
+        self._last_display_fps = self._measure_display_fps()
+        self._fps_lbl.setText(f"{self._last_display_fps:.1f} FPS")
         self._count_lbl.setText(f"{graded_count} graded")
         self._has_frame = True
 
+    def _measure_display_fps(self) -> float:
+        import time
+
+        now = time.perf_counter()
+        self._disp_times.append(now)
+        cutoff = now - 1.0
+        self._disp_times = [t for t in self._disp_times if t >= cutoff]
+        if len(self._disp_times) < 2:
+            return 0.0
+        span = self._disp_times[-1] - self._disp_times[0]
+        return (len(self._disp_times) - 1) / span if span > 1e-6 else 0.0
+
     def reset(self) -> None:
         self._has_frame = False
+        self._disp_times.clear()
+        self._last_display_fps = 0.0
         self._fps_lbl.setText("-- FPS")
         self._count_lbl.setText("0 graded")
         self._draw_placeholder()
@@ -431,7 +450,7 @@ class MainWindow(QMainWindow):
         self._last_ch1:        np.ndarray | None = None
         self._last_ch2:        np.ndarray | None = None
         self._last_ch3:        np.ndarray | None = None
-        self._last_input_frame: np.ndarray | None = None  # spectral composite fed to YOLO
+        self._last_input_frame: np.ndarray | None = None
         self._exit_x_frac: float = 0.85   # set again in _start_pipeline from config
         self._total        = 0
         self._total_graded = 0             # running count for model input panel badge
@@ -439,10 +458,15 @@ class MainWindow(QMainWindow):
         self._display_pending = False
         self._graded_ui_pending = False
         self._graded_ui_queue: list = []
-        self._size_update_pending = False
-        self._pending_size_result = None
-        self._pending_size_active = None
-        self._last_display_ts = 0.0
+        self._size_lock = threading.Lock()
+        self._preview_ui_pending = False
+        self._cam_fps_reported = 0.0
+        self._frame_coalesce_pending = False
+        self._pending_frame: tuple | None = None
+
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setInterval(33)   # ~30 Hz channel refresh, off hot path
+        self._preview_timer.timeout.connect(self._flush_channel_preview)
 
         self._setup_window()
         self._build_ui()
@@ -601,6 +625,7 @@ class MainWindow(QMainWindow):
         self._cam_w.sig_frame.connect(self._on_frame)
         self._cam_w.sig_status.connect(self._on_cam_status)
         self._cam_w.start()
+        self._preview_timer.start()
 
         # ── Conveyor tracker ───────────────────────────────────────
         inf_cfg      = self._cfg.get("inference", {})
@@ -682,8 +707,11 @@ class MainWindow(QMainWindow):
             crop_padding_frac=float(log_cfg.get("crop_padding_frac", 0.20)),
             crop_max_dim=int(log_cfg.get("crop_max_dim", 512)),
             max_pending_batches=int(log_cfg.get("max_pending_batches", 2)),
+            max_crops_per_batch=int(log_cfg.get("max_crops_per_batch", 8)),
+            heavy_threshold=int(log_cfg.get("heavy_threshold", 12)),
         )
         session_dir = self._grading_recorder.start_session(base_dir)
+        self._wire_infer_logging()
         try:
             rel = session_dir.relative_to(APP_ROOT)
         except ValueError:
@@ -696,6 +724,7 @@ class MainWindow(QMainWindow):
         if self._grading_recorder is not None:
             self._grading_recorder.stop_session()
             self._grading_recorder = None
+        self._wire_infer_logging()
         log_cfg = self._cfg.get("logging", {})
         raw_out = log_cfg.get("output_dir", "data/sessions")
         self._left.set_logging_path(raw_out)
@@ -705,6 +734,7 @@ class MainWindow(QMainWindow):
             self._right.status_group.set_status("Logger", "idle", "Off")
 
     def _stop_pipeline(self) -> None:
+        self._preview_timer.stop()
         self._stop_grading_session()
         if self._sorter:
             self._sorter.stop()
@@ -743,24 +773,66 @@ class MainWindow(QMainWindow):
 
     # ── Worker signals ────────────────────────────────────────────────────────
 
+    _PREVIEW_W = 512
+
     @pyqtSlot(object, object, object, float)
     def _on_frame(self, ch1, ch2, ch3, fps: float) -> None:
-        # Always store latest frames so inference can annotate them
+        """Coalesce bursts — always keep latest frame, never flood infer/GUI."""
+        self._pending_frame = (ch1, ch2, ch3, fps)
+        if not self._frame_coalesce_pending:
+            self._frame_coalesce_pending = True
+            QTimer.singleShot(0, self._apply_pending_frame)
+
+    def _apply_pending_frame(self) -> None:
+        self._frame_coalesce_pending = False
+        pf = self._pending_frame
+        if pf is None:
+            return
+
+        ch1, ch2, ch3, fps = pf
         self._last_ch1 = ch1
         self._last_ch2 = ch2
         self._last_ch3 = ch3
+        self._cam_fps_reported = fps
 
-        inference_running = (
-            self._infer_w is not None and self._infer_w.isRunning()
-        )
-
-        if not inference_running:
-            # No inference — show raw video on all channels
+        if self._infer_w is not None and self._infer_w.isRunning():
+            self._infer_w.enqueue(ch1, ch2, ch3)
+        else:
             self._center.channel_display.update_frames(ch1, ch2, ch3, fps)
 
-        # Feed frames to inference worker if running
-        if inference_running:
-            self._infer_w.enqueue(ch1, ch2, ch3)
+        # A newer frame arrived while we were processing — apply it once more.
+        if self._pending_frame is not pf:
+            self._frame_coalesce_pending = True
+            QTimer.singleShot(0, self._apply_pending_frame)
+
+    def _wire_infer_logging(self) -> None:
+        if self._infer_w is None:
+            return
+        rec = self._grading_recorder if self._logging_enabled else None
+        self._infer_w.set_grading_recorder(rec)
+
+    def _flush_channel_preview(self) -> None:
+        """Timer-driven channel refresh — never blocks camera or inference enqueue."""
+        if self._last_ch1 is None:
+            return
+        if self._infer_w is not None and self._infer_w.isRunning():
+            fps = self._cam_fps_reported
+            orig_shape = (self._last_ch1.shape[1], self._last_ch1.shape[0])
+            for idx, frame in enumerate((self._last_ch1, self._last_ch2, self._last_ch3)):
+                self._center.channel_display.update_channel_frame(
+                    idx, self._downscale_preview(frame), fps, orig_shape,
+                )
+
+    def _downscale_preview(self, frame: np.ndarray) -> np.ndarray:
+        import cv2
+
+        if frame is None:
+            return frame
+        h, w = frame.shape[:2]
+        nh = max(1, int(h * (self._PREVIEW_W / w)))
+        return cv2.resize(
+            frame, (self._PREVIEW_W, nh), interpolation=cv2.INTER_LINEAR,
+        )
 
     @pyqtSlot(str, bool)
     def _on_cam_status(self, msg: str, is_error: bool) -> None:
@@ -855,20 +927,19 @@ class MainWindow(QMainWindow):
             iou_threshold  = inf_cfg.get("iou_threshold", 0.45),
             device         = inf_cfg.get("device", "cuda"),
             input_mode     = input_mode,
+            tracker        = self._tracker,
+            size_acc       = self._size_acc,
+            size_lock      = self._size_lock,
         )
-        self._infer_w.sig_model_ready.connect(self._on_model_ready)  # resume video here
-        self._infer_w.sig_frame_result.connect(self._on_inference_result)
+        self._infer_w.sig_model_ready.connect(self._on_model_ready)
+        self._infer_w.sig_preview.connect(self._on_track_preview)
+        self._infer_w.sig_graded.connect(self._on_graded_batch)
         self._infer_w.sig_fps.connect(self._on_inference_fps)
         self._infer_w.sig_status.connect(self._on_inference_status)
+        self._wire_infer_logging()
         self._infer_w.start()
 
     # ── Class colours (BGR): 0=Fresh-green  1=Processing-amber  2=Cull-red ──
-    _CLASS_COLORS = [
-        (52,  211, 153),   # 0 Fresh      — green
-        (251, 191,  36),   # 1 Processing — amber
-        (248, 113, 113),   # 2 Cull       — red
-    ]
-    _CLASS_NAMES = ["Fresh", "Processing", "Cull"]
     _OUTLET_MAP  = {"Fresh": "A", "Processing": "B", "Cull": "C"}
 
     @pyqtSlot()
@@ -882,36 +953,35 @@ class MainWindow(QMainWindow):
         that were already in the queue before the pause, then resume the video
         so it continues from exactly where it stopped.
         """
-        # Drain the inference queue so the model processes only fresh frames.
         if self._infer_w is not None:
-            q = self._infer_w._queue
-            drained = 0
-            while True:
-                try:
-                    q.get_nowait()
-                    drained += 1
-                except Exception:
-                    break
+            drained = self._infer_w.drain_pending()
             if drained:
-                log.debug("_on_model_ready: drained %d stale frame(s) from inference queue", drained)
+                log.debug("_on_model_ready: drained %d stale frame(s)", drained)
 
         # Resume video from the exact frame it was paused at.
         if isinstance(self._cam_w, VideoWorker):
             self._cam_w.resume()
             log.info("_on_model_ready: VideoWorker resumed")
 
-    @pyqtSlot(object, object)
-    def _on_inference_result(self, result, frame: np.ndarray) -> None:
-        """Tracker + logging on the hot path; UI / sizing deferred."""
-        if self._tracker is None or self._last_ch1 is None:
+    @pyqtSlot(object, list)
+    def _on_track_preview(self, thumb: np.ndarray, active: list) -> None:
+        """Coalesced UI refresh — logging already handled on inference thread."""
+        self._last_input_frame = thumb
+        self._display_active = active
+        if not self._preview_ui_pending:
+            self._preview_ui_pending = True
+            QTimer.singleShot(0, self._flush_track_preview)
+
+    def _flush_track_preview(self) -> None:
+        self._preview_ui_pending = False
+        active = getattr(self, "_display_active", None)
+        if active is None:
             return
+        self._schedule_display_update(active, self._infer_fps)
 
-        self._last_input_frame = frame
-        active, graded = self._tracker.update(result, self._last_ch1.shape)
-
-        if self._grading_recorder is not None and active:
-            self._grading_recorder.record_batch(frame, active)
-
+    @pyqtSlot(list)
+    def _on_graded_batch(self, graded: list) -> None:
+        """Grade commits — always processed immediately, never coalesced."""
         for rec in graded:
             if self._grading_recorder is not None:
                 self._grading_recorder.on_grade_committed(
@@ -941,17 +1011,6 @@ class MainWindow(QMainWindow):
         if graded:
             self._schedule_graded_ui()
 
-        if self._size_acc is not None and active:
-            if graded:
-                # Must run before deferred commit() in _flush_graded_ui
-                self._size_acc.update(result, active)
-            else:
-                self._pending_size_result = result
-                self._pending_size_active = active
-                self._schedule_size_update()
-
-        self._schedule_display_update(active, self._infer_fps)
-
     def _schedule_graded_ui(self) -> None:
         if not self._graded_ui_pending:
             self._graded_ui_pending = True
@@ -963,10 +1022,10 @@ class MainWindow(QMainWindow):
         self._graded_ui_queue = []
         for rec in queue:
             outlet = self._OUTLET_MAP.get(rec.class_name, "?")
-            size_mm = (
-                self._size_acc.commit(rec.track_id, rec.lane)
-                if self._size_acc is not None else None
-            )
+            size_mm = None
+            if self._size_acc is not None:
+                with self._size_lock:
+                    size_mm = self._size_acc.commit(rec.track_id, rec.lane)
             self._right.results_group.add_result(
                 rec.seq_id, rec.lane, rec.class_name, rec.confidence, outlet, size_mm,
             )
@@ -979,27 +1038,8 @@ class MainWindow(QMainWindow):
                 f"{rec.confidence * 100:.1f}%  ({rec.frames_seen} frames)"
             )
 
-    def _schedule_size_update(self) -> None:
-        if not self._size_update_pending:
-            self._size_update_pending = True
-            QTimer.singleShot(0, self._flush_size_update)
-
-    def _flush_size_update(self) -> None:
-        self._size_update_pending = False
-        result = self._pending_size_result
-        active = self._pending_size_active
-        if self._size_acc is not None and result is not None and active:
-            self._size_acc.update(result, active)
-
     def _schedule_display_update(self, active: list, fps: float) -> None:
-        """Coalesce display repaints; throttle when many apples are on screen."""
-        n = len(active)
-        if n > 12:
-            now = time.monotonic()
-            if now - self._last_display_ts < 0.08:
-                return
-            self._last_display_ts = now
-
+        """Coalesce model-input repaints (one per event-loop tick)."""
         self._display_active = active
         self._display_fps = fps
         if not self._display_pending:
@@ -1009,139 +1049,19 @@ class MainWindow(QMainWindow):
     def _render_deferred_display(self) -> None:
         self._display_pending = False
         active = getattr(self, "_display_active", None)
-        if active is None or self._last_ch1 is None:
+        if active is None or self._last_input_frame is None:
             return
 
-        fps = self._display_fps
-        ann_ch1 = self._annotate_tracked(self._last_ch1, active, show_label=False)
-        orig_shape = (self._last_ch1.shape[1], self._last_ch1.shape[0])
-        self._center.channel_display.update_channel_frame(0, ann_ch1, fps, orig_shape)
-
-        # Skip CH2/CH3 when crowded — same boxes, saves 2 annotate passes
-        if len(active) <= 12:
-            ann_ch2 = self._annotate_tracked(self._last_ch2, active, show_label=False)
-            ann_ch3 = self._annotate_tracked(self._last_ch3, active, show_label=False)
-            self._center.channel_display.update_channel_frame(1, ann_ch2, fps, orig_shape)
-            self._center.channel_display.update_channel_frame(2, ann_ch3, fps, orig_shape)
-
-        if self._last_input_frame is not None:
-            ann_input = self._annotate_tracked(
-                self._last_input_frame, active, show_label=True,
-            )
-            self._center.model_input_panel.update_frame(
-                ann_input, fps, self._total_graded,
-            )
-
-    _DRAW_W = 512
-
-    def _downscale_frame(self, frame: np.ndarray) -> tuple[np.ndarray, float]:
-        """Downscale to 512px-wide canvas (same as annotation path)."""
-        import cv2
-
-        h, w = frame.shape[:2]
-        scale_f = self._DRAW_W / w
-        draw_h = int(h * scale_f)
-        if frame.ndim == 2:
-            out = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-        else:
-            out = frame
-        small = cv2.resize(out, (self._DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
-        return small, scale_f
-
-    @staticmethod
-    def _scale_active_boxes(active: list, scale_f: float) -> list[dict]:
-        scaled = []
-        for t in active:
-            x1, y1, x2, y2 = t["box"]
-            scaled.append({
-                **t,
-                "box": (
-                    int(x1 * scale_f), int(y1 * scale_f),
-                    int(x2 * scale_f), int(y2 * scale_f),
-                ),
-            })
-        return scaled
-
-    def _annotate_tracked(
-        self, frame: np.ndarray, active: list, show_label: bool = True
-    ) -> np.ndarray:
-        """
-        Draw bounding boxes on a downscaled copy for speed.
-
-        Args:
-            frame:      Source numpy frame (any channel layout).
-            active:     List of active track dicts from AppleTracker.
-            show_label: If True, draw grade + ID pill above each box.
-                        If False, draw the coloured box only — used for
-                        the raw CH1/CH2/CH3 panels where grading info is
-                        shown exclusively in the AI Model Input panel.
-        """
-        import cv2
-
-        if frame is None:
-            return frame
-
-        h, w = frame.shape[:2]
-        DRAW_W = self._DRAW_W
-        scale_f = DRAW_W / w
-        draw_h = int(h * scale_f)
-
-        if frame.ndim == 2:
-            src = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-        else:
-            src = frame
-
-        small = cv2.resize(src, (DRAW_W, draw_h), interpolation=cv2.INTER_LINEAR)
-
-        if not active:
-            return small
-
-        # Drawing params for 512px canvas
-        fs        = 0.55   # font scale
-        box_thick = 2
-        txt_thick = 1
-
-        for t in active:
-            cls      = t["class_id"]
-            conf     = t["conf"]
-            seq      = t["seq_id"]
-            lane     = t["lane"]
-            eligible = t.get("eligible", True)
-            x1, y1, x2, y2 = t["box"]
-
-            # Scale box coords to draw canvas
-            sx1 = int(x1 * scale_f); sy1 = int(y1 * scale_f)
-            sx2 = int(x2 * scale_f); sy2 = int(y2 * scale_f)
-
-            color      = self._CLASS_COLORS[cls % len(self._CLASS_COLORS)]
-            name       = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
-            draw_color = color if eligible else (120, 120, 120)
-
-            # Box
-            cv2.rectangle(small, (sx1, sy1), (sx2, sy2), draw_color, box_thick)
-
-            # Label pill ─────────────────────────────────────────────────────
-            # show_label=True  (AI Model Input panel): "#3 Fresh 87% L2"
-            # show_label=False (raw CH1/CH2/CH3):      "#3 L2"  — ID + lane only
-            id_part = f"#{seq}" if seq is not None else "?"
-            if show_label:
-                name  = self._CLASS_NAMES[cls] if cls < len(self._CLASS_NAMES) else str(cls)
-                label = f"{id_part} {name} {conf*100:.0f}% L{lane}"
-            else:
-                label = f"{id_part} L{lane}"
-
-            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, txt_thick)
-            lx = max(0, sx1)
-            ly = max(lh + 4, sy1 - 4)
-
-            # Small filled pill behind text
-            cv2.rectangle(small, (lx, ly - lh - 3), (lx + lw + 4, ly + 2), draw_color, -1)
-            cv2.putText(small, label, (lx + 2, ly - 1),
-                        cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), txt_thick, cv2.LINE_AA)
-
-        # Return the fast 512px render directly — NO expensive upscale!
-        return small
-
+        box_ref_w = self._last_ch1.shape[1] if self._last_ch1 is not None else None
+        ann_input = annotate_tracked(
+            self._last_input_frame, active, show_label=True, box_ref_w=box_ref_w,
+        )
+        self._center.model_input_panel.update_frame(
+            ann_input, self._total_graded,
+        )
+        self._right.metrics_group.set_view_fps(
+            self._center.model_input_panel._last_display_fps,
+        )
 
     @pyqtSlot(float)
     def _on_inference_fps(self, fps: float) -> None:
@@ -1198,6 +1118,7 @@ class MainWindow(QMainWindow):
         else:
             self._stop_grading_session()
             self._right.status_group.set_status("Logger", "idle", "Off")
+        self._wire_infer_logging()
 
     @pyqtSlot(int, int, int)
     def _on_exposure_changed(self, ch1_us: int, ch2_us: int, ch3_us: int) -> None:

@@ -1075,7 +1075,7 @@ class LeftControlPanel(QWidget):
         card = _Card()
 
         # Readout label — shows current ROI as 'W × H  @ (X, Y)'
-        self._lbl_roi = QLabel("Full Frame  —  2048 × 1536 @ (0, 0)")
+        self._lbl_roi = QLabel("Full Frame 2048 × 1536 @ (0, 0)")
         self._lbl_roi.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._lbl_roi.setStyleSheet(
             "color: #06b6d4; font-size: 10px; font-weight: 600; "
@@ -1179,9 +1179,9 @@ class LeftControlPanel(QWidget):
         full = (x == 0 and y == 0 and w == 2048 and h == 1536)
         pct  = round(100 * w * h / (2048 * 1536))
         if full:
-            self._lbl_roi.setText("Full Frame  —  2048 × 1536 @ (0, 0)")
+            self._lbl_roi.setText("Full Frame 2048 × 1536 @ (0, 0)")
         else:
-            self._lbl_roi.setText(f"{w} × {h} px @ ({x}, {y})  —  {pct}% of frame")
+            self._lbl_roi.setText(f"{w} × {h} px @ ({x}, {y})  {pct}% of frame")
         # Push live preview overlay to camera display (appears immediately, no Apply needed)
         self.sig_roi_preview.emit(x, y, w, h)
 

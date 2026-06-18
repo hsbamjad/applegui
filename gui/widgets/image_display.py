@@ -10,6 +10,8 @@ Design: Thin 3px colored top-border accent per channel.
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import cv2
 from PyQt6.QtWidgets import (
@@ -60,6 +62,7 @@ class ChannelPanel(QWidget):
         # full sensor after ROI is applied).
         self._frame_w: int = 2048
         self._frame_h: int = 1536
+        self._disp_times: list[float] = []
         self._setup()
 
     def _setup(self) -> None:
@@ -231,10 +234,21 @@ class ChannelPanel(QWidget):
         disp_w = orig_shape[0] if orig_shape else w
         disp_h = orig_shape[1] if orig_shape else h
         self._lbl_res.setText(f"{disp_w}×{disp_h}")
-        self._lbl_fps.setText(f"{fps:.1f} FPS")
+        self._lbl_fps.setText(f"{self._measured_display_fps():.1f} FPS")
         # Track live frame dimensions for accurate overlay aspect-ratio mapping
         self._frame_w = disp_w
         self._frame_h = disp_h
+
+    def _measured_display_fps(self) -> float:
+        """Rolling 1-second rate of actual pixmap updates (what you see on screen)."""
+        now = time.perf_counter()
+        self._disp_times.append(now)
+        cutoff = now - 1.0
+        self._disp_times = [t for t in self._disp_times if t >= cutoff]
+        if len(self._disp_times) < 2:
+            return 0.0
+        span = self._disp_times[-1] - self._disp_times[0]
+        return (len(self._disp_times) - 1) / span if span > 1e-6 else 0.0
 
     def _draw_roi_overlay(self, pixmap: QPixmap, frame_w: int, frame_h: int) -> QPixmap:
         """
@@ -378,6 +392,7 @@ class ChannelPanel(QWidget):
 
     def reset(self) -> None:
         self._frames = 0
+        self._disp_times.clear()
         self._lbl_res.setText("No Signal")
         self._lbl_fps.setText("-- FPS")
         self._draw_placeholder()

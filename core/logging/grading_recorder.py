@@ -40,6 +40,18 @@ _CLASS_COLORS = [
 # Max in-flight batches (frame + encode).  Extra frames are skipped for logging
 # only — tracker / counting are unaffected.
 _MAX_PENDING_BATCHES = 2
+_DEFAULT_MAX_CROPS = 8
+_DEFAULT_HEAVY_THRESHOLD = 12
+
+
+def _tracks_for_logging(active: list[dict], max_n: int) -> list[dict]:
+    """Prefer counted apples (seq_id) when capping crops per frame."""
+    with_id = [t for t in active if t.get("seq_id") is not None]
+    without = [t for t in active if t.get("seq_id") is None]
+    out = with_id[:max_n]
+    if len(out) < max_n:
+        out.extend(without[: max_n - len(out)])
+    return out
 
 
 @dataclass
@@ -95,12 +107,16 @@ class GradingRecorder:
         crop_padding_frac: float = 0.20,
         crop_max_dim: int = 512,
         max_pending_batches: int = _MAX_PENDING_BATCHES,
+        max_crops_per_batch: int = _DEFAULT_MAX_CROPS,
+        heavy_threshold: int = _DEFAULT_HEAVY_THRESHOLD,
     ) -> None:
         self._image_ext = image_format.lower().lstrip(".")
         self._jpeg_quality = jpeg_quality
         self._save_frames = save_frames
         self._crop_pad = crop_padding_frac
         self._crop_max_dim = crop_max_dim
+        self._max_crops = max(1, max_crops_per_batch)
+        self._heavy_threshold = max(1, heavy_threshold)
 
         self._lock = threading.Lock()
         self._session_dir: Path | None = None
@@ -114,7 +130,6 @@ class GradingRecorder:
 
         self._batch_slots = threading.Semaphore(max_pending_batches)
         self._cmd_q: queue.SimpleQueue = queue.SimpleQueue()
-        self._encode_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="log-enc")
         self._write_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="log-wr")
         self._worker = threading.Thread(target=self._run_worker, daemon=True)
         self._worker.start()
@@ -138,10 +153,10 @@ class GradingRecorder:
         log.info("GradingRecorder session started: %s", session_dir)
         return session_dir
 
-    def record_batch(self, frame_bgr: np.ndarray, tracks: list[dict]) -> None:
-        """Enqueue one frame (already copied) + track snapshots — never blocks."""
-        if not self._active or frame_bgr is None or not tracks:
-            return
+    def acquire_batch_slot(self) -> bool:
+        """Non-blocking.  Caller must submit_batch() or release_batch_slot()."""
+        if not self._active:
+            return False
         if not self._batch_slots.acquire(blocking=False):
             self._dropped_batches += 1
             if self._dropped_batches in (1, 50, 200):
@@ -149,9 +164,31 @@ class GradingRecorder:
                     "GradingRecorder: dropped %d logging batches (worker backlog)",
                     self._dropped_batches,
                 )
+            return False
+        return True
+
+    def release_batch_slot(self) -> None:
+        self._batch_slots.release()
+
+    def submit_batch(self, frame_bgr: np.ndarray, tracks: list[dict]) -> None:
+        """Enqueue a batch; batch slot must already be acquired."""
+        if not tracks or frame_bgr is None:
+            self.release_batch_slot()
             return
-        snaps = tuple(_snapshot(t) for t in tracks)
+        capped = (
+            _tracks_for_logging(tracks, self._max_crops)
+            if len(tracks) > self._max_crops else tracks
+        )
+        snaps = tuple(_snapshot(t) for t in capped)
         self._cmd_q.put(("batch", frame_bgr, snaps))
+
+    def record_batch(self, frame_bgr: np.ndarray, tracks: list[dict]) -> None:
+        """Legacy entry — acquires slot then submits (used off hot path only)."""
+        if not self._active or frame_bgr is None or not tracks:
+            return
+        if not self.acquire_batch_slot():
+            return
+        self.submit_batch(frame_bgr, tracks)
 
     def on_grade_committed(
         self,
@@ -216,12 +253,11 @@ class GradingRecorder:
                     self._batch_slots.release()
 
     def _on_batch(self, frame: np.ndarray, tracks: tuple[dict, ...]) -> None:
-        prepared = list(self._encode_pool.map(
-            lambda t: self._prepare_track(frame, t), tracks,
-        ))
+        # Sequential encode — avoids CPU spikes when many apples are on screen.
         writes: list[_WriteJob] = []
         with self._lock:
-            for item in prepared:
+            for t in tracks:
+                item = self._prepare_track(frame, t)
                 if item is not None:
                     writes.extend(self._apply_prepared(item))
         self._flush_writes(writes)

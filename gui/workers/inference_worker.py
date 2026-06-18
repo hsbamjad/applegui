@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import queue
 import random
+import threading
 import time
 from pathlib import Path
 from core.log import get_logger
@@ -96,27 +97,24 @@ class RealInferenceWorker(QThread):
 
     Runs on a dedicated QThread. Accepts frames from a thread-safe queue
     (maxsize=2 — drops stale frames if GPU falls behind camera FPS).
-    Emits an annotated frame and raw supervision Detections per pass.
+    YOLO + conveyor tracker run here; GUI thread stays lightweight.
 
     Signals:
-      sig_frame_result(ultralytics Result, input_frame_bgr)
-           result     : ultralytics Results object for one frame
-           input_frame: spectral composite fed to YOLO (caller-owned copy)
-      sig_fps(float)   -- inference throughput in frames/sec
-      sig_status(str, bool) -- status messages and errors
+      sig_preview(thumb_bgr, active)   — coalesced on GUI for model-input panel
+      sig_graded(list[GradeRecord])    — grade commits, never dropped
+      sig_fps(float)
+      sig_status(str, bool)
     """
 
-    sig_frame_result = pyqtSignal(object, object)   # (ultralytics Result, input frame BGR copy)
-    sig_fps         = pyqtSignal(float)
-    sig_status      = pyqtSignal(str, bool)
-    sig_model_ready = pyqtSignal()         # fired once: model loaded, inference loop about to start
+    sig_preview = pyqtSignal(object, list)
+    sig_graded  = pyqtSignal(list)
+    sig_fps     = pyqtSignal(float)
+    sig_status  = pyqtSignal(str, bool)
+    sig_model_ready = pyqtSignal()
 
-    # Box colours per class index (BGR)
-    _CLASS_COLORS = [
-        (52, 211, 153),   # Fresh     — emerald green
-        (251, 191, 36),   # Processing — amber
-        (248,  113, 113), # Cull       — red
-    ]
+    _THUMB_W = 512
+    _LOG_HEAVY_THRESHOLD = 12
+    _LOG_FRAME_STRIDE = 2
 
     def __init__(
         self,
@@ -124,24 +122,35 @@ class RealInferenceWorker(QThread):
         conf_threshold: float = 0.5,
         iou_threshold:  float = 0.45,
         device: str = "cuda",
-        input_mode: str = "RB-nir1",  # band combo the model was trained on
+        input_mode: str = "RB-nir1",
+        tracker=None,
+        size_acc=None,
+        size_lock: threading.Lock | None = None,
     ) -> None:
         super().__init__()
-        self._model_path = model_path
-        self._conf       = conf_threshold
-        self._iou        = iou_threshold
-        self._device     = device
-        self._input_mode = input_mode
-        self._running    = False
+        self._model_path  = model_path
+        self._conf        = conf_threshold
+        self._iou         = iou_threshold
+        self._device      = device
+        self._input_mode  = input_mode
+        self._tracker     = tracker
+        self._size_acc    = size_acc
+        self._size_lock   = size_lock
+        self._size_tick   = 0
+        self._log_tick    = 0
+        self._recorder    = None
+        self._running     = False
         self._queue: queue.Queue = queue.Queue(maxsize=2)
+        self._tracker_cfg = str(
+            Path(__file__).parent.parent.parent / "bytetrack.yaml"
+        )
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    def set_grading_recorder(self, recorder) -> None:
+        """Live session recorder — logging runs on this thread, not the GUI."""
+        self._recorder = recorder
 
     def enqueue(self, ch1, ch2, ch3) -> None:
-        """
-        Push all 3 channel frames to the inference queue.
-        Non-blocking: drops the oldest entry if queue is full.
-        """
+        """Non-blocking enqueue; drops oldest triplet when full."""
         if ch1 is None:
             return
         try:
@@ -156,24 +165,19 @@ class RealInferenceWorker(QThread):
             except queue.Full:
                 pass
 
+    def drain_pending(self) -> int:
+        """Discard queued frames (e.g. after model-load pause)."""
+        n = 0
+        while True:
+            try:
+                self._queue.get_nowait()
+                n += 1
+            except queue.Empty:
+                break
+        return n
+
     def _prepare_input(self, ch1, ch2, ch3) -> np.ndarray:
-        """
-        Build a 3-channel uint8 numpy array for YOLO based on input_mode.
-
-        Channel layout from camera:
-          ch1 = Source0  BGR color frame  (~660 nm visible)
-          ch2 = Source1  grayscale NIR1   (~800 nm)
-          ch3 = Source2  grayscale NIR2   (~900 nm)
-
-        Supported input_mode values (match the band combo used for training):
-          'RB-nir1'     R, B from ch1  + NIR1 from ch2   <- default / best model
-          'RG-nir1'     R, G from ch1  + NIR1 from ch2
-          'R-nir1-nir2' R from ch1     + NIR1 ch2 + NIR2 ch3
-          'RGB'         Full BGR color frame (ch1 as-is)
-          'CH1'         ch1 as-is (fallback)
-        """
         def _to_gray(f):
-            """Ensure frame is 2-D grayscale uint8."""
             if f is None:
                 return np.zeros(ch1.shape[:2], dtype=np.uint8)
             if f.dtype != np.uint8:
@@ -187,56 +191,61 @@ class RealInferenceWorker(QThread):
 
         mode = self._input_mode.lower()
 
-        # ch1 is BGR from OpenCV: index 0=B, 1=G, 2=R
         if mode == "rb-nir1":
-            R    = ch1[:, :, 2]
-            B    = ch1[:, :, 0]
-            N1   = _to_gray(ch2)
-            return np.stack([R, B, N1], axis=2)
-
-        elif mode == "rg-nir1":
-            R    = ch1[:, :, 2]
-            G    = ch1[:, :, 1]
-            N1   = _to_gray(ch2)
-            return np.stack([R, G, N1], axis=2)
-
-        elif mode == "r-nir1-nir2":
-            R    = ch1[:, :, 2]
-            N1   = _to_gray(ch2)
-            N2   = _to_gray(ch3)
-            return np.stack([R, N1, N2], axis=2)
-
-        elif mode == "rgb":
+            return np.stack([ch1[:, :, 2], ch1[:, :, 0], _to_gray(ch2)], axis=2)
+        if mode == "rg-nir1":
+            return np.stack([ch1[:, :, 2], ch1[:, :, 1], _to_gray(ch2)], axis=2)
+        if mode == "r-nir1-nir2":
+            return np.stack([ch1[:, :, 2], _to_gray(ch2), _to_gray(ch3)], axis=2)
+        if mode == "rgb":
             return _ensure_bgr(ch1)
+        return _ensure_bgr(ch1)
 
-        else:  # 'CH1' or unknown — pass ch1 unchanged
-            return _ensure_bgr(ch1)
+    @staticmethod
+    def _make_thumb(frame: np.ndarray) -> np.ndarray:
+        h, w = frame.shape[:2]
+        nh = max(1, int(h * (RealInferenceWorker._THUMB_W / w)))
+        return cv2.resize(
+            frame,
+            (RealInferenceWorker._THUMB_W, nh),
+            interpolation=cv2.INTER_LINEAR,
+        )
+
+    def _maybe_log_batch(self, frame: np.ndarray, active: list) -> None:
+        """Copy + enqueue only when a recorder slot is free — never blocks inference."""
+        rec = self._recorder
+        if rec is None or not active:
+            return
+        n = len(active)
+        self._log_tick += 1
+        if n > self._LOG_HEAVY_THRESHOLD and self._log_tick % self._LOG_FRAME_STRIDE != 0:
+            return
+        if not rec.acquire_batch_slot():
+            return
+        try:
+            rec.submit_batch(frame.copy(), active)
+        except Exception:
+            rec.release_batch_slot()
+            raise
 
     def stop(self) -> None:
         self._running = False
-        # Unblock the queue.get() call in run() so the thread exits cleanly
         try:
             self._queue.put_nowait(None)
         except queue.Full:
             pass
         self.wait(5000)
 
-    # ── QThread entry point ──────────────────────────────────────────────────
-
     def run(self) -> None:
-        # Import here so the module loads even without ultralytics installed
         try:
             from ultralytics import YOLO
-            import supervision as sv
         except ImportError as e:
             self.sig_status.emit(f"Import error: {e}", True)
             return
 
-        # Load model
         self.sig_status.emit(f"Loading model: {self._model_path}", False)
         try:
             model = YOLO(self._model_path)
-            class_names = model.names   # {0: 'Fresh', 1: 'Processing', 2: 'Cull'}
             self.sig_status.emit(
                 f"Model loaded successfully  |  Device: {self._device.upper()}", False
             )
@@ -245,13 +254,11 @@ class RealInferenceWorker(QThread):
             log.exception("RealInferenceWorker: model load failed")
             return
 
-        # Signal the main thread that the model is ready.
-        # main_window._on_model_ready will resume the VideoWorker from here.
         self.sig_model_ready.emit()
 
-        self._running  = True
-        frame_count    = 0
-        fps_start      = time.perf_counter()
+        self._running   = True
+        frame_count     = 0
+        fps_start       = time.perf_counter()
 
         while self._running:
             try:
@@ -263,35 +270,46 @@ class RealInferenceWorker(QThread):
                 break
 
             ch1, ch2, ch3 = item
-
-            # Build model input from correct band combination
             frame = self._prepare_input(ch1, ch2, ch3)
 
-            # YOLO tracking with persist=True keeps internal tracker state
-            # across frames — far more stable than detect+external-tracker
             try:
-                # Use our custom bytetrack.yaml which raises track_low_thresh
-                # from 0.1 to 0.35 to eliminate conveyor-belt background noise.
-                _tracker_cfg = str(
-                    Path(__file__).parent.parent.parent / "bytetrack.yaml"
-                )
                 results = model.track(
-                    source   = frame,
-                    tracker  = _tracker_cfg,
-                    persist  = True,
-                    conf     = self._conf,
-                    iou      = self._iou,
-                    device   = self._device,
-                    imgsz    = 640,
-                    verbose  = False,
-                    save     = False,
+                    source  = frame,
+                    tracker = self._tracker_cfg,
+                    persist = True,
+                    conf    = self._conf,
+                    iou     = self._iou,
+                    device  = self._device,
+                    imgsz   = 640,
+                    verbose = False,
+                    save    = False,
                 )
             except Exception as e:
                 log.warning("Inference error: %s", e)
                 continue
 
-            # One cross-thread copy for tracker logging + model-input display
-            self.sig_frame_result.emit(results[0], frame.copy())
+            result = results[0]
+            if self._tracker is not None:
+                active, graded = self._tracker.update(result, frame.shape)
+            else:
+                active, graded = [], []
+
+            if self._size_acc is not None and active:
+                n = len(active)
+                self._size_tick += 1
+                if n <= 10 or self._size_tick % 2 == 0:
+                    lock = self._size_lock
+                    if lock:
+                        with lock:
+                            self._size_acc.update(result, active)
+                    else:
+                        self._size_acc.update(result, active)
+
+            thumb = self._make_thumb(frame)
+            self._maybe_log_batch(frame, active)
+            self.sig_preview.emit(thumb, active)
+            if graded:
+                self.sig_graded.emit(graded)
 
             frame_count += 1
             elapsed = time.perf_counter() - fps_start
