@@ -141,6 +141,7 @@ class RealInferenceWorker(QThread):
         self._recorder    = None
         self._running     = False
         self._queue: queue.Queue = queue.Queue(maxsize=2)
+        self._raw_frames: tuple | None = None   # (ch1, ch2, ch3) for current frame — raw source crops
         self._tracker_cfg = str(
             Path(__file__).parent.parent.parent / "bytetrack.yaml"
         )
@@ -223,7 +224,12 @@ class RealInferenceWorker(QThread):
         if not rec.acquire_batch_slot():
             return
         try:
-            rec.submit_batch(frame.copy(), active)
+            # Pass raw source frames so the recorder can save source0/1/2 crops.
+            # .copy() is intentionally deferred to the background worker to keep
+            # the inference hot path as light as possible; the tuple reference itself
+            # is safe here because _raw_frames is replaced (not mutated) each loop.
+            raw = self._raw_frames  # tuple[ch1, ch2, ch3] or None
+            rec.submit_batch(frame.copy(), active, raw)
         except Exception:
             rec.release_batch_slot()
             raise
@@ -271,6 +277,9 @@ class RealInferenceWorker(QThread):
 
             ch1, ch2, ch3 = item
             frame = self._prepare_input(ch1, ch2, ch3)
+            # Hold raw frames so _maybe_log_batch can pass them to the recorder.
+            # Stored as a tuple of references — no copy on the hot path.
+            self._raw_frames = (ch1, ch2, ch3)
 
             try:
                 results = model.track(

@@ -704,6 +704,7 @@ class MainWindow(QMainWindow):
             image_format=log_cfg.get("image_format", "jpg"),
             jpeg_quality=int(log_cfg.get("jpeg_quality", 92)),
             save_frames=bool(log_cfg.get("save_frames", True)),
+            save_raw_frames=bool(log_cfg.get("save_raw_frames", True)),
             crop_padding_frac=float(log_cfg.get("crop_padding_frac", 0.20)),
             crop_max_dim=int(log_cfg.get("crop_max_dim", 512)),
             max_pending_batches=int(log_cfg.get("max_pending_batches", 2)),

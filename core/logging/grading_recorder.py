@@ -9,7 +9,10 @@ capped so logging never starves the tracker.
 
 Output layout::
 
-    {session}/Lane{L}/Apple{N}/frame_XXX.jpg   # cropped apple + grade label
+    {session}/Lane{L}/Apple{N}/processed/frame_XXX.jpg   # YOLO-combined input crop + grade label
+    {session}/Lane{L}/Apple{N}/source0/frame_XXX.jpg     # raw ch1 (Color) crop — no annotations
+    {session}/Lane{L}/Apple{N}/source1/frame_XXX.jpg     # raw ch2 (NIR1)  crop — no annotations
+    {session}/Lane{L}/Apple{N}/source2/frame_XXX.jpg     # raw ch3 (NIR2)  crop — no annotations
     {session}/Lane{L}/Apple{N}.csv
 """
 
@@ -66,7 +69,10 @@ class _PendingMeta:
     lane: int
     raw_cls: int
     raw_conf: float
-    crop_jpeg: bytes | None = None
+    crop_jpeg: bytes | None = None          # processed (YOLO-input combined) crop
+    raw_crop_jpegs: tuple[bytes | None, bytes | None, bytes | None] = field(
+        default_factory=lambda: (None, None, None)
+    )  # (source0, source1, source2) raw crops — no annotation overlay
 
 
 @dataclass
@@ -104,6 +110,7 @@ class GradingRecorder:
         image_format: str = "jpg",
         jpeg_quality: int = 92,
         save_frames: bool = True,
+        save_raw_frames: bool = True,
         crop_padding_frac: float = 0.20,
         crop_max_dim: int = 512,
         max_pending_batches: int = _MAX_PENDING_BATCHES,
@@ -113,6 +120,7 @@ class GradingRecorder:
         self._image_ext = image_format.lower().lstrip(".")
         self._jpeg_quality = jpeg_quality
         self._save_frames = save_frames
+        self._save_raw_frames = save_raw_frames
         self._crop_pad = crop_padding_frac
         self._crop_max_dim = crop_max_dim
         self._max_crops = max(1, max_crops_per_batch)
@@ -170,8 +178,20 @@ class GradingRecorder:
     def release_batch_slot(self) -> None:
         self._batch_slots.release()
 
-    def submit_batch(self, frame_bgr: np.ndarray, tracks: list[dict]) -> None:
-        """Enqueue a batch; batch slot must already be acquired."""
+    def submit_batch(
+        self,
+        frame_bgr: np.ndarray,
+        tracks: list[dict],
+        raw_frames: tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None] | None = None,
+    ) -> None:
+        """
+        Enqueue a batch; batch slot must already be acquired.
+
+        raw_frames: optional (ch1, ch2, ch3) numpy arrays — the unprocessed
+        source frames captured at the same instant as frame_bgr.  When
+        supplied, raw crops are saved to source0/, source1/, source2/ under
+        each Apple folder.  Pass None to skip raw-frame saving.
+        """
         if not tracks or frame_bgr is None:
             self.release_batch_slot()
             return
@@ -180,15 +200,20 @@ class GradingRecorder:
             if len(tracks) > self._max_crops else tracks
         )
         snaps = tuple(_snapshot(t) for t in capped)
-        self._cmd_q.put(("batch", frame_bgr, snaps))
+        self._cmd_q.put(("batch", frame_bgr, snaps, raw_frames))
 
-    def record_batch(self, frame_bgr: np.ndarray, tracks: list[dict]) -> None:
+    def record_batch(
+        self,
+        frame_bgr: np.ndarray,
+        tracks: list[dict],
+        raw_frames: tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None] | None = None,
+    ) -> None:
         """Legacy entry — acquires slot then submits (used off hot path only)."""
         if not self._active or frame_bgr is None or not tracks:
             return
         if not self.acquire_batch_slot():
             return
-        self.submit_batch(frame_bgr, tracks)
+        self.submit_batch(frame_bgr, tracks, raw_frames)
 
     def on_grade_committed(
         self,
@@ -227,9 +252,9 @@ class GradingRecorder:
                         self._on_start(session_dir)
                     done.set()
                 elif kind == "batch":
-                    _, frame, tracks = cmd
+                    _, frame, tracks, raw_frames = cmd
                     try:
-                        self._on_batch(frame, tracks)
+                        self._on_batch(frame, tracks, raw_frames)
                     finally:
                         self._batch_slots.release()
                 elif kind == "commit":
@@ -252,18 +277,26 @@ class GradingRecorder:
                 if kind == "batch":
                     self._batch_slots.release()
 
-    def _on_batch(self, frame: np.ndarray, tracks: tuple[dict, ...]) -> None:
+    def _on_batch(
+        self,
+        frame: np.ndarray,
+        tracks: tuple[dict, ...],
+        raw_frames: tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None] | None,
+    ) -> None:
         # Sequential encode — avoids CPU spikes when many apples are on screen.
         writes: list[_WriteJob] = []
         with self._lock:
             for t in tracks:
-                item = self._prepare_track(frame, t)
+                item = self._prepare_track(frame, t, raw_frames)
                 if item is not None:
                     writes.extend(self._apply_prepared(item))
         self._flush_writes(writes)
 
     def _prepare_track(
-        self, frame: np.ndarray, t: dict,
+        self,
+        frame: np.ndarray,
+        t: dict,
+        raw_frames: tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None] | None = None,
     ) -> _PreparedTrack | None:
         if t.get("box") is None:
             return None
@@ -274,6 +307,11 @@ class GradingRecorder:
         )
         if self._save_frames:
             meta.crop_jpeg = self._encode_crop(frame, t)
+            if self._save_raw_frames and raw_frames is not None:
+                meta.raw_crop_jpegs = tuple(
+                    self._encode_raw_crop(rf, t) if rf is not None else None
+                    for rf in raw_frames
+                )
         return _PreparedTrack(
             track_id=int(t["track_id"]),
             seq_id=t.get("seq_id"),
@@ -292,26 +330,22 @@ class GradingRecorder:
             self._track_to_apple[track_id] = sid
             if track_id in self._track_buffer:
                 for bm in self._track_buffer.pop(track_id):
-                    job = self._append_row(sid, bm)
-                    if job is not None:
-                        writes.append(job)
-            job = self._append_row(sid, meta)
-            if job is not None:
-                writes.append(job)
+                    writes.extend(self._append_row(sid, bm))
+            writes.extend(self._append_row(sid, meta))
         else:
             self._track_buffer.setdefault(track_id, []).append(meta)
 
         return writes
 
-    def _append_row(self, seq_id: int, meta: _PendingMeta) -> _WriteJob | None:
-        """Must be called under self._lock."""
+    def _append_row(self, seq_id: int, meta: _PendingMeta) -> list[_WriteJob]:
+        """Must be called under self._lock.  Returns a list of write jobs."""
         state = self._apples.get(seq_id)
         if state is None:
             state = _AppleState(seq_id=seq_id, lane=meta.lane)
             self._apples[seq_id] = state
 
         if state.finalized:
-            return None
+            return []
 
         state.frame_idx += 1
         cls_name = (
@@ -325,13 +359,20 @@ class GradingRecorder:
             confidence=meta.raw_conf,
         ))
 
+        jobs: list[_WriteJob] = []
+        apple_dir = self._apple_dir(state)
+        fname = f"frame_{state.frame_idx:03d}.{self._image_ext}"
+
         if self._save_frames and meta.crop_jpeg is not None:
-            path = (
-                self._apple_dir(state)
-                / f"frame_{state.frame_idx:03d}.{self._image_ext}"
-            )
-            return _WriteJob(path, meta.crop_jpeg)
-        return None
+            jobs.append(_WriteJob(apple_dir / "processed" / fname, meta.crop_jpeg))
+
+        # Raw source crops (source0, source1, source2)
+        _SRC_NAMES = ("source0", "source1", "source2")
+        for src_name, raw_jpeg in zip(_SRC_NAMES, meta.raw_crop_jpegs):
+            if raw_jpeg is not None:
+                jobs.append(_WriteJob(apple_dir / src_name / fname, raw_jpeg))
+
+        return jobs
 
     def _on_start(self, session_dir: Path) -> None:
         self._session_dir = session_dir
@@ -352,9 +393,7 @@ class GradingRecorder:
         writes: list[_WriteJob] = []
         if track_id >= 0 and track_id in self._track_buffer:
             for bm in self._track_buffer.pop(track_id):
-                job = self._append_row(seq_id, bm)
-                if job is not None:
-                    writes.append(job)
+                writes.extend(self._append_row(seq_id, bm))
 
         state = self._apples.get(seq_id)
         if state is None:
@@ -374,9 +413,7 @@ class GradingRecorder:
             if sid is None:
                 continue
             for bm in buffered:
-                job = self._append_row(sid, bm)
-                if job is not None:
-                    writes.append(job)
+                writes.extend(self._append_row(sid, bm))
         self._track_buffer.clear()
         self._track_to_apple.clear()
 
@@ -398,9 +435,52 @@ class GradingRecorder:
     # ── Crop rendering ────────────────────────────────────────────────────────
 
     def _encode_crop(self, frame: np.ndarray, track: dict) -> bytes | None:
+        """Encode the YOLO-combined (processed) crop with annotation overlay."""
         crop = self._render_crop(frame, track)
         if crop is None:
             return None
+        ok, buf = cv2.imencode(
+            f".{self._image_ext}", crop,
+            [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
+        )
+        return buf.tobytes() if ok else None
+
+    def _encode_raw_crop(self, frame: np.ndarray, track: dict) -> bytes | None:
+        """
+        Encode a clean crop from a raw source frame — no annotation overlay.
+        The crop region mirrors the processed crop (same box + padding) so
+        all four images (processed + source0/1/2) are spatially aligned.
+        """
+        x1, y1, x2, y2 = (int(v) for v in track["box"])
+        h, w = frame.shape[:2]
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        bw, bh = x2 - x1, y2 - y1
+        pad = int(self._crop_pad * max(bw, bh))
+        cx1 = max(0, x1 - pad)
+        cy1 = max(0, y1 - pad)
+        cx2 = min(w, x2 + pad)
+        cy2 = min(h, y2 + pad)
+
+        crop = frame[cy1:cy2, cx1:cx2]
+        # Ensure 3-channel for consistent JPEG output
+        if crop.ndim == 2:
+            crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+        elif crop.shape[2] == 4:
+            crop = crop[:, :, :3]
+
+        # Resize if larger than crop_max_dim (same scale rule as processed crop)
+        ch, cw = crop.shape[:2]
+        max_dim = max(ch, cw)
+        if max_dim > self._crop_max_dim:
+            scale = self._crop_max_dim / max_dim
+            crop = cv2.resize(
+                crop,
+                (int(cw * scale), int(ch * scale)),
+                interpolation=cv2.INTER_AREA,
+            )
+
         ok, buf = cv2.imencode(
             f".{self._image_ext}", crop,
             [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
@@ -465,6 +545,7 @@ class GradingRecorder:
     # ── Filesystem ────────────────────────────────────────────────────────────
 
     def _apple_dir(self, state: _AppleState) -> Path:
+        """Root folder for this apple — subfolders: processed/, source0/, source1/, source2/."""
         assert self._session_dir is not None
         return self._session_dir / f"Lane{state.lane}" / f"Apple{state.seq_id}"
 

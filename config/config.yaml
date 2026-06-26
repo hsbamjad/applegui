@@ -168,7 +168,8 @@ inference:
 logging:
   enabled: false
   output_dir: "data/sessions"
-  save_frames: true
+  save_frames: true          # save processed (YOLO-combined) crop under Apple{N}/processed/
+  save_raw_frames: true      # save raw source crops under Apple{N}/source0/, source1/, source2/
   image_format: "jpg"
   jpeg_quality: 92
   crop_padding_frac: 0.20    # padding around bbox for saved crop
