@@ -707,6 +707,8 @@ class MainWindow(QMainWindow):
             save_raw_frames=bool(log_cfg.get("save_raw_frames", True)),
             crop_padding_frac=float(log_cfg.get("crop_padding_frac", 0.20)),
             crop_max_dim=int(log_cfg.get("crop_max_dim", 512)),
+            raw_crop_max_dim=int(log_cfg.get("raw_crop_max_dim", 256)),
+            raw_frame_stride=int(log_cfg.get("raw_frame_stride", 1)),
             max_pending_batches=int(log_cfg.get("max_pending_batches", 2)),
             max_crops_per_batch=int(log_cfg.get("max_crops_per_batch", 8)),
             heavy_threshold=int(log_cfg.get("heavy_threshold", 12)),

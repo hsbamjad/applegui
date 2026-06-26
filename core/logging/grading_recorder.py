@@ -113,6 +113,8 @@ class GradingRecorder:
         save_raw_frames: bool = True,
         crop_padding_frac: float = 0.20,
         crop_max_dim: int = 512,
+        raw_crop_max_dim: int = 256,    # smaller than processed — faster encode, less I/O
+        raw_frame_stride: int = 1,       # save raw crops every Nth logged frame (1=every frame)
         max_pending_batches: int = _MAX_PENDING_BATCHES,
         max_crops_per_batch: int = _DEFAULT_MAX_CROPS,
         heavy_threshold: int = _DEFAULT_HEAVY_THRESHOLD,
@@ -123,6 +125,9 @@ class GradingRecorder:
         self._save_raw_frames = save_raw_frames
         self._crop_pad = crop_padding_frac
         self._crop_max_dim = crop_max_dim
+        self._raw_crop_max_dim = max(64, raw_crop_max_dim)
+        self._raw_frame_stride = max(1, raw_frame_stride)
+        self._raw_frame_tick = 0          # counts logged frames for stride gating
         self._max_crops = max(1, max_crops_per_batch)
         self._heavy_threshold = max(1, heavy_threshold)
 
@@ -138,7 +143,7 @@ class GradingRecorder:
 
         self._batch_slots = threading.Semaphore(max_pending_batches)
         self._cmd_q: queue.SimpleQueue = queue.SimpleQueue()
-        self._write_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="log-wr")
+        self._write_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="log-wr")
         self._worker = threading.Thread(target=self._run_worker, daemon=True)
         self._worker.start()
 
@@ -283,13 +288,27 @@ class GradingRecorder:
         tracks: tuple[dict, ...],
         raw_frames: tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None] | None,
     ) -> None:
-        # Sequential encode — avoids CPU spikes when many apples are on screen.
+        # ── Step 1: Encode crops WITHOUT holding the lock ─────────────────────
+        # cv2.imencode releases the GIL, so the inference thread is not starved.
+        # The lock is only acquired below for fast dict bookkeeping (~1 ms).
+        self._raw_frame_tick += 1
+        save_raw = (
+            self._save_raw_frames
+            and raw_frames is not None
+            and self._raw_frame_tick % self._raw_frame_stride == 0
+        )
+        prepared: list[_PreparedTrack] = []
+        for t in tracks:
+            item = self._prepare_track(frame, t, raw_frames if save_raw else None)
+            if item is not None:
+                prepared.append(item)
+
+        # ── Step 2: Apply to state structures — fast dict ops under lock ──────
         writes: list[_WriteJob] = []
         with self._lock:
-            for t in tracks:
-                item = self._prepare_track(frame, t, raw_frames)
-                if item is not None:
-                    writes.extend(self._apply_prepared(item))
+            for item in prepared:
+                writes.extend(self._apply_prepared(item))
+
         self._flush_writes(writes)
 
     def _prepare_track(
@@ -470,11 +489,11 @@ class GradingRecorder:
         elif crop.shape[2] == 4:
             crop = crop[:, :, :3]
 
-        # Resize if larger than crop_max_dim (same scale rule as processed crop)
+        # Resize if larger than raw_crop_max_dim (smaller default than processed)
         ch, cw = crop.shape[:2]
         max_dim = max(ch, cw)
-        if max_dim > self._crop_max_dim:
-            scale = self._crop_max_dim / max_dim
+        if max_dim > self._raw_crop_max_dim:
+            scale = self._raw_crop_max_dim / max_dim
             crop = cv2.resize(
                 crop,
                 (int(cw * scale), int(ch * scale)),

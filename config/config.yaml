@@ -173,9 +173,13 @@ logging:
   image_format: "jpg"
   jpeg_quality: 92
   crop_padding_frac: 0.20    # padding around bbox for saved crop
-  crop_max_dim: 512          # max crop dimension (px) — good quality, not full screen
+  crop_max_dim: 512          # max dim for processed crop (px) — annotated frame, higher quality ok
+  raw_crop_max_dim: 256      # max dim for raw source crops (px) — 256 encodes ~4× faster than 512
+                             # raise to 512 for full-quality raw crops (costs more CPU/disk)
+  raw_frame_stride: 1        # save raw crops every Nth logged frame (1=every frame, 2=every other)
+                             # set to 2-3 to cut raw-crop CPU load in half without losing much coverage
   max_pending_batches: 2     # logging backpressure — drops export frames, not counts
-  max_crops_per_batch: 8     # cap JPEG encodes per frame when belt is full
+  max_crops_per_batch: 8     # cap encode jobs per frame when belt is full
   heavy_threshold: 12        # above this apple count, log every 2nd frame only
 
 # ══════════════════════════════════════════════════════════════
