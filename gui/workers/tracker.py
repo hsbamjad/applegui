@@ -96,12 +96,14 @@ class AppleTracker:
         self._peak_conf_override       = peak_conf_override
         self._overwhelming_cull        = overwhelming_cull_threshold
 
-        self._history:  dict[int, dict] = defaultdict(self._new_history)
-        self._lost:     dict[int, dict] = {}
-        self._id_map:   dict[int, int]  = {}
-        self._recent:   list[dict]      = []
-        self._count:    int = 0
-        self._frame_no: int = 0
+        self._history:     dict[int, dict] = defaultdict(self._new_history)
+        self._lost:        dict[int, dict] = {}
+        self._id_map:      dict[int, int]  = {}
+        self._recent:      list[dict]      = []
+        # Per-lane counters so that seq_id = (lane_count - 1) * n_lanes + lane,
+        # matching the GT interleaving: Lane1→1,4,7…  Lane2→2,5,8…  Lane3→3,6,9…
+        self._lane_counts: dict[int, int]  = {}   # lane (1-indexed) → apples counted so far
+        self._frame_no:    int = 0
 
     # ── Geometry helpers ──────────────────────────────────────────────────────
 
@@ -285,8 +287,11 @@ class AppleTracker:
                     log.debug("Track %d linked to existing #%d (lane=%d age=%d)",
                               tid, matched_seq, lane, age)
                 else:
-                    self._count += 1
-                    seq_id = self._count
+                    lane_cnt = self._lane_counts.get(lane, 0) + 1
+                    self._lane_counts[lane] = lane_cnt
+                    # Interleaved GT formula: Apple #1 on Lane1→1, Lane2→2, Lane3→3,
+                    # Apple #2 on Lane1→4, Lane2→5, Lane3→6, etc.
+                    seq_id = (lane_cnt - 1) * self._n_lanes + lane
                     self._id_map[tid] = seq_id
                     self._recent.append({
                         "pos":    (cx, cy),
@@ -294,8 +299,8 @@ class AppleTracker:
                         "seq_id": seq_id,
                         "lane":   lane,
                     })
-                    log.debug("NEW apple #%d  ori=%s  travel=%d  first=%d  frames=%d",
-                              seq_id, self._ori, travel, hist["first_travel"], hist["frames_seen"])
+                    log.debug("NEW apple #%d  lane=%d  lane_cnt=%d  ori=%s  travel=%d  first=%d  frames=%d",
+                              seq_id, lane, lane_cnt, self._ori, travel, hist["first_travel"], hist["frames_seen"])
 
             # ── Grade commit ──────────────────────────────────────────────────
             if (
@@ -437,9 +442,9 @@ class AppleTracker:
         self._lost.clear()
         self._id_map.clear()
         self._recent.clear()
-        self._count    = 0
+        self._lane_counts.clear()
         self._frame_no = 0
 
     @property
     def total_counted(self) -> int:
-        return self._count
+        return sum(self._lane_counts.values())
