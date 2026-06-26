@@ -1,38 +1,25 @@
 """
 core/logging/grading_recorder.py
 ================================
-Per-apple grading export -- cropped annotated patches + CSV.
+Per-apple grading export — cropped annotated patches + CSV.
 
 OpenCV encode and disk I/O run off the GUI thread.  The inference hot path
 only enqueues lightweight track snapshots; under load, pending batches are
 capped so logging never starves the tracker.
 
-Architecture -- write-immediately, rename-at-commit
----------------------------------------------------
-JPEG crops are written to disk the moment each frame is processed -- never
-accumulated in RAM.  Pre-commit frames go into a temporary staging folder::
+Output layout::
 
-    {session}/_tmp/track_{track_id}/processed/frame_XXX.jpg
-    {session}/_tmp/track_{track_id}/source0/frame_XXX.jpg
-    {session}/_tmp/track_{track_id}/source1/frame_XXX.jpg
-    {session}/_tmp/track_{track_id}/source2/frame_XXX.jpg
-
-When the grade is committed the staging folder is renamed atomically::
-
-    {session}/Lane{L}/Apple{N}/processed/
-    {session}/Lane{L}/Apple{N}/source0/
-    {session}/Lane{L}/Apple{N}/source1/
-    {session}/Lane{L}/Apple{N}/source2/
+    {session}/Lane{L}/Apple{N}/processed/frame_XXX.jpg   # YOLO-combined input crop + grade label
+    {session}/Lane{L}/Apple{N}/source0/frame_XXX.jpg     # raw ch1 (Color) crop — no annotations
+    {session}/Lane{L}/Apple{N}/source1/frame_XXX.jpg     # raw ch2 (NIR1)  crop — no annotations
+    {session}/Lane{L}/Apple{N}/source2/frame_XXX.jpg     # raw ch3 (NIR2)  crop — no annotations
     {session}/Lane{L}/Apple{N}.csv
-
-Result: no RAM burst at the exit zone, no GC spike, no disk-write burst.
 """
 
 from __future__ import annotations
 
 import csv
 import queue
-import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -53,6 +40,8 @@ _CLASS_COLORS = [
     (231, 76, 60),
 ]
 
+# Max in-flight batches (frame + encode).  Extra frames are skipped for logging
+# only — tracker / counting are unaffected.
 _MAX_PENDING_BATCHES = 2
 _DEFAULT_MAX_CROPS = 8
 _DEFAULT_HEAVY_THRESHOLD = 12
@@ -76,16 +65,32 @@ class _CsvRow:
 
 
 @dataclass
-class _TrackState:
-    """Lightweight per-track bookkeeping -- NO JPEG bytes stored here."""
-    track_id: int
+class _PendingMeta:
+    lane: int
+    raw_cls: int
+    raw_conf: float
+    crop_jpeg: bytes | None = None          # processed (YOLO-input combined) crop
+    raw_crop_jpegs: tuple[bytes | None, bytes | None, bytes | None] = field(
+        default_factory=lambda: (None, None, None)
+    )  # (source0, source1, source2) raw crops — no annotation overlay
+
+
+@dataclass
+class _AppleState:
+    seq_id: int
     lane: int
     frame_idx: int = 0
     rows: list[_CsvRow] = field(default_factory=list)
-    seq_id: int | None = None
     finalized: bool = False
     final_grade: str | None = None
     final_confidence: float | None = None
+
+
+@dataclass
+class _PreparedTrack:
+    track_id: int
+    seq_id: int | None
+    meta: _PendingMeta
 
 
 @dataclass
@@ -96,11 +101,8 @@ class _WriteJob:
 
 class GradingRecorder:
     """
-    Ordered command queue: every record_batch is processed before the
-    next on_grade_committed for that frame, eliminating races.
-
-    Write-immediately design: JPEG bytes go to disk (via the write pool) on
-    every frame.  No large in-memory buffer accumulates at the exit zone.
+    Ordered command queue: every ``record_batch`` is processed before the
+    next ``on_grade_committed`` for that frame, eliminating races.
     """
 
     def __init__(
@@ -111,8 +113,8 @@ class GradingRecorder:
         save_raw_frames: bool = True,
         crop_padding_frac: float = 0.20,
         crop_max_dim: int = 512,
-        raw_crop_max_dim: int = 256,
-        raw_frame_stride: int = 1,
+        raw_crop_max_dim: int = 256,    # smaller than processed — faster encode, less I/O
+        raw_frame_stride: int = 1,       # save raw crops every Nth logged frame (1=every frame)
         max_pending_batches: int = _MAX_PENDING_BATCHES,
         max_crops_per_batch: int = _DEFAULT_MAX_CROPS,
         heavy_threshold: int = _DEFAULT_HEAVY_THRESHOLD,
@@ -125,16 +127,15 @@ class GradingRecorder:
         self._crop_max_dim = crop_max_dim
         self._raw_crop_max_dim = max(64, raw_crop_max_dim)
         self._raw_frame_stride = max(1, raw_frame_stride)
-        self._raw_frame_tick = 0
+        self._raw_frame_tick = 0          # counts logged frames for stride gating
         self._max_crops = max(1, max_crops_per_batch)
         self._heavy_threshold = max(1, heavy_threshold)
 
         self._lock = threading.Lock()
         self._session_dir: Path | None = None
-        self._tmp_dir: Path | None = None
-        self._tracks: dict[int, _TrackState] = {}
-        self._track_to_seq: dict[int, int] = {}
-        self._apples: dict[int, _TrackState] = {}
+        self._apples: dict[int, _AppleState] = {}
+        self._track_buffer: dict[int, list[_PendingMeta]] = {}
+        self._track_to_apple: dict[int, int] = {}
         self._dirs_made: set[Path] = set()
         self._active = False
         self._saved_images = 0
@@ -191,9 +192,10 @@ class GradingRecorder:
         """
         Enqueue a batch; batch slot must already be acquired.
 
-        raw_frames: optional (ch1, ch2, ch3) numpy arrays.  When supplied,
-        raw crops are saved to source0/, source1/, source2/ under each Apple
-        folder.  Pass None to skip raw-frame saving.
+        raw_frames: optional (ch1, ch2, ch3) numpy arrays — the unprocessed
+        source frames captured at the same instant as frame_bgr.  When
+        supplied, raw crops are saved to source0/, source1/, source2/ under
+        each Apple folder.  Pass None to skip raw-frame saving.
         """
         if not tracks or frame_bgr is None:
             self.release_batch_slot()
@@ -211,7 +213,7 @@ class GradingRecorder:
         tracks: list[dict],
         raw_frames: tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None] | None = None,
     ) -> None:
-        """Legacy entry -- acquires slot then submits (used off hot path only)."""
+        """Legacy entry — acquires slot then submits (used off hot path only)."""
         if not self._active or frame_bgr is None or not tracks:
             return
         if not self.acquire_batch_slot():
@@ -238,11 +240,11 @@ class GradingRecorder:
         done.wait()
         self._active = False
         log.info(
-            "GradingRecorder stopped -- %d images saved (%d batches dropped)",
+            "GradingRecorder stopped — %d images saved (%d batches dropped)",
             self._saved_images, self._dropped_batches,
         )
 
-    # -- Worker ----------------------------------------------------------------
+    # ── Worker (single ordered loop) ──────────────────────────────────────────
 
     def _run_worker(self) -> None:
         while True:
@@ -262,10 +264,18 @@ class GradingRecorder:
                         self._batch_slots.release()
                 elif kind == "commit":
                     _, seq_id, lane, class_name, confidence, track_id = cmd
-                    self._on_commit(seq_id, lane, class_name, confidence, track_id)
+                    writes: list[_WriteJob] = []
+                    with self._lock:
+                        writes.extend(self._on_commit(
+                            seq_id, lane, class_name, confidence, track_id,
+                        ))
+                    self._flush_writes(writes)
                 elif kind == "stop":
                     _, done = cmd
-                    self._on_stop()
+                    writes: list[_WriteJob] = []
+                    with self._lock:
+                        writes.extend(self._on_stop())
+                    self._flush_writes(writes)
                     done.set()
             except Exception:
                 log.exception("GradingRecorder worker error on %s", kind)
@@ -278,80 +288,117 @@ class GradingRecorder:
         tracks: tuple[dict, ...],
         raw_frames: tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None] | None,
     ) -> None:
-        """
-        Step 1: encode crops outside lock (cv2 releases GIL).
-        Step 2: update lightweight state under lock (fast dict ops only).
-        Step 3: submit write jobs to pool (fire and forget -- bytes go to disk).
-
-        No JPEG bytes remain in RAM after this method returns.
-        """
-        # -- Step 1: Encode outside lock ---------------------------------------
+        # ── Step 1: Encode crops WITHOUT holding the lock ─────────────────────
+        # cv2.imencode releases the GIL, so the inference thread is not starved.
+        # The lock is only acquired below for fast dict bookkeeping (~1 ms).
         self._raw_frame_tick += 1
         save_raw = (
             self._save_raw_frames
             and raw_frames is not None
             and self._raw_frame_tick % self._raw_frame_stride == 0
         )
-
-        encoded: list[tuple[dict, bytes | None, tuple]] = []
+        prepared: list[_PreparedTrack] = []
         for t in tracks:
-            if t.get("box") is None:
-                continue
-            proc_jpeg = self._encode_crop(frame, t) if self._save_frames else None
-            if save_raw:
-                raw_jpegs = tuple(
+            item = self._prepare_track(frame, t, raw_frames if save_raw else None)
+            if item is not None:
+                prepared.append(item)
+
+        # ── Step 2: Apply to state structures — fast dict ops under lock ──────
+        writes: list[_WriteJob] = []
+        with self._lock:
+            for item in prepared:
+                writes.extend(self._apply_prepared(item))
+
+        self._flush_writes(writes)
+
+    def _prepare_track(
+        self,
+        frame: np.ndarray,
+        t: dict,
+        raw_frames: tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None] | None = None,
+    ) -> _PreparedTrack | None:
+        if t.get("box") is None:
+            return None
+        meta = _PendingMeta(
+            lane=int(t["lane"]),
+            raw_cls=int(t["raw_class_id"]),
+            raw_conf=float(t["raw_conf"]),
+        )
+        if self._save_frames:
+            meta.crop_jpeg = self._encode_crop(frame, t)
+            if self._save_raw_frames and raw_frames is not None:
+                meta.raw_crop_jpegs = tuple(
                     self._encode_raw_crop(rf, t) if rf is not None else None
                     for rf in raw_frames
                 )
-            else:
-                raw_jpegs = (None, None, None)
-            encoded.append((t, proc_jpeg, raw_jpegs))
+        return _PreparedTrack(
+            track_id=int(t["track_id"]),
+            seq_id=t.get("seq_id"),
+            meta=meta,
+        )
 
-        # -- Step 2: Update state + build write paths (lock, fast) -------------
-        write_jobs: list[_WriteJob] = []
-        with self._lock:
-            if self._session_dir is None:
-                return
-            for t, proc_jpeg, raw_jpegs in encoded:
-                tid = int(t["track_id"])
-                seq_id = t.get("seq_id")
+    def _apply_prepared(self, item: _PreparedTrack) -> list[_WriteJob]:
+        """Must be called under self._lock."""
+        track_id = item.track_id
+        seq_id = item.seq_id
+        meta = item.meta
+        writes: list[_WriteJob] = []
 
-                ts = self._tracks.get(tid)
-                if ts is None:
-                    ts = _TrackState(track_id=tid, lane=int(t["lane"]))
-                    self._tracks[tid] = ts
+        if seq_id is not None:
+            sid = int(seq_id)
+            self._track_to_apple[track_id] = sid
+            if track_id in self._track_buffer:
+                for bm in self._track_buffer.pop(track_id):
+                    writes.extend(self._append_row(sid, bm))
+            writes.extend(self._append_row(sid, meta))
+        else:
+            self._track_buffer.setdefault(track_id, []).append(meta)
 
-                if ts.finalized:
-                    continue
+        return writes
 
-                if seq_id is not None and ts.seq_id is None:
-                    ts.seq_id = int(seq_id)
-                    self._track_to_seq[tid] = ts.seq_id
-                    self._apples[ts.seq_id] = ts
+    def _append_row(self, seq_id: int, meta: _PendingMeta) -> list[_WriteJob]:
+        """Must be called under self._lock.  Returns a list of write jobs."""
+        state = self._apples.get(seq_id)
+        if state is None:
+            state = _AppleState(seq_id=seq_id, lane=meta.lane)
+            self._apples[seq_id] = state
 
-                ts.frame_idx += 1
-                raw_cls = int(t["raw_class_id"])
-                cls_name = (
-                    CLASS_NAMES[raw_cls] if 0 <= raw_cls < len(CLASS_NAMES) else str(raw_cls)
-                )
-                ts.rows.append(_CsvRow(
-                    frame_idx=ts.frame_idx,
-                    detector_class=cls_name,
-                    confidence=float(t["raw_conf"]),
-                ))
+        if state.finalized:
+            return []
 
-                dest_root = self._track_root(ts)
-                fname = f"frame_{ts.frame_idx:03d}.{self._image_ext}"
+        state.frame_idx += 1
+        cls_name = (
+            CLASS_NAMES[meta.raw_cls]
+            if 0 <= meta.raw_cls < len(CLASS_NAMES)
+            else str(meta.raw_cls)
+        )
+        state.rows.append(_CsvRow(
+            frame_idx=state.frame_idx,
+            detector_class=cls_name,
+            confidence=meta.raw_conf,
+        ))
 
-                if proc_jpeg is not None:
-                    write_jobs.append(_WriteJob(dest_root / "processed" / fname, proc_jpeg))
-                _SRC = ("source0", "source1", "source2")
-                for src, rj in zip(_SRC, raw_jpegs):
-                    if rj is not None:
-                        write_jobs.append(_WriteJob(dest_root / src / fname, rj))
+        jobs: list[_WriteJob] = []
+        apple_dir = self._apple_dir(state)
+        fname = f"frame_{state.frame_idx:03d}.{self._image_ext}"
 
-        # -- Step 3: Async disk writes -----------------------------------------
-        self._flush_writes(write_jobs)
+        if self._save_frames and meta.crop_jpeg is not None:
+            jobs.append(_WriteJob(apple_dir / "processed" / fname, meta.crop_jpeg))
+
+        # Raw source crops (source0, source1, source2)
+        _SRC_NAMES = ("source0", "source1", "source2")
+        for src_name, raw_jpeg in zip(_SRC_NAMES, meta.raw_crop_jpegs):
+            if raw_jpeg is not None:
+                jobs.append(_WriteJob(apple_dir / src_name / fname, raw_jpeg))
+
+        return jobs
+
+    def _on_start(self, session_dir: Path) -> None:
+        self._session_dir = session_dir
+        self._apples.clear()
+        self._track_buffer.clear()
+        self._track_to_apple.clear()
+        self._dirs_made.clear()
 
     def _on_commit(
         self,
@@ -360,117 +407,51 @@ class GradingRecorder:
         class_name: str,
         confidence: float,
         track_id: int,
-    ) -> None:
-        """
-        Finalize an apple.  All JPEG files are already on disk in the staging
-        folder -- just rename staging ? Apple{N}/ and write the CSV.
-        Both are done off-lock in a write pool thread.
-        """
-        with self._lock:
-            ts = self._tracks.get(track_id)
-            if ts is None:
-                ts = _TrackState(track_id=track_id, lane=lane, seq_id=seq_id)
-                self._tracks[track_id] = ts
-                self._apples[seq_id] = ts
+    ) -> list[_WriteJob]:
+        """Must be called under self._lock."""
+        writes: list[_WriteJob] = []
+        if track_id >= 0 and track_id in self._track_buffer:
+            for bm in self._track_buffer.pop(track_id):
+                writes.extend(self._append_row(seq_id, bm))
 
-            if ts.seq_id is None:
-                ts.seq_id = seq_id
-                self._apples[seq_id] = ts
+        state = self._apples.get(seq_id)
+        if state is None:
+            state = _AppleState(seq_id=seq_id, lane=lane)
+            self._apples[seq_id] = state
 
-            ts.final_grade = class_name
-            ts.final_confidence = float(confidence)
-            ts.finalized = True
+        state.final_grade = class_name
+        state.final_confidence = float(confidence)
+        state.finalized = True
+        self._write_csv(state, finalize=True)
+        return writes
 
-            staging = self._staging_dir(track_id)
-            final   = self._apple_dir(lane, seq_id)
+    def _on_stop(self) -> list[_WriteJob]:
+        writes: list[_WriteJob] = []
+        for track_id, buffered in list(self._track_buffer.items()):
+            sid = self._track_to_apple.get(track_id)
+            if sid is None:
+                continue
+            for bm in buffered:
+                writes.extend(self._append_row(sid, bm))
+        self._track_buffer.clear()
+        self._track_to_apple.clear()
 
-        # Rename + CSV in pool thread -- never blocks inference or GUI
-        if self._session_dir is not None:
-            self._write_pool.submit(self._rename_and_csv, staging, final, ts)
+        for state in self._apples.values():
+            self._write_csv(
+                state,
+                finalize=True,
+                incomplete=not state.finalized,
+            )
 
-    def _on_stop(self) -> None:
-        """Flush unfinalized tracks at session end."""
-        with self._lock:
-            pending = [
-                (
-                    ts,
-                    self._staging_dir(ts.track_id),
-                    self._apple_dir(ts.lane, ts.seq_id or ts.track_id),
-                )
-                for ts in self._tracks.values()
-                if not ts.finalized
-            ]
-            self._tracks.clear()
-            self._track_to_seq.clear()
-            self._apples.clear()
-
-        for ts, staging, final in pending:
-            self._rename_and_csv(staging, final, ts, incomplete=True)
-
-        if self._tmp_dir is not None:
-            try:
-                if self._tmp_dir.exists():
-                    shutil.rmtree(self._tmp_dir, ignore_errors=True)
-            except Exception:
-                pass
-
+        self._apples.clear()
         log.info("GradingRecorder session data flushed")
+        return writes
 
-    # -- Path helpers ----------------------------------------------------------
+    def _flush_writes(self, jobs: list[_WriteJob]) -> None:
+        for job in jobs:
+            self._write_pool.submit(self._write_jpeg, job.path, job.jpeg_bytes)
 
-    def _staging_dir(self, track_id: int) -> Path:
-        assert self._tmp_dir is not None
-        return self._tmp_dir / f"track_{track_id}"
-
-    def _apple_dir(self, lane: int, seq_id: int) -> Path:
-        assert self._session_dir is not None
-        return self._session_dir / f"Lane{lane}" / f"Apple{seq_id}"
-
-    def _track_root(self, ts: _TrackState) -> Path:
-        """Staging dir before commit; final apple dir after commit."""
-        if ts.seq_id is not None:
-            return self._apple_dir(ts.lane, ts.seq_id)
-        return self._staging_dir(ts.track_id)
-
-    # -- Rename + CSV (runs in write pool thread) ------------------------------
-
-    def _rename_and_csv(
-        self,
-        staging: Path,
-        final: Path,
-        ts: _TrackState,
-        incomplete: bool = False,
-    ) -> None:
-        """
-        Rename staging folder ? final Apple{N}/ and write CSV.
-        Runs in write pool thread -- never blocks inference or GUI.
-        """
-        try:
-            if staging.exists():
-                final.parent.mkdir(parents=True, exist_ok=True)
-                if final.exists():
-                    # Merge: move sub-items from staging into existing final dir
-                    for sub in staging.iterdir():
-                        dest_sub = final / sub.name
-                        if dest_sub.exists():
-                            for f in sub.iterdir():
-                                f.rename(dest_sub / f.name)
-                        else:
-                            sub.rename(dest_sub)
-                    try:
-                        staging.rmdir()
-                    except OSError:
-                        pass
-                else:
-                    staging.rename(final)
-            else:
-                final.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            log.exception("GradingRecorder: rename %s -> %s failed", staging, final)
-
-        self._write_csv(ts, final, incomplete=incomplete)
-
-    # -- Crop encoding ---------------------------------------------------------
+    # ── Crop rendering ────────────────────────────────────────────────────────
 
     def _encode_crop(self, frame: np.ndarray, track: dict) -> bytes | None:
         """Encode the YOLO-combined (processed) crop with annotation overlay."""
@@ -485,8 +466,9 @@ class GradingRecorder:
 
     def _encode_raw_crop(self, frame: np.ndarray, track: dict) -> bytes | None:
         """
-        Encode a clean crop from a raw source frame -- no annotation overlay.
-        Same bbox + padding as processed crop so all images are spatially aligned.
+        Encode a clean crop from a raw source frame — no annotation overlay.
+        The crop region mirrors the processed crop (same box + padding) so
+        all four images (processed + source0/1/2) are spatially aligned.
         """
         x1, y1, x2, y2 = (int(v) for v in track["box"])
         h, w = frame.shape[:2]
@@ -501,11 +483,13 @@ class GradingRecorder:
         cy2 = min(h, y2 + pad)
 
         crop = frame[cy1:cy2, cx1:cx2]
+        # Ensure 3-channel for consistent JPEG output
         if crop.ndim == 2:
             crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
         elif crop.shape[2] == 4:
             crop = crop[:, :, :3]
 
+        # Resize if larger than raw_crop_max_dim (smaller default than processed)
         ch, cw = crop.shape[:2]
         max_dim = max(ch, cw)
         if max_dim > self._raw_crop_max_dim:
@@ -577,26 +561,18 @@ class GradingRecorder:
             )
         return crop
 
-    # -- Filesystem ------------------------------------------------------------
+    # ── Filesystem ────────────────────────────────────────────────────────────
 
-    def _on_start(self, session_dir: Path) -> None:
-        self._session_dir = session_dir
-        self._tmp_dir = session_dir / "_tmp"
-        self._tmp_dir.mkdir(parents=True, exist_ok=True)
-        self._tracks.clear()
-        self._track_to_seq.clear()
-        self._apples.clear()
-        self._dirs_made.clear()
+    def _apple_dir(self, state: _AppleState) -> Path:
+        """Root folder for this apple — subfolders: processed/, source0/, source1/, source2/."""
+        assert self._session_dir is not None
+        return self._session_dir / f"Lane{state.lane}" / f"Apple{state.seq_id}"
 
     def _ensure_dir(self, path: Path) -> None:
         parent = path.parent
         if parent not in self._dirs_made:
             parent.mkdir(parents=True, exist_ok=True)
             self._dirs_made.add(parent)
-
-    def _flush_writes(self, jobs: list[_WriteJob]) -> None:
-        for job in jobs:
-            self._write_pool.submit(self._write_jpeg, job.path, job.jpeg_bytes)
 
     def _write_jpeg(self, path: Path, jpeg_bytes: bytes) -> None:
         self._ensure_dir(path)
@@ -605,31 +581,33 @@ class GradingRecorder:
 
     def _write_csv(
         self,
-        ts: _TrackState,
-        apple_dir: Path,
+        state: _AppleState,
+        finalize: bool = False,
         incomplete: bool = False,
     ) -> None:
-        csv_path = apple_dir.parent / f"{apple_dir.name}.csv"
-        try:
-            apple_dir.parent.mkdir(parents=True, exist_ok=True)
-            with csv_path.open("w", newline="", encoding="utf-8") as fh:
-                writer = csv.writer(fh)
-                writer.writerow(["apple_id", "lane", "frame_idx", "detector_class", "confidence"])
-                seq = ts.seq_id or "?"
-                for row in ts.rows:
-                    writer.writerow([
-                        seq, ts.lane, row.frame_idx,
-                        row.detector_class, f"{row.confidence:.4f}",
-                    ])
+        assert self._session_dir is not None
+        lane_dir = self._session_dir / f"Lane{state.lane}"
+        if lane_dir not in self._dirs_made:
+            lane_dir.mkdir(parents=True, exist_ok=True)
+            self._dirs_made.add(lane_dir)
+        path = lane_dir / f"Apple{state.seq_id}.csv"
+
+        with path.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["apple_id", "lane", "frame_idx", "detector_class", "confidence"])
+            for row in state.rows:
+                writer.writerow([
+                    state.seq_id, state.lane, row.frame_idx,
+                    row.detector_class, f"{row.confidence:.4f}",
+                ])
+            if finalize or incomplete:
                 writer.writerow([])
-                if ts.final_grade is not None:
-                    writer.writerow(["final_grade", ts.final_grade])
-                    writer.writerow(["final_confidence", f"{ts.final_confidence:.4f}"])
+                if state.final_grade is not None:
+                    writer.writerow(["final_grade", state.final_grade])
+                    writer.writerow(["final_confidence", f"{state.final_confidence:.4f}"])
                 elif incomplete:
                     writer.writerow(["final_grade", "incomplete"])
-                writer.writerow(["frames_total", len(ts.rows)])
-        except Exception:
-            log.exception("GradingRecorder: CSV write failed for %s", csv_path)
+                writer.writerow(["frames_total", len(state.rows)])
 
 
 def _snapshot(t: dict) -> dict:
