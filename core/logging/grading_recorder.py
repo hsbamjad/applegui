@@ -1,15 +1,15 @@
 """
 core/logging/grading_recorder.py
 ================================
-Per-apple grading export — cropped annotated patches + CSV.
+Per-apple grading export -- cropped annotated patches + CSV.
 
 OpenCV encode and disk I/O run off the GUI thread.  The inference hot path
 only enqueues lightweight track snapshots; under load, pending batches are
 capped so logging never starves the tracker.
 
-Architecture — write-immediately, rename-at-commit
+Architecture -- write-immediately, rename-at-commit
 ---------------------------------------------------
-JPEG crops are written to disk the moment each frame is processed — never
+JPEG crops are written to disk the moment each frame is processed -- never
 accumulated in RAM.  Pre-commit frames go into a temporary staging folder::
 
     {session}/_tmp/track_{track_id}/processed/frame_XXX.jpg
@@ -77,7 +77,7 @@ class _CsvRow:
 
 @dataclass
 class _TrackState:
-    """Lightweight per-track bookkeeping — NO JPEG bytes stored here."""
+    """Lightweight per-track bookkeeping -- NO JPEG bytes stored here."""
     track_id: int
     lane: int
     frame_idx: int = 0
@@ -211,7 +211,7 @@ class GradingRecorder:
         tracks: list[dict],
         raw_frames: tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None] | None = None,
     ) -> None:
-        """Legacy entry — acquires slot then submits (used off hot path only)."""
+        """Legacy entry -- acquires slot then submits (used off hot path only)."""
         if not self._active or frame_bgr is None or not tracks:
             return
         if not self.acquire_batch_slot():
@@ -238,7 +238,7 @@ class GradingRecorder:
         done.wait()
         self._active = False
         log.info(
-            "GradingRecorder stopped — %d images saved (%d batches dropped)",
+            "GradingRecorder stopped -- %d images saved (%d batches dropped)",
             self._saved_images, self._dropped_batches,
         )
 
@@ -281,7 +281,7 @@ class GradingRecorder:
         """
         Step 1: encode crops outside lock (cv2 releases GIL).
         Step 2: update lightweight state under lock (fast dict ops only).
-        Step 3: submit write jobs to pool (fire and forget — bytes go to disk).
+        Step 3: submit write jobs to pool (fire and forget -- bytes go to disk).
 
         No JPEG bytes remain in RAM after this method returns.
         """
@@ -363,7 +363,7 @@ class GradingRecorder:
     ) -> None:
         """
         Finalize an apple.  All JPEG files are already on disk in the staging
-        folder — just rename staging ? Apple{N}/ and write the CSV.
+        folder -- just rename staging ? Apple{N}/ and write the CSV.
         Both are done off-lock in a write pool thread.
         """
         with self._lock:
@@ -384,7 +384,7 @@ class GradingRecorder:
             staging = self._staging_dir(track_id)
             final   = self._apple_dir(lane, seq_id)
 
-        # Rename + CSV in pool thread — never blocks inference or GUI
+        # Rename + CSV in pool thread -- never blocks inference or GUI
         if self._session_dir is not None:
             self._write_pool.submit(self._rename_and_csv, staging, final, ts)
 
@@ -443,7 +443,7 @@ class GradingRecorder:
     ) -> None:
         """
         Rename staging folder ? final Apple{N}/ and write CSV.
-        Runs in write pool thread — never blocks inference or GUI.
+        Runs in write pool thread -- never blocks inference or GUI.
         """
         try:
             if staging.exists():
@@ -485,7 +485,7 @@ class GradingRecorder:
 
     def _encode_raw_crop(self, frame: np.ndarray, track: dict) -> bytes | None:
         """
-        Encode a clean crop from a raw source frame — no annotation overlay.
+        Encode a clean crop from a raw source frame -- no annotation overlay.
         Same bbox + padding as processed crop so all images are spatially aligned.
         """
         x1, y1, x2, y2 = (int(v) for v in track["box"])
