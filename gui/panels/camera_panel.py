@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QComboBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QFrame, QSizePolicy, QScrollArea,
+    QFileDialog, QLineEdit, QButtonGroup, QRadioButton,
 )
 from PyQt6.QtCore import (
     Qt, pyqtSignal, QPoint, QSize,
@@ -444,6 +445,7 @@ class DataLoggingWindow(QWidget):
 
     sig_hidden          = pyqtSignal()
     sig_options_changed = pyqtSignal(bool, bool)   # raw, detected
+    sig_path_changed    = pyqtSignal(str)           # custom save path ("" = use default)
 
     POPUP_WIDTH = 314
     _DL_ACCENT  = WARNING   # harvest amber — distinct from Camera Controls green
@@ -458,6 +460,7 @@ class DataLoggingWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedWidth(self.POPUP_WIDTH)
         self._drag_pos: QPoint | None = None
+        self._custom_path: str = ""   # "" means use default from config
         self._build_shell()
 
     def _build_shell(self) -> None:
@@ -587,6 +590,96 @@ class DataLoggingWindow(QWidget):
         det_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
         cv.addWidget(det_sub)
 
+        # ── Save Path ─────────────────────────────────────────────────
+        _sp = QFrame(); _sp.setFixedHeight(1)
+        _sp.setStyleSheet(f"background-color: {BORDER}66; border: none; margin: 4px 0;")
+        cv.addWidget(_sp)
+
+        _path_header = QLabel("Save Path")
+        _path_header.setStyleSheet(
+            f"color: {self._DL_ACCENT}; font-size: 10px; font-weight: 700; "
+            "letter-spacing: 1.5px; background: transparent;"
+        )
+        cv.addWidget(_path_header)
+
+        # Radio buttons — Default / Custom
+        self._radio_default = QRadioButton("Default  (from config)")
+        self._radio_custom  = QRadioButton("Custom path")
+        self._radio_default.setChecked(True)
+        for rb in (self._radio_default, self._radio_custom):
+            rb.setStyleSheet(f"""
+                QRadioButton {{
+                    color: {TEXT_1}; font-size: 11px;
+                    background: transparent; spacing: 6px;
+                }}
+                QRadioButton::indicator {{
+                    width: 14px; height: 14px;
+                    border: 2px solid {BORDER_LT}; border-radius: 7px;
+                    background-color: {BG_ELEVATED};
+                }}
+                QRadioButton::indicator:checked {{
+                    background-color: {self._DL_ACCENT}; border-color: {self._DL_ACCENT};
+                }}
+                QRadioButton::indicator:hover {{ border-color: {self._DL_ACCENT}; }}
+            """)
+        _rb_grp = QButtonGroup(self)
+        _rb_grp.addButton(self._radio_default)
+        _rb_grp.addButton(self._radio_custom)
+        cv.addWidget(self._radio_default)
+        cv.addWidget(self._radio_custom)
+
+        # Path display + browse row
+        _browse_row = QWidget()
+        _browse_row.setStyleSheet("background: transparent; border: none;")
+        _br_hl = QHBoxLayout(_browse_row)
+        _br_hl.setContentsMargins(0, 2, 0, 0)
+        _br_hl.setSpacing(6)
+
+        self._path_edit = QLineEdit()
+        self._path_edit.setPlaceholderText("Select a folder…")
+        self._path_edit.setReadOnly(True)
+        self._path_edit.setEnabled(False)
+        self._path_edit.setFixedHeight(30)
+        self._path_edit.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                border: 1px solid {BORDER}; border-radius: 6px;
+                padding: 0 8px; font-size: 10px;
+            }}
+            QLineEdit:enabled {{
+                border-color: {self._DL_ACCENT}88; color: {TEXT_1};
+            }}
+            QLineEdit:disabled {{ color: {TEXT_3}; }}
+        """)
+
+        self._btn_browse = QPushButton("Browse")
+        self._btn_browse.setFixedSize(64, 30)
+        self._btn_browse.setEnabled(False)
+        self._btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_browse.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                border: 1px solid {BORDER}; font-size: 11px; font-weight: 600;
+                border-radius: 6px; padding: 0 8px;
+            }}
+            QPushButton:enabled {{
+                color: {self._DL_ACCENT}; border-color: {self._DL_ACCENT}88;
+            }}
+            QPushButton:enabled:hover {{
+                background-color: {self._DL_ACCENT}22; border-color: {self._DL_ACCENT};
+            }}
+            QPushButton:enabled:pressed {{ background-color: {self._DL_ACCENT}44; }}
+            QPushButton:disabled {{ color: {TEXT_3}; }}
+        """)
+        self._btn_browse.clicked.connect(self._on_browse)
+
+        _br_hl.addWidget(self._path_edit, stretch=1)
+        _br_hl.addWidget(self._btn_browse)
+        cv.addWidget(_browse_row)
+
+        # Wire radio toggles
+        self._radio_custom.toggled.connect(self._on_path_mode_toggled)
+
         cv.addStretch()
         outer_vl.addWidget(content)
         root.addWidget(outer)
@@ -641,6 +734,10 @@ class DataLoggingWindow(QWidget):
         self._chk_raw.setEnabled(raw)
         self._chk_detected.setEnabled(detected)
 
+    def get_custom_path(self) -> str:
+        """Return the custom save path, or '' if Default is selected."""
+        return self._custom_path
+
     def show_beside(self, anchor: QWidget) -> None:
         """Position beside `anchor` widget and show."""
         from PyQt6.QtWidgets import QApplication
@@ -675,6 +772,31 @@ class DataLoggingWindow(QWidget):
 
     # ── Internal ───────────────────────────────────────────────────────────────
 
+    def _on_path_mode_toggled(self, custom: bool) -> None:
+        """Enable/disable Browse row based on radio selection."""
+        self._path_edit.setEnabled(custom)
+        self._btn_browse.setEnabled(custom)
+        if not custom:
+            self._custom_path = ""
+            self._path_edit.clear()
+            self.sig_path_changed.emit("")
+
+    def _on_browse(self) -> None:
+        """Open folder picker and store the result."""
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select Save Folder",
+            self._custom_path or "",
+            QFileDialog.Option.ShowDirsOnly,
+        )
+        if folder:
+            self._custom_path = folder
+            # Show a shortened version in the edit field
+            _display = folder if len(folder) <= 36 else "…" + folder[-35:]
+            self._path_edit.setText(_display)
+            self._path_edit.setToolTip(folder)
+            self.sig_path_changed.emit(folder)
+
     def _emit_changed(self) -> None:
         self.sig_options_changed.emit(
             self._chk_raw.isChecked(),
@@ -695,6 +817,7 @@ class LeftControlPanel(QWidget):
     sig_save_mode_changed     = pyqtSignal(bool)             # Save mode toggled (enables data logging)
     sig_detect_mode_changed   = pyqtSignal(bool)             # Detect mode toggled (enables inference)
     sig_logging_options       = pyqtSignal(bool, bool)       # (raw_frames, detected_frames)
+    sig_save_path_changed     = pyqtSignal(str)              # custom save path ("" = use default)
     sig_exposure_changed      = pyqtSignal(int, int, int)    # CH1/CH2/CH3 µs — emitted on Apply
     sig_fps_changed           = pyqtSignal(float)            # FPS — emitted on Apply
     sig_gains_changed         = pyqtSignal(float, float, float)   # CH1/CH2/CH3 dB — emitted on Apply
@@ -727,8 +850,9 @@ class LeftControlPanel(QWidget):
         self._dl_win.sig_hidden.connect(
             lambda: self._btn_data_logging.setChecked(False)
         )
-        # Forward data-logging option changes from popup to panel signal
+        # Forward data-logging option changes from popup to panel signals
         self._dl_win.sig_options_changed.connect(self.sig_logging_options.emit)
+        self._dl_win.sig_path_changed.connect(self.sig_save_path_changed.emit)
 
     def _build(self) -> None:
         # ── Scrollable inner container ─────────────────────────────────────────
@@ -1840,6 +1964,11 @@ class LeftControlPanel(QWidget):
     def get_logging_options(self) -> tuple:
         """Return current logging options as (raw, detected)."""
         return self._dl_win.get_options()
+
+    def get_custom_save_path(self) -> str:
+        """Return the custom save path selected in the Data Logging popup, or '' for default."""
+        return self._dl_win.get_custom_path()
+
 
     def set_model_loaded(self, name: str) -> None:
         if name:

@@ -447,6 +447,7 @@ class MainWindow(QMainWindow):
         self._detect_mode:     bool                        = False   # Detect mode: enables inference
         self._log_raw:         bool                        = True    # log Raw Frames (default ON)
         self._log_detected:    bool                        = False   # log Detected Frames (full-res + boxes)
+        self._custom_save_path: str                        = ""      # operator-chosen base dir ("" = use config)
         self._grading_recorder: GradingRecorder | None   = None
         self._size_acc = None   # AppleSizeAccumulator — created in _start_pipeline
         self._infer_fps: float = 0.0
@@ -538,6 +539,7 @@ class MainWindow(QMainWindow):
         self._left.sig_save_mode_changed.connect(self._on_save_mode_changed)
         self._left.sig_detect_mode_changed.connect(self._on_detect_mode_changed)
         self._left.sig_logging_options.connect(self._on_logging_options)
+        self._left.sig_save_path_changed.connect(self._on_save_path_changed)
         # Camera hardware controls — forwarded to CameraWorker while streaming
         self._left.sig_exposure_changed.connect(self._on_exposure_changed)
         self._left.sig_fps_changed.connect(self._on_fps_changed)
@@ -713,10 +715,15 @@ class MainWindow(QMainWindow):
         from utils.paths import APP_ROOT, SESSIONS_DIR
 
         log_cfg = self._cfg.get("logging", {})
-        raw_out = log_cfg.get("output_dir", "data/sessions")
-        base_dir = Path(raw_out) if Path(raw_out).is_absolute() else APP_ROOT / raw_out
-        if not base_dir.exists():
-            base_dir = SESSIONS_DIR
+
+        # Prefer the operator-selected custom path over config default
+        if self._custom_save_path:
+            base_dir = Path(self._custom_save_path)
+        else:
+            raw_out  = log_cfg.get("output_dir", "data/sessions")
+            base_dir = Path(raw_out) if Path(raw_out).is_absolute() else APP_ROOT / raw_out
+            if not base_dir.exists():
+                base_dir = SESSIONS_DIR
 
         self._grading_recorder = GradingRecorder(
             image_format          = log_cfg.get("image_format", "jpg"),
@@ -1209,6 +1216,20 @@ class MainWindow(QMainWindow):
         # Re-wire: selecting Detected should start inference even
         # if the Detect mode button is not explicitly toggled.
         self._wire_infer_logging()
+
+    def _on_save_path_changed(self, path: str) -> None:
+        """
+        Operator selected a custom save path in the Data Logging popup.
+        Stored for use when the next grading session starts.
+        Updates the sidebar tooltip to reflect the pending path.
+        """
+        self._custom_save_path = path
+        if path:
+            self._left.set_logging_path(path)
+        else:
+            log_cfg  = self._cfg.get("logging", {})
+            raw_out  = log_cfg.get("output_dir", "data/sessions")
+            self._left.set_logging_path(raw_out)
 
     @pyqtSlot(int, int, int)
     def _on_exposure_changed(self, ch1_us: int, ch2_us: int, ch3_us: int) -> None:
