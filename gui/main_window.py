@@ -679,12 +679,22 @@ class MainWindow(QMainWindow):
             self._size_acc = None
 
         self._left.set_camera_connected(True)
-        sg.set_status("AI Model", "idle",   "Waiting for model")
+        
+        # If the inference worker is already running, preserve its "online" status
+        # and push the newly created tracker and size accumulator to it.
+        if self._infer_w is not None and getattr(self._infer_w, "_running", False):
+            sg.set_status("AI Model", "online", "Model loaded successfully")
+            self._infer_w.set_tracker(self._tracker)
+            self._infer_w.set_size_acc(self._size_acc)
+            self.statusBar().showMessage("Camera connected  ·  Grading active")
+        else:
+            sg.set_status("AI Model", "idle",   "Waiting for model")
+            self.statusBar().showMessage("Camera connected  ·  Load a model to start grading")
+
         sg.set_status("Sorter",   "idle",   "Simulation")
         self._right.metrics_group.start_session()
         self._center.analytics_panel.start()
         self._total = 0
-        self.statusBar().showMessage("Camera connected  ·  Load a model to start grading")
 
         # ── Sorter controller ─────────────────────────────────────
         self._sorter = SorterController(

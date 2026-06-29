@@ -150,6 +150,13 @@ class RealInferenceWorker(QThread):
         """Live session recorder — logging runs on this thread, not the GUI."""
         self._recorder = recorder
 
+    def set_tracker(self, tracker) -> None:
+        """Update the tracker instance dynamically (e.g. after camera reconnect)."""
+        self._tracker = tracker
+
+    def set_size_acc(self, size_acc) -> None:
+        self._size_acc = size_acc
+
     def enqueue(self, ch1, ch2, ch3) -> None:
         """Non-blocking enqueue; drops oldest triplet when full."""
         if ch1 is None:

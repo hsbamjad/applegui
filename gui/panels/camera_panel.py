@@ -620,11 +620,10 @@ class DataLoggingWindow(QWidget):
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
-    def set_options(self, raw: bool, processed: bool, detected: bool) -> None:
+    def set_options(self, raw: bool, detected: bool) -> None:
         """Set checkbox states without emitting sig_options_changed."""
         for chk, val in [
             (self._chk_raw, raw),
-            (self._chk_processed, processed),
             (self._chk_detected, detected),
         ]:
             chk.blockSignals(True)
@@ -632,17 +631,15 @@ class DataLoggingWindow(QWidget):
             chk.blockSignals(False)
 
     def get_options(self) -> tuple:
-        """Return (raw_frames, processed_frames, detected_frames) booleans."""
+        """Return (raw_frames, detected_frames) booleans."""
         return (
             self._chk_raw.isChecked(),
-            self._chk_processed.isChecked(),
             self._chk_detected.isChecked(),
         )
 
-    def set_enabled_options(self, raw: bool, processed: bool, detected: bool) -> None:
+    def set_enabled_options(self, raw: bool, detected: bool) -> None:
         """Enable or disable individual checkboxes based on active modes."""
         self._chk_raw.setEnabled(raw)
-        self._chk_processed.setEnabled(processed)
         self._chk_detected.setEnabled(detected)
 
     def show_beside(self, anchor: QWidget) -> None:
