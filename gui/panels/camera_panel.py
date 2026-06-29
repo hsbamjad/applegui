@@ -1562,10 +1562,10 @@ class LeftControlPanel(QWidget):
                 font-weight: 600; font-size: 11px;
             }}
             QPushButton:hover:enabled {{
-                background-color: {WARNING}33; color: {WARNING};
-                border-color: {WARNING}88;
+                background-color: #A07A28; color: white;
+                border: 2px solid {WARNING};
             }}
-            QPushButton:pressed:enabled {{ background-color: {WARNING}55; }}
+            QPushButton:pressed:enabled {{ background-color: #856320; color: white; }}
         """)
         self._btn_reset_roi.clicked.connect(self.sig_roi_reset.emit)
 
