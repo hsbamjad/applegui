@@ -981,7 +981,7 @@ class MainWindow(QMainWindow):
 
         self._infer_w = RealInferenceWorker(
             model_path     = model_path,
-            conf_threshold = inf_cfg.get("confidence_threshold", 0.5),
+            conf_threshold = self._left.get_confidence_threshold(),
             iou_threshold  = inf_cfg.get("iou_threshold", 0.45),
             device         = inf_cfg.get("device", "cuda"),
             input_mode     = input_mode,

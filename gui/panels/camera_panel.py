@@ -1649,6 +1649,51 @@ class LeftControlPanel(QWidget):
         )
         self._lbl_model_detail.setWordWrap(True)
         card.add(self._lbl_model_detail)
+
+        # ── Confidence Control ─────────────────────────────────────────────
+        self._row_sep(card)
+        _sub_header(card, "CONFIDENCE CONTROL", color=INFO)
+
+        # Row: label | spinbox | live-% label
+        _conf_row = QWidget()
+        _conf_row.setStyleSheet("background: transparent; border: none;")
+        _conf_hl = QHBoxLayout(_conf_row)
+        _conf_hl.setContentsMargins(0, 2, 0, 2)
+        _conf_hl.setSpacing(6)
+
+        _conf_lbl = QLabel("Threshold")
+        _conf_lbl.setFixedWidth(LABEL_W)
+        _conf_lbl.setStyleSheet(
+            f"color: {TEXT_2}; font-size: 11px; background: transparent;"
+        )
+
+        self._spn_confidence = _dspinbox(0.01, 1.00, 0.50, 0.05, 2)
+        self._spn_confidence.setMinimumWidth(80)
+        self._spn_confidence.setToolTip(
+            "Minimum YOLO detection confidence to keep a bounding box.\n"
+            "Lower  (0.10–0.30) → more detections, higher false-positive risk\n"
+            "Default (0.50)     → balanced precision / recall\n"
+            "Higher (0.70–0.90) → fewer detections, only high-certainty hits\n\n"
+            "Takes effect on next model load."
+        )
+
+        self._lbl_conf_pct = QLabel("50%")
+        self._lbl_conf_pct.setFixedWidth(36)
+        self._lbl_conf_pct.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._lbl_conf_pct.setStyleSheet(
+            f"color: {INFO}; font-size: 11px; font-weight: 700; background: transparent;"
+        )
+
+        def _update_conf_pct(val: float) -> None:
+            self._lbl_conf_pct.setText(f"{val * 100:.0f}%")
+
+        self._spn_confidence.valueChanged.connect(_update_conf_pct)
+
+        _conf_hl.addWidget(_conf_lbl)
+        _conf_hl.addWidget(self._spn_confidence, stretch=1)
+        _conf_hl.addWidget(self._lbl_conf_pct)
+        card.add(_conf_row)
+
         return card
 
     def _sorter_card(self) -> QWidget:
@@ -1830,3 +1875,8 @@ class LeftControlPanel(QWidget):
             self._combo_model.addItems(names)
         else:
             self._combo_model.addItem("No models in  models/")
+
+    def get_confidence_threshold(self) -> float:
+        """Return the current confidence threshold value from the AI Model card spinbox."""
+        return self._spn_confidence.value()
+
