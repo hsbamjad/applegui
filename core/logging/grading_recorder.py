@@ -551,12 +551,49 @@ class GradingRecorder:
 
     def _on_stop(self) -> list[_WriteJob]:
         writes: list[_WriteJob] = []
+
+        # ── Flush frames for apples that committed (track_to_apple is populated) ─
         for track_id, buffered in list(self._track_buffer.items()):
             sid = self._track_to_apple.get(track_id)
             if sid is None:
                 continue
             for bm in buffered:
                 writes.extend(self._append_row(sid, bm))
+
+        # ── Flush frames for uncommitted tracks (Processed-only mode) ────────────
+        # When only Processed Frames is active, apples may never cross the exit
+        # gate (or the session is stopped mid-way), so _track_to_apple is never
+        # populated.  Assign a temporary per-lane seq_id so ch1/ch2/ch3 crops are
+        # written rather than silently dropped.
+        uncommitted = {
+            tid: buf for tid, buf in self._track_buffer.items()
+            if tid not in self._track_to_apple and buf
+        }
+        if uncommitted and self._save_frames:
+            # Group by lane using the first meta's lane field
+            lane_counter: dict[int, int] = {}
+            for tid, buf in uncommitted.items():
+                if not buf:
+                    continue
+                lane = buf[0].lane
+                lane_counter[lane] = lane_counter.get(lane, 0) + 1
+                # Use a negative seq_id range so it never conflicts with real ones.
+                # Apple dir will be Lane{N}/Partial{counter}/ on disk.
+                partial_id = -(lane * 1000 + lane_counter[lane])
+                # Temporarily override _apple_dir via a fake _AppleState
+                fake_state = _AppleState(seq_id=partial_id, lane=lane)
+                fake_state.frame_idx = 0
+                apple_dir = self._session_dir / f"Lane{lane}" / f"Partial{lane_counter[lane]}"
+                for bm in buf:
+                    fake_state.frame_idx += 1
+                    fname = f"frame_{fake_state.frame_idx:03d}.{self._image_ext}"
+                    _CH_NAMES = ("ch1", "ch2", "ch3")
+                    for ch_name, raw_jpeg in zip(_CH_NAMES, bm.raw_crop_jpegs):
+                        if raw_jpeg is not None:
+                            writes.append(_WriteJob(apple_dir / ch_name / fname, raw_jpeg))
+                    if self._save_detected_frames and bm.detected_jpeg is not None:
+                        writes.append(_WriteJob(apple_dir / "detected" / fname, bm.detected_jpeg))
+
         self._track_buffer.clear()
         self._track_to_apple.clear()
 
@@ -575,6 +612,7 @@ class GradingRecorder:
             self._dropped_raw_frames, self._dropped_det_frames,
         )
         return writes
+
 
     def _on_raw_frame(
         self,
