@@ -248,6 +248,9 @@ class GradingRecorder:
         """
         if not self._active or not self._save_raw_full_frames:
             return
+        self._raw_frame_tick += 1
+        if self._raw_frame_tick % self._raw_frame_stride != 0:
+            return
         if not self._raw_slots.acquire(blocking=False):
             self._dropped_raw_frames += 1
             if self._dropped_raw_frames in (1, 50, 200):
