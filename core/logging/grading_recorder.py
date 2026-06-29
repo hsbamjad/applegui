@@ -363,6 +363,14 @@ class GradingRecorder:
                     with self._lock:
                         writes.extend(self._on_stop())
                     self._flush_writes(writes)
+                    # Wait for ALL pending writes to complete before signalling done.
+                    # shutdown(wait=True) blocks until every ThreadPoolExecutor task
+                    # finishes, then we recreate the pool so the recorder can be
+                    # reused for a subsequent session.
+                    self._write_pool.shutdown(wait=True)
+                    self._write_pool = ThreadPoolExecutor(
+                        max_workers=4, thread_name_prefix="log-wr"
+                    )
                     done.set()
                 elif kind == "raw_frame":
                     _, c1, c2, c3 = cmd
