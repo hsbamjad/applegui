@@ -69,7 +69,8 @@ class _PendingMeta:
     lane: int
     raw_cls: int
     raw_conf: float
-    crop_jpeg: bytes | None = None          # processed (YOLO-input combined) crop
+    crop_jpeg:      bytes | None = None   # processed: clean (unannotated) crop
+    detected_jpeg:  bytes | None = None   # detected: annotated crop with box + label
     raw_crop_jpegs: tuple[bytes | None, bytes | None, bytes | None] = field(
         default_factory=lambda: (None, None, None)
     )  # (source0, source1, source2) raw crops — no annotation overlay
@@ -426,13 +427,17 @@ class GradingRecorder:
             raw_cls=int(t["raw_class_id"]),
             raw_conf=float(t["raw_conf"]),
         )
+        # Processed Frames = clean (unannotated) crop from the YOLO composite
         if self._save_frames:
-            meta.crop_jpeg = self._encode_crop(frame, t)
-            if self._save_raw_frames and raw_frames is not None:
-                meta.raw_crop_jpegs = tuple(
-                    self._encode_raw_crop(rf, t) if rf is not None else None
-                    for rf in raw_frames
-                )
+            meta.crop_jpeg = self._encode_raw_crop(frame, t)   # no annotation
+        # Detected Frames = annotated crop (bounding box + grade label)
+        if self._save_detected_frames:
+            meta.detected_jpeg = self._encode_crop(frame, t)   # with annotation
+        if self._save_raw_frames and raw_frames is not None:
+            meta.raw_crop_jpegs = tuple(
+                self._encode_raw_crop(rf, t) if rf is not None else None
+                for rf in raw_frames
+            )
         return _PreparedTrack(
             track_id=int(t["track_id"]),
             seq_id=t.get("seq_id"),
@@ -486,6 +491,9 @@ class GradingRecorder:
 
         if self._save_frames and meta.crop_jpeg is not None:
             jobs.append(_WriteJob(apple_dir / "processed" / fname, meta.crop_jpeg))
+
+        if self._save_detected_frames and meta.detected_jpeg is not None:
+            jobs.append(_WriteJob(apple_dir / "detected" / fname, meta.detected_jpeg))
 
         # Raw source crops (source0, source1, source2)
         _SRC_NAMES = ("source0", "source1", "source2")
