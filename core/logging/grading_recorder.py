@@ -166,6 +166,12 @@ class GradingRecorder:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         session_dir = Path(base_dir) / ts
         session_dir.mkdir(parents=True, exist_ok=True)
+        self._dirs_made.add(session_dir)
+
+        # Pre-create raw_frames directories to avoid thread-pool race conditions
+        if self._save_raw_full_frames:
+            for idx in range(3):
+                (session_dir / "raw_frames" / f"ch{idx + 1}").mkdir(parents=True, exist_ok=True)
 
         done = threading.Event()
         self._cmd_q.put(("start", session_dir, done))
@@ -466,6 +472,15 @@ class GradingRecorder:
         if state is None:
             state = _AppleState(seq_id=seq_id, lane=meta.lane)
             self._apples[seq_id] = state
+            
+            # Pre-create the apple directory and subdirectories synchronously to avoid 
+            # thread-pool race conditions on Windows when multiple jobs try to create them.
+            apple_dir = self._apple_dir(state)
+            if self._save_processed_crops:
+                for ch in ("ch1", "ch2", "ch3"):
+                    (apple_dir / "processed" / ch).mkdir(parents=True, exist_ok=True)
+            if self._save_detected_crops:
+                (apple_dir / "detected").mkdir(parents=True, exist_ok=True)
 
         if state.finalized:
             return []
@@ -491,7 +506,7 @@ class GradingRecorder:
             jobs.append(_WriteJob(apple_dir / "detected" / fname, meta.detected_crop_jpeg))
 
         # Processed crops: per-channel raw crops → Apple{N}/processed/ch1/, ch2/, ch3/
-        if meta.processed_crop_jpegs is not None:
+        if self._save_processed_crops and meta.processed_crop_jpegs is not None:
             _CH_NAMES = ("ch1", "ch2", "ch3")
             for ch_name, proc_jpeg in zip(_CH_NAMES, meta.processed_crop_jpegs):
                 if proc_jpeg is not None:
