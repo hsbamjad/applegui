@@ -709,19 +709,17 @@ class MainWindow(QMainWindow):
             base_dir = SESSIONS_DIR
 
         self._grading_recorder = GradingRecorder(
-            image_format         = log_cfg.get("image_format", "jpg"),
-            jpeg_quality         = int(log_cfg.get("jpeg_quality", 92)),
-            save_frames          = self._log_processed,
-            save_raw_frames      = self._log_processed,
-            crop_padding_frac    = float(log_cfg.get("crop_padding_frac", 0.20)),
-            crop_max_dim         = int(log_cfg.get("crop_max_dim", 512)),
-            raw_crop_max_dim     = int(log_cfg.get("raw_crop_max_dim", 256)),
-            raw_frame_stride     = int(log_cfg.get("raw_frame_stride", 1)),
-            save_raw_full_frames = self._log_raw,
-            save_detected_frames = self._log_detected,
-            max_pending_batches  = int(log_cfg.get("max_pending_batches", 2)),
-            max_crops_per_batch  = int(log_cfg.get("max_crops_per_batch", 8)),
-            heavy_threshold      = int(log_cfg.get("heavy_threshold", 12)),
+            image_format          = log_cfg.get("image_format", "jpg"),
+            jpeg_quality          = int(log_cfg.get("jpeg_quality", 92)),
+            save_processed_crops  = self._log_processed,
+            save_detected_crops   = self._log_detected,
+            crop_padding_frac     = float(log_cfg.get("crop_padding_frac", 0.20)),
+            crop_max_dim          = int(log_cfg.get("crop_max_dim", 512)),
+            raw_frame_stride      = int(log_cfg.get("raw_frame_stride", 1)),
+            save_raw_full_frames  = self._log_raw,
+            max_pending_batches   = int(log_cfg.get("max_pending_batches", 2)),
+            max_crops_per_batch   = int(log_cfg.get("max_crops_per_batch", 8)),
+            heavy_threshold       = int(log_cfg.get("heavy_threshold", 12)),
         )
         session_dir = self._grading_recorder.start_session(base_dir)
         self._wire_infer_logging()
@@ -830,12 +828,15 @@ class MainWindow(QMainWindow):
     def _wire_infer_logging(self) -> None:
         if self._infer_w is None:
             return
-        # Recorder is attached to inference only when BOTH Save and Detect modes are on.
-        # Detect-only: no logging, recorder is None.
-        # Save-only: no inference running, so nothing to wire.
+        # Attach the recorder to inference when:
+        #   - Save mode is ON, AND
+        #   - Either Detect mode is ON, OR Processed/Detected crops are selected
+        #     (crops need inference to run even if user didn't press Detect button)
+        crops_needed = self._log_processed or self._log_detected
+        infer_needed = self._detect_mode or crops_needed
         rec = (
             self._grading_recorder
-            if self._save_mode and self._detect_mode
+            if self._save_mode and infer_needed
             else None
         )
         self._infer_w.set_grading_recorder(rec)
@@ -1158,9 +1159,8 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(bool)
     def _on_detect_mode_changed(self, enabled: bool) -> None:
-        """Detect mode toggled — controls whether inference results gate the recorder."""
+        """Detect mode toggled — enables on-screen detections and inference."""
         self._detect_mode = enabled
-        # Re-wire so recorder is attached/detached from inference based on combined state
         self._wire_infer_logging()
 
     @pyqtSlot(bool, bool, bool)
@@ -1168,6 +1168,7 @@ class MainWindow(QMainWindow):
         """
         User changed Data Logging options in the popup.
         Updates recorder flags live — no session restart needed.
+        Processed/Detected selection automatically enables inference.
         """
         self._log_raw       = raw
         self._log_processed = processed
@@ -1176,10 +1177,11 @@ class MainWindow(QMainWindow):
         if rec is not None:
             rec.set_save_options(
                 save_raw_full_frames = raw,
-                save_detected_frames = detected,
-                save_frames          = processed,
-                save_raw_frames      = processed,
+                save_processed_crops = processed,
+                save_detected_crops  = detected,
             )
+        # Re-wire: selecting Processed or Detected should start inference even
+        # if the Detect mode button is not explicitly toggled.
         self._wire_infer_logging()
 
     @pyqtSlot(int, int, int)

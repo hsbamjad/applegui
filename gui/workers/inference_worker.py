@@ -234,12 +234,6 @@ class RealInferenceWorker(QThread):
             rec.release_batch_slot()
             raise
 
-    def _maybe_log_detected(self, frame: np.ndarray, active: list) -> None:
-        """Submit full-res YOLO composite + active detections for detected-frame saving."""
-        rec = self._recorder
-        if rec is None or not active:
-            return
-        rec.submit_detected_frame(frame, active)
 
     def stop(self) -> None:
         self._running = False
@@ -323,7 +317,6 @@ class RealInferenceWorker(QThread):
 
             thumb = self._make_thumb(frame)
             self._maybe_log_batch(frame, active)
-            self._maybe_log_detected(frame, active)
             self.sig_preview.emit(thumb, active)
             if graded:
                 self.sig_graded.emit(graded)

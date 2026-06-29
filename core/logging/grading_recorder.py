@@ -1,7 +1,7 @@
 """
 core/logging/grading_recorder.py
 ================================
-Per-apple grading export — cropped annotated patches + CSV.
+Per-apple grading export — cropped patches + CSV.
 
 OpenCV encode and disk I/O run off the GUI thread.  The inference hot path
 only enqueues lightweight track snapshots; under load, pending batches are
@@ -9,11 +9,16 @@ capped so logging never starves the tracker.
 
 Output layout::
 
-    {session}/Lane{L}/Apple{N}/processed/frame_XXX.jpg   # YOLO-combined input crop + grade label
-    {session}/Lane{L}/Apple{N}/source0/frame_XXX.jpg     # raw ch1 (Color) crop — no annotations
-    {session}/Lane{L}/Apple{N}/source1/frame_XXX.jpg     # raw ch2 (NIR1)  crop — no annotations
-    {session}/Lane{L}/Apple{N}/source2/frame_XXX.jpg     # raw ch3 (NIR2)  crop — no annotations
-    {session}/Lane{L}/Apple{N}.csv
+    {session}/raw_frames/ch1/frame_XXXXXX.jpg   # full-res raw ch1 (Color) — no annotation
+    {session}/raw_frames/ch2/frame_XXXXXX.jpg   # full-res raw ch2 (NIR1)  — no annotation
+    {session}/raw_frames/ch3/frame_XXXXXX.jpg   # full-res raw ch3 (NIR2)  — no annotation
+
+    {session}/Lane{L}/Apple{N}/processed/ch1/frame_XXX.jpg  # ch1 crop — no boxes
+    {session}/Lane{L}/Apple{N}/processed/ch2/frame_XXX.jpg  # ch2 crop — no boxes
+    {session}/Lane{L}/Apple{N}/processed/ch3/frame_XXX.jpg  # ch3 crop — no boxes
+
+    {session}/Lane{L}/Apple{N}/detected/frame_XXX.jpg       # composite YOLO crop + boxes
+    {session}/Lane{L}/Apple{N}.csv                          # per-apple detection CSV
 """
 
 from __future__ import annotations
@@ -69,10 +74,10 @@ class _PendingMeta:
     lane: int
     raw_cls: int
     raw_conf: float
-    crop_jpeg: bytes | None = None          # processed (YOLO-input combined) crop
-    raw_crop_jpegs: tuple[bytes | None, bytes | None, bytes | None] = field(
+    detected_crop_jpeg: bytes | None = None        # composite YOLO crop + boxes (Detected Frames)
+    processed_crop_jpegs: tuple[bytes | None, bytes | None, bytes | None] = field(
         default_factory=lambda: (None, None, None)
-    )  # (source0, source1, source2) raw crops — no annotation overlay
+    )  # (ch1, ch2, ch3) per-channel crops — no annotation (Processed Frames)
 
 
 @dataclass
@@ -109,31 +114,27 @@ class GradingRecorder:
         self,
         image_format: str = "jpg",
         jpeg_quality: int = 92,
-        save_frames: bool = True,
-        save_raw_frames: bool = True,
+        save_processed_crops: bool = False,   # save per-channel crops (ch1/ch2/ch3, no boxes)
+        save_detected_crops: bool = False,    # save composite YOLO crop + boxes + CSV
         crop_padding_frac: float = 0.20,
         crop_max_dim: int = 512,
-        raw_crop_max_dim: int = 256,    # smaller than processed — faster encode, less I/O
-        raw_frame_stride: int = 1,       # save raw crops every Nth logged frame (1=every frame)
+        raw_frame_stride: int = 1,            # save crops every Nth logged frame
         save_raw_full_frames: bool = False,   # save full-resolution frames (all 3 channels)
-        save_detected_frames: bool = False,   # save full-res YOLO composite + detection boxes
         max_pending_batches: int = _MAX_PENDING_BATCHES,
         max_crops_per_batch: int = _DEFAULT_MAX_CROPS,
         heavy_threshold: int = _DEFAULT_HEAVY_THRESHOLD,
     ) -> None:
         self._image_ext = image_format.lower().lstrip(".")
         self._jpeg_quality = jpeg_quality
-        self._save_frames = save_frames
-        self._save_raw_frames = save_raw_frames
+        self._save_processed_crops = save_processed_crops
+        self._save_detected_crops  = save_detected_crops
         self._crop_pad = crop_padding_frac
         self._crop_max_dim = crop_max_dim
-        self._raw_crop_max_dim = max(64, raw_crop_max_dim)
         self._raw_frame_stride = max(1, raw_frame_stride)
-        self._raw_frame_tick = 0          # counts logged frames for stride gating
+        self._raw_frame_tick = 0           # counts logged frames for stride gating
         self._save_raw_full_frames = save_raw_full_frames
-        self._save_detected_frames = save_detected_frames
-        self._raw_full_frame_counter = 0  # monotonic counter for raw_frames/ filenames
-        self._detected_frame_counter = 0  # monotonic counter for detected_frames/ filenames
+        self._raw_full_frame_counter = 0   # monotonic counter for raw_frames/ filenames
+        self._detected_frame_counter = 0
         self._dropped_raw_frames = 0
         self._dropped_det_frames = 0
         self._max_crops = max(1, max_crops_per_batch)
@@ -288,23 +289,19 @@ class GradingRecorder:
     def set_save_options(
         self,
         save_raw_full_frames: bool | None = None,
-        save_detected_frames: bool | None = None,
-        save_frames: bool | None = None,
-        save_raw_frames: bool | None = None,
+        save_processed_crops: bool | None = None,
+        save_detected_crops: bool | None = None,
     ) -> None:
         """
         Update save flags live without restarting the session.
-        Flag changes take effect on the next submitted frame.
         Thread-safe: Python bool assignment is atomic under the GIL.
         """
         if save_raw_full_frames is not None:
             self._save_raw_full_frames = save_raw_full_frames
-        if save_detected_frames is not None:
-            self._save_detected_frames = save_detected_frames
-        if save_frames is not None:
-            self._save_frames = save_frames
-        if save_raw_frames is not None:
-            self._save_raw_frames = save_raw_frames
+        if save_processed_crops is not None:
+            self._save_processed_crops = save_processed_crops
+        if save_detected_crops is not None:
+            self._save_detected_crops = save_detected_crops
 
     def on_grade_committed(
         self,
@@ -394,14 +391,19 @@ class GradingRecorder:
         # cv2.imencode releases the GIL, so the inference thread is not starved.
         # The lock is only acquired below for fast dict bookkeeping (~1 ms).
         self._raw_frame_tick += 1
-        save_raw = (
-            self._save_raw_frames
-            and raw_frames is not None
-            and self._raw_frame_tick % self._raw_frame_stride == 0
+        # Pass raw_frames for per-channel processed crops when stride allows
+        rf = (
+            raw_frames
+            if (
+                self._save_processed_crops
+                and raw_frames is not None
+                and self._raw_frame_tick % self._raw_frame_stride == 0
+            )
+            else None
         )
         prepared: list[_PreparedTrack] = []
         for t in tracks:
-            item = self._prepare_track(frame, t, raw_frames if save_raw else None)
+            item = self._prepare_track(frame, t, rf)
             if item is not None:
                 prepared.append(item)
 
@@ -426,13 +428,13 @@ class GradingRecorder:
             raw_cls=int(t["raw_class_id"]),
             raw_conf=float(t["raw_conf"]),
         )
-        if self._save_frames:
-            meta.crop_jpeg = self._encode_crop(frame, t)
-            if self._save_raw_frames and raw_frames is not None:
-                meta.raw_crop_jpegs = tuple(
-                    self._encode_raw_crop(rf, t) if rf is not None else None
-                    for rf in raw_frames
-                )
+        if self._save_detected_crops:
+            meta.detected_crop_jpeg = self._encode_detected_crop(frame, t)
+        if self._save_processed_crops and raw_frames is not None:
+            meta.processed_crop_jpegs = tuple(
+                self._encode_processed_crop(rf, t) if rf is not None else None
+                for rf in raw_frames
+            )
         return _PreparedTrack(
             track_id=int(t["track_id"]),
             seq_id=t.get("seq_id"),
@@ -484,14 +486,15 @@ class GradingRecorder:
         apple_dir = self._apple_dir(state)
         fname = f"frame_{state.frame_idx:03d}.{self._image_ext}"
 
-        if self._save_frames and meta.crop_jpeg is not None:
-            jobs.append(_WriteJob(apple_dir / "processed" / fname, meta.crop_jpeg))
+        # Detected crop: composite YOLO frame + boxes → Apple{N}/detected/
+        if self._save_detected_crops and meta.detected_crop_jpeg is not None:
+            jobs.append(_WriteJob(apple_dir / "detected" / fname, meta.detected_crop_jpeg))
 
-        # Raw source crops (source0, source1, source2)
-        _SRC_NAMES = ("source0", "source1", "source2")
-        for src_name, raw_jpeg in zip(_SRC_NAMES, meta.raw_crop_jpegs):
-            if raw_jpeg is not None:
-                jobs.append(_WriteJob(apple_dir / src_name / fname, raw_jpeg))
+        # Processed crops: per-channel raw crops → Apple{N}/processed/ch1/, ch2/, ch3/
+        _CH_NAMES = ("ch1", "ch2", "ch3")
+        for ch_name, proc_jpeg in zip(_CH_NAMES, meta.processed_crop_jpegs):
+            if proc_jpeg is not None:
+                jobs.append(_WriteJob(apple_dir / "processed" / ch_name / fname, proc_jpeg))
 
         return jobs
 
@@ -526,7 +529,9 @@ class GradingRecorder:
         state.final_grade = class_name
         state.final_confidence = float(confidence)
         state.finalized = True
-        self._write_csv(state, finalize=True)
+        # CSV is only written when Detected Frames logging is enabled
+        if self._save_detected_crops:
+            self._write_csv(state, finalize=True)
         return writes
 
     def _on_stop(self) -> list[_WriteJob]:
@@ -541,11 +546,12 @@ class GradingRecorder:
         self._track_to_apple.clear()
 
         for state in self._apples.values():
-            self._write_csv(
-                state,
-                finalize=True,
-                incomplete=not state.finalized,
-            )
+            if self._save_detected_crops:
+                self._write_csv(
+                    state,
+                    finalize=True,
+                    incomplete=not state.finalized,
+                )
 
         self._apples.clear()
         log.info(
@@ -643,9 +649,9 @@ class GradingRecorder:
 
     # ── Crop rendering ────────────────────────────────────────────────────────
 
-    def _encode_crop(self, frame: np.ndarray, track: dict) -> bytes | None:
-        """Encode the YOLO-combined (processed) crop with annotation overlay."""
-        crop = self._render_crop(frame, track)
+    def _encode_detected_crop(self, frame: np.ndarray, track: dict) -> bytes | None:
+        """Encode the YOLO composite crop with boxes + grade label (Detected Frames)."""
+        crop = self._render_detected_crop(frame, track)
         if crop is None:
             return None
         ok, buf = cv2.imencode(
@@ -654,11 +660,11 @@ class GradingRecorder:
         )
         return buf.tobytes() if ok else None
 
-    def _encode_raw_crop(self, frame: np.ndarray, track: dict) -> bytes | None:
+    def _encode_processed_crop(self, frame: np.ndarray, track: dict) -> bytes | None:
         """
-        Encode a clean crop from a raw source frame — no annotation overlay.
-        The crop region mirrors the processed crop (same box + padding) so
-        all four images (processed + source0/1/2) are spatially aligned.
+        Encode a clean crop from a raw channel frame — no boxes, no annotation.
+        Spatially aligned with the detected crop (same box + padding).
+        Processed Frames: ch1, ch2, ch3 crops saved separately.
         """
         x1, y1, x2, y2 = (int(v) for v in track["box"])
         h, w = frame.shape[:2]
@@ -678,12 +684,15 @@ class GradingRecorder:
             crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
         elif crop.shape[2] == 4:
             crop = crop[:, :, :3]
+        # Normalize non-uint8 (NIR channels may be uint16 or float)
+        if crop.dtype != np.uint8:
+            crop = cv2.normalize(crop, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
 
-        # Resize if larger than raw_crop_max_dim (smaller default than processed)
+        # Resize to crop_max_dim so all saved crops are the same size
         ch, cw = crop.shape[:2]
         max_dim = max(ch, cw)
-        if max_dim > self._raw_crop_max_dim:
-            scale = self._raw_crop_max_dim / max_dim
+        if max_dim > self._crop_max_dim:
+            scale = self._crop_max_dim / max_dim
             crop = cv2.resize(
                 crop,
                 (int(cw * scale), int(ch * scale)),
@@ -696,7 +705,8 @@ class GradingRecorder:
         )
         return buf.tobytes() if ok else None
 
-    def _render_crop(self, frame: np.ndarray, track: dict) -> np.ndarray | None:
+    def _render_detected_crop(self, frame: np.ndarray, track: dict) -> np.ndarray | None:
+        """Render the composite YOLO crop with grade label box (Detected Frames)."""
         x1, y1, x2, y2 = (int(v) for v in track["box"])
         h, w = frame.shape[:2]
         if x2 <= x1 or y2 <= y1:
@@ -712,7 +722,7 @@ class GradingRecorder:
         if frame.ndim == 2:
             crop = cv2.cvtColor(frame[cy1:cy2, cx1:cx2], cv2.COLOR_GRAY2BGR)
         else:
-            crop = frame[cy1:cy2, cx1:cx2]
+            crop = frame[cy1:cy2, cx1:cx2].copy()
 
         rx1, ry1 = x1 - cx1, y1 - cy1
         rx2, ry2 = x2 - cx1, y2 - cy1
