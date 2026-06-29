@@ -23,8 +23,8 @@ from PyQt6.QtCore import (
 
 from gui.styles import (
     BG_SURFACE, BG_CARD, BG_ELEVATED,
-    ACCENT, ACCENT_HV, ACCENT_DK, SUCCESS, WARNING, DANGER,
-    TEXT_1, TEXT_2, TEXT_3, BORDER,
+    ACCENT, ACCENT_HV, ACCENT_DK, SUCCESS, WARNING, DANGER, INFO,
+    TEXT_1, TEXT_2, TEXT_3, BORDER, BORDER_LT,
 )
 
 PANEL_WIDTH  = 290    # Wide enough for label + widget without clipping
@@ -42,7 +42,7 @@ class _SectionHeader(QWidget):
         layout.setSpacing(8)
         lbl = QLabel(text.upper())
         lbl.setStyleSheet(
-            "color: #A8B4CC; font-size: 10px; font-weight: 700; "
+            f"color: {TEXT_3}; font-size: 10px; font-weight: 700; "
             "letter-spacing: 2px; background: transparent;"
         )
         line = QFrame()
@@ -133,8 +133,8 @@ def _btn_primary(text: str) -> QPushButton:
         QPushButton[danger="true"] {{
             background-color: {DANGER};
         }}
-        QPushButton[danger="true"]:hover   {{ background-color: #F87171; }}
-        QPushButton[danger="true"]:pressed {{ background-color: #DC2626; }}
+        QPushButton[danger="true"]:hover   {{ background-color: #D97060; }}
+        QPushButton[danger="true"]:pressed {{ background-color: #A0473A; }}
     """)
     btn.setProperty("danger", "false")
     return btn
@@ -163,8 +163,8 @@ def _btn_danger_style() -> str:
             border-radius: 8px;
             min-height: 38px; max-height: 38px;
         }}
-        QPushButton:hover   {{ background-color: #F87171; }}
-        QPushButton:pressed {{ background-color: #DC2626; }}
+        QPushButton:hover   {{ background-color: #D97060; }}
+        QPushButton:pressed {{ background-color: #A0473A; }}
     """
 
 
@@ -798,7 +798,7 @@ class LeftControlPanel(QWidget):
         _mode_desc.setStyleSheet(f"color: {TEXT_3}; font-size: 10px; background: transparent;")
         _mode_card.add(_mode_desc)
 
-        _SAVE_CLR = "#06b6d4"   # cyan — Save mode
+        _SAVE_CLR = WARNING   # harvest amber — Save mode
         self._btn_save_mode = QPushButton("Save")
         self._btn_save_mode.setFixedHeight(36)
         self._btn_save_mode.setCheckable(True)
@@ -867,7 +867,7 @@ class LeftControlPanel(QWidget):
 
         # ── Data Logging popup button ────────────────────────────────────────
         vlayout.addWidget(_SectionHeader("Data Logging"))
-        _DL_CLR = "#f59e0b"   # amber — matches DataLoggingWindow accent
+        _DL_CLR = WARNING   # harvest amber — matches Save mode accent
         self._btn_data_logging = QPushButton("Data Logging Options")
         self._btn_data_logging.setFixedHeight(38)
         self._btn_data_logging.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -884,12 +884,12 @@ class LeftControlPanel(QWidget):
                 border: none; font-weight: 700; font-size: 12px;
                 border-radius: 8px;
             }}
-            QPushButton:hover   {{ background-color: #fbbf24; }}
+            QPushButton:hover   {{ background-color: #C89435; }}
             QPushButton:checked {{
-                background-color: #d97706;
-                border: 2px solid {_DL_CLR}; color: white;
+                background-color: #A07A28;
+                border: 2px solid {WARNING}; color: white;
             }}
-            QPushButton:pressed  {{ background-color: #b45309; }}
+            QPushButton:pressed  {{ background-color: #856320; }}
             QPushButton:disabled {{
                 background-color: {BG_ELEVATED}; color: {TEXT_3};
                 border: 1px solid {BORDER};
@@ -921,15 +921,15 @@ class LeftControlPanel(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setStyleSheet("""
-            QScrollArea { border: none; background: transparent; }
-            QScrollBar:vertical {
+        scroll.setStyleSheet(f"""
+            QScrollArea {{ border: none; background: transparent; }}
+            QScrollBar:vertical {{
                 background: transparent; width: 4px; margin: 0;
-            }
-            QScrollBar::handle:vertical {
-                background: #334155; border-radius: 2px; min-height: 20px;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            }}
+            QScrollBar::handle:vertical {{
+                background: {BORDER_LT}; border-radius: 2px; min-height: 20px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
         """)
 
         root = QVBoxLayout(self)
@@ -1012,14 +1012,14 @@ class LeftControlPanel(QWidget):
         right = _Card()
 
         # ── Sub-section: Exposure Time ────────────────────────────────
-        _sub_header(left, "EXPOSURE TIME", color="#f59e0b")
+        _sub_header(left, "EXPOSURE TIME", color=WARNING)
 
         # ── Per-channel Exposure (CH1 Color / CH2 NIR1 / CH3 NIR2) ───────────
         # Each source has independent exposure control.
         ch_meta = [
-            ("CH1 Color", "#f59e0b"),  # amber
-            ("CH2 NIR1",  "#22d3ee"),  # cyan
-            ("CH3 NIR2",  "#a78bfa"),  # violet
+            ("CH1 Color", WARNING),    # harvest amber — color channel
+            ("CH2 NIR1",  INFO),       # morning mist — NIR1 channel
+            ("CH3 NIR2",  INFO),      # morning mist — 3rd channel
         ]
         self._spn_exposures: list[QSpinBox] = []
         for i, (ch_label, ch_color) in enumerate(ch_meta):
@@ -1115,15 +1115,15 @@ class LeftControlPanel(QWidget):
 
 
         # ── Sub-section: Gain ─────────────────────────────────────────────
-        _sub_header(left, "SENSOR GAIN", color="#a78bfa")
+        _sub_header(left, "SENSOR GAIN", color=INFO)
 
         # ── Per-channel Gain (CH1 Color / CH2 NIR1 / CH3 NIR2) ───────────────
         # Each source has independent gain control.
         # Color: hardcoded hex matching channel header colors in image_display.py
         ch_meta = [
-            ("CH1 Color", "#f59e0b"),  # amber — matches channel 1 header
-            ("CH2 NIR1",  "#22d3ee"),  # cyan  — matches channel 2 header
-            ("CH3 NIR2",  "#a78bfa"),  # violet — matches channel 3 header
+            ("CH1 Color", WARNING),    # harvest amber — color channel
+            ("CH2 NIR1",  INFO),       # morning mist — NIR1 channel
+            ("CH3 NIR2",  INFO),       # morning mist — NIR2 channel
         ]
         self._spn_gains: list[QDoubleSpinBox] = []
         for i, (ch_label, ch_color) in enumerate(ch_meta):
@@ -1220,13 +1220,13 @@ class LeftControlPanel(QWidget):
         )
         self._btn_awb.setStyleSheet(f"""
             QPushButton {{
-                background-color: #f59e0b22; color: #f59e0b;
-                border: 1px solid #f59e0b55; font-weight: 700; font-size: 12px;
+                background-color: {WARNING}22; color: {WARNING};
+                border: 1px solid {WARNING}55; font-weight: 700; font-size: 12px;
                 border-radius: 7px;
             }}
-            QPushButton:hover:enabled   {{ background-color: #f59e0b44; color: #fbbf24;
-                                           border-color: #f59e0b99; }}
-            QPushButton:pressed:enabled {{ background-color: #f59e0b66; }}
+            QPushButton:hover:enabled   {{ background-color: {WARNING}44; color: #E0B84E;
+                                           border-color: {WARNING}99; }}
+            QPushButton:pressed:enabled {{ background-color: {WARNING}66; }}
             QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3}; border-color: {BORDER}; }}
         """)
         self._btn_awb.clicked.connect(self.sig_awb_triggered.emit)
@@ -1263,14 +1263,14 @@ class LeftControlPanel(QWidget):
 
 
         # ── Sub-section: Black Level ──────────────────────────────────────
-        _sub_header(right, "BLACK LEVEL", color="#94a3b8")
+        _sub_header(right, "BLACK LEVEL", color=TEXT_2)
 
         # ── Black Level (per-source hardware pedestal) ─────────────────────
         # GenICam: BlackLevelSelector=All, BlackLevel float (DN)
         # Removing ambient dark-pedestal and thermal noise at hardware level.
 
         # Channel colors match the rest of the panel (CH1=amber, CH2/CH3=cyan)
-        _BL_COLORS  = ["#f59e0b", "#22d3ee", "#a78bfa"]  # amber · cyan · purple — matches Exposure / Gain
+        _BL_COLORS  = [WARNING, INFO, INFO]   # amber · mist · mist — matches Exposure / Gain
 
         _BL_LABELS  = ["CH1 Color", "CH2 NIR1", "CH3 NIR2"]
         _BL_TIPS    = [
@@ -1481,7 +1481,7 @@ class LeftControlPanel(QWidget):
         self._lbl_roi = QLabel("Full Frame 2048 × 1536 @ (0, 0)")
         self._lbl_roi.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._lbl_roi.setStyleSheet(
-            "color: #06b6d4; font-size: 10px; font-weight: 600; "
+            f"color: {INFO}; font-size: 10px; font-weight: 600; "
             "background: transparent; padding: 4px 0;"
         )
         card.add(self._lbl_roi)
@@ -1525,7 +1525,7 @@ class LeftControlPanel(QWidget):
                     background-color: {BG_ELEVATED}; color: {TEXT_1};
                     border: 1px solid {BORDER}; border-radius: 5px; padding: 2px 6px;
                 }}
-                QSpinBox:focus {{ border-color: #06b6d4; }}
+                QSpinBox:focus {{ border-color: {INFO}; }}
             """)
             # Live preview: update the readout label on any value change
             spn.valueChanged.connect(self._update_roi_label)

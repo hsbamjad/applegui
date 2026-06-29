@@ -39,7 +39,7 @@ from PyQt6.QtGui import QFont, QColor, QPainter, QLinearGradient
 
 from gui.styles import (
     APP_STYLESHEET, BG_BASE, BG_SURFACE, BG_CARD,
-    ACCENT, ACCENT_HV, ACCENT_DK, SUCCESS, WARNING, DANGER,
+    ACCENT, ACCENT_HV, ACCENT_DK, SUCCESS, WARNING, DANGER, INFO,
     TEXT_1, TEXT_2, TEXT_3, BORDER, CH_COLORS,
 )
 from gui.panels.camera_panel import LeftControlPanel
@@ -1292,11 +1292,11 @@ class MainWindow(QMainWindow):
         """Updates the permanent sync status label on the right corner of the status bar."""
         if ch1_bid == -1:
             self._lbl_sync.setText("Sync: --  ·  IDs: -- / -- / --")
-            self._lbl_sync.setStyleSheet("color: #94A3B8; font-family: monospace; font-size: 11px; margin-right: 10px;")
+            self._lbl_sync.setStyleSheet(f"color: {TEXT_2}; font-family: monospace; font-size: 11px; margin-right: 10px;")
             return
         
         sync_str = "OK" if synced else "MISMATCH"
-        color = "#10B981" if synced else "#EF4444"  # emerald green if OK, bright red if MISMATCH
+        color = SUCCESS if synced else DANGER
         self._lbl_sync.setText(f"Sync: {sync_str}  ·  IDs: {ch1_bid} / {ch2_bid} / {ch3_bid}")
         self._lbl_sync.setStyleSheet(f"color: {color}; font-family: monospace; font-size: 11px; font-weight: bold; margin-right: 10px;")
 

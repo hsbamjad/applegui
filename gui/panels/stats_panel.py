@@ -43,9 +43,9 @@ OUTLET_COLORS = {
 
 # Pill badge backgrounds for system status
 PILL = {
-    "online":  {"bg": "#052e16", "text": "#6EE7B7"},
-    "offline": {"bg": "#450a0a", "text": "#FCA5A5"},
-    "warning": {"bg": "#431407", "text": "#FCD34D"},
+    "online":  {"bg": "#162E1A", "text": SUCCESS},
+    "offline": {"bg": "#2E1310", "text": DANGER},
+    "warning": {"bg": "#2E2210", "text": WARNING},
     "idle":    {"bg": "transparent", "text": TEXT_3},
 }
 
@@ -57,7 +57,7 @@ def _section_header(text: str) -> QWidget:
     hl.setSpacing(8)
     lbl = QLabel(text.upper())
     lbl.setStyleSheet(
-        "color: #A8B4CC; font-size: 10px; font-weight: 700; "
+        f"color: {TEXT_3}; font-size: 10px; font-weight: 700; "
         "letter-spacing: 2px; background: transparent;"
     )
     line = QFrame()
