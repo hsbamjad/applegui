@@ -576,14 +576,15 @@ class DataLoggingWindow(QWidget):
         # ── Processed Frames ──────────────────────────────────────────
         self._chk_processed = QCheckBox("Processed Frames")
         self._chk_processed.setToolTip(
-            "Save clean apple patch crops — no annotation, no bounding boxes.\n"
-            "Cropped from the YOLO composite frame at the detected apple region.\n"
-            "Output:  {session}/Lane{N}/Apple{N}/processed/"
+            "Save apple patch crops from the YOLO model input.\n"
+            "Annotated with bounding box + grade label.\n"
+            "Output:  {session}/Lane{N}/Apple{N}/processed/\n"
+            "Requires Detect mode to be active."
         )
         self._chk_processed.setStyleSheet(self._chk_style(ACCENT))
         self._chk_processed.toggled.connect(self._emit_changed)
         cv.addWidget(self._chk_processed)
-        proc_sub = QLabel("  Apple patch crops  ·  clean / no annotation  ·  per-apple folders")
+        proc_sub = QLabel("  Apple patch crops  ·  annotated  ·  per-apple folders")
         proc_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
         cv.addWidget(proc_sub)
 
@@ -594,14 +595,15 @@ class DataLoggingWindow(QWidget):
         # ── Detected Frames ───────────────────────────────────────────
         self._chk_detected = QCheckBox("Detected Frames")
         self._chk_detected.setToolTip(
-            "Save apple patch crops with bounding box + grade label overlaid.\n"
-            "Same region as Processed Frames but with full annotation drawn on.\n"
-            "Output:  {session}/Lane{N}/Apple{N}/detected/"
+            "Save full-resolution YOLO composite with all detection\n"
+            "boxes and grade labels overlaid.\n"
+            "Output:  {session}/detected_frames/\n"
+            "Requires Detect mode to be active."
         )
         self._chk_detected.setStyleSheet(self._chk_style("#22d3ee"))
         self._chk_detected.toggled.connect(self._emit_changed)
         cv.addWidget(self._chk_detected)
-        det_sub = QLabel("  Apple patch crops  ·  bounding box + label  ·  per-apple folders")
+        det_sub = QLabel("  Full frame  ·  all detection boxes  ·  YOLO composite")
         det_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
         cv.addWidget(det_sub)
 

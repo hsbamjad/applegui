@@ -224,11 +224,22 @@ class RealInferenceWorker(QThread):
         if not rec.acquire_batch_slot():
             return
         try:
+            # Pass raw source frames so the recorder can save source0/1/2 crops.
+            # .copy() is intentionally deferred to the background worker to keep
+            # the inference hot path as light as possible; the tuple reference itself
+            # is safe here because _raw_frames is replaced (not mutated) each loop.
             raw = self._raw_frames  # tuple[ch1, ch2, ch3] or None
             rec.submit_batch(frame.copy(), active, raw)
         except Exception:
             rec.release_batch_slot()
             raise
+
+    def _maybe_log_detected(self, frame: np.ndarray, active: list) -> None:
+        """Submit full-res YOLO composite + active detections for detected-frame saving."""
+        rec = self._recorder
+        if rec is None or not active:
+            return
+        rec.submit_detected_frame(frame, active)
 
     def stop(self) -> None:
         self._running = False
@@ -312,6 +323,7 @@ class RealInferenceWorker(QThread):
 
             thumb = self._make_thumb(frame)
             self._maybe_log_batch(frame, active)
+            self._maybe_log_detected(frame, active)
             self.sig_preview.emit(thumb, active)
             if graded:
                 self.sig_graded.emit(graded)
