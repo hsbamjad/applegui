@@ -632,50 +632,59 @@ class DataLoggingWindow(QWidget):
         _browse_row = QWidget()
         _browse_row.setStyleSheet("background: transparent; border: none;")
         _br_hl = QHBoxLayout(_browse_row)
-        _br_hl.setContentsMargins(0, 2, 0, 0)
+        _br_hl.setContentsMargins(0, 4, 0, 0)
         _br_hl.setSpacing(6)
 
         self._path_edit = QLineEdit()
         self._path_edit.setPlaceholderText("Select a folder…")
         self._path_edit.setReadOnly(True)
         self._path_edit.setEnabled(False)
-        self._path_edit.setFixedHeight(30)
-        self._path_edit.setStyleSheet(f"""
+        self._path_edit.setFixedHeight(32)
+        self._path_edit_style_off = f"""
             QLineEdit {{
-                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                background-color: {BG_ELEVATED}; color: {TEXT_3};
                 border: 1px solid {BORDER}; border-radius: 6px;
                 padding: 0 8px; font-size: 10px;
             }}
-            QLineEdit:enabled {{
-                border-color: {self._DL_ACCENT}88; color: {TEXT_1};
+        """
+        self._path_edit_style_on = f"""
+            QLineEdit {{
+                background-color: {BG_ELEVATED}; color: {TEXT_1};
+                border: 1px solid {ACCENT}55; border-radius: 6px;
+                padding: 0 8px; font-size: 10px;
             }}
-            QLineEdit:disabled {{ color: {TEXT_3}; }}
-        """)
+        """
+        self._path_edit.setStyleSheet(self._path_edit_style_off)
 
-        self._btn_browse = QPushButton("Browse")
-        self._btn_browse.setFixedSize(64, 30)
+        self._btn_browse = QPushButton("📂  Browse")
+        self._btn_browse.setFixedHeight(32)
         self._btn_browse.setEnabled(False)
         self._btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_browse.setStyleSheet(f"""
+        self._btn_browse_style_off = f"""
             QPushButton {{
-                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                background-color: {BG_ELEVATED}; color: {TEXT_3};
                 border: 1px solid {BORDER}; font-size: 11px; font-weight: 600;
-                border-radius: 6px; padding: 0 8px;
+                border-radius: 6px; padding: 0 10px; min-width: 80px;
             }}
-            QPushButton:enabled {{
-                color: {self._DL_ACCENT}; border-color: {self._DL_ACCENT}88;
+        """
+        self._btn_browse_style_on = f"""
+            QPushButton {{
+                background-color: {BG_ELEVATED}; color: {ACCENT};
+                border: 1px solid {ACCENT}66; font-size: 11px; font-weight: 600;
+                border-radius: 6px; padding: 0 10px; min-width: 80px;
             }}
-            QPushButton:enabled:hover {{
-                background-color: {self._DL_ACCENT}22; border-color: {self._DL_ACCENT};
+            QPushButton:hover {{
+                background-color: {ACCENT}1A; border-color: {ACCENT};
             }}
-            QPushButton:enabled:pressed {{ background-color: {self._DL_ACCENT}44; }}
-            QPushButton:disabled {{ color: {TEXT_3}; }}
-        """)
+            QPushButton:pressed {{ background-color: {ACCENT}33; }}
+        """
+        self._btn_browse.setStyleSheet(self._btn_browse_style_off)
         self._btn_browse.clicked.connect(self._on_browse)
 
         _br_hl.addWidget(self._path_edit, stretch=1)
         _br_hl.addWidget(self._btn_browse)
         cv.addWidget(_browse_row)
+
 
         # Wire radio toggles
         self._radio_custom.toggled.connect(self._on_path_mode_toggled)
@@ -776,10 +785,19 @@ class DataLoggingWindow(QWidget):
         """Enable/disable Browse row based on radio selection."""
         self._path_edit.setEnabled(custom)
         self._btn_browse.setEnabled(custom)
+        # Swap stylesheets explicitly — avoids Qt :enabled/:disabled pseudo-state
+        # bleeding system colors (purple selection highlight on Windows).
+        self._path_edit.setStyleSheet(
+            self._path_edit_style_on if custom else self._path_edit_style_off
+        )
+        self._btn_browse.setStyleSheet(
+            self._btn_browse_style_on if custom else self._btn_browse_style_off
+        )
         if not custom:
             self._custom_path = ""
             self._path_edit.clear()
             self.sig_path_changed.emit("")
+
 
     def _on_browse(self) -> None:
         """Open folder picker and store the result."""
