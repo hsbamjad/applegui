@@ -576,14 +576,15 @@ class DataLoggingWindow(QWidget):
         # ── Processed Frames ──────────────────────────────────────────
         self._chk_processed = QCheckBox("Processed Frames")
         self._chk_processed.setToolTip(
-            "Save clean apple patch crops — no annotation, no bounding boxes.\n"
-            "Cropped from the YOLO composite frame at the detected apple region.\n"
-            "Output:  {session}/Lane{N}/Apple{N}/processed/"
+            "Save cropped apple patches from all 3 camera channels.\n"
+            "ch1 (Color)  ·  ch2 (NIR1)  ·  ch3 (NIR2)\n"
+            "No annotation, no bounding boxes, no CSV.\n"
+            "Output:  {session}/Lane{N}/Apple{N}/ch1/, ch2/, ch3/"
         )
         self._chk_processed.setStyleSheet(self._chk_style(ACCENT))
         self._chk_processed.toggled.connect(self._emit_changed)
         cv.addWidget(self._chk_processed)
-        proc_sub = QLabel("  Apple patch crops  ·  clean / no annotation  ·  per-apple folders")
+        proc_sub = QLabel("  ch1 / ch2 / ch3 crops  ·  clean / no annotation  ·  no CSV")
         proc_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
         cv.addWidget(proc_sub)
 

@@ -711,14 +711,14 @@ class MainWindow(QMainWindow):
         self._grading_recorder = GradingRecorder(
             image_format         = log_cfg.get("image_format", "jpg"),
             jpeg_quality         = int(log_cfg.get("jpeg_quality", 92)),
-            save_frames          = self._log_processed,
-            save_raw_frames      = self._log_processed,
+            save_frames          = self._log_processed,   # controls ch1/ch2/ch3 per-apple crops
+            save_raw_frames      = False,                  # ch1/ch2/ch3 are handled by save_frames
             crop_padding_frac    = float(log_cfg.get("crop_padding_frac", 0.20)),
             crop_max_dim         = int(log_cfg.get("crop_max_dim", 512)),
             raw_crop_max_dim     = int(log_cfg.get("raw_crop_max_dim", 256)),
             raw_frame_stride     = int(log_cfg.get("raw_frame_stride", 1)),
-            save_raw_full_frames = self._log_raw,
-            save_detected_frames = self._log_detected,
+            save_raw_full_frames = self._log_raw,         # controls full-res raw_frames/ folder
+            save_detected_frames = self._log_detected,    # controls detected crops + CSV
             max_pending_batches  = int(log_cfg.get("max_pending_batches", 2)),
             max_crops_per_batch  = int(log_cfg.get("max_crops_per_batch", 8)),
             heavy_threshold      = int(log_cfg.get("heavy_threshold", 12)),
@@ -1177,8 +1177,8 @@ class MainWindow(QMainWindow):
             rec.set_save_options(
                 save_raw_full_frames = raw,
                 save_detected_frames = detected,
-                save_frames          = processed,
-                save_raw_frames      = processed,
+                save_frames          = processed,   # ch1/ch2/ch3 crops
+                save_raw_frames      = False,        # redundant — ch1/ch2/ch3 via save_frames
             )
         self._wire_infer_logging()
 

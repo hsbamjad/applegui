@@ -395,14 +395,18 @@ class GradingRecorder:
         # cv2.imencode releases the GIL, so the inference thread is not starved.
         # The lock is only acquired below for fast dict bookkeeping (~1 ms).
         self._raw_frame_tick += 1
-        save_raw = (
-            self._save_raw_frames
+        # Processed Frames (ch1/ch2/ch3 crops) respect the stride setting
+        save_processed = (
+            self._save_frames
             and raw_frames is not None
             and self._raw_frame_tick % self._raw_frame_stride == 0
         )
         prepared: list[_PreparedTrack] = []
         for t in tracks:
-            item = self._prepare_track(frame, t, raw_frames if save_raw else None)
+            item = self._prepare_track(
+                frame, t,
+                raw_frames if save_processed else None,
+            )
             if item is not None:
                 prepared.append(item)
 
@@ -427,17 +431,15 @@ class GradingRecorder:
             raw_cls=int(t["raw_class_id"]),
             raw_conf=float(t["raw_conf"]),
         )
-        # Processed Frames = clean (unannotated) crop from the YOLO composite
-        if self._save_frames:
-            meta.crop_jpeg = self._encode_raw_crop(frame, t)   # no annotation
-        # Detected Frames = annotated crop (bounding box + grade label)
-        if self._save_detected_frames:
-            meta.detected_jpeg = self._encode_crop(frame, t)   # with annotation
-        if self._save_raw_frames and raw_frames is not None:
+        # Processed Frames = ch1/ch2/ch3 raw channel crops (no YOLO composite, no annotation)
+        if raw_frames is not None:
             meta.raw_crop_jpegs = tuple(
                 self._encode_raw_crop(rf, t) if rf is not None else None
                 for rf in raw_frames
             )
+        # Detected Frames = annotated YOLO composite crop (bounding box + grade label)
+        if self._save_detected_frames:
+            meta.detected_jpeg = self._encode_crop(frame, t)
         return _PreparedTrack(
             track_id=int(t["track_id"]),
             seq_id=t.get("seq_id"),
@@ -474,32 +476,33 @@ class GradingRecorder:
             return []
 
         state.frame_idx += 1
-        cls_name = (
-            CLASS_NAMES[meta.raw_cls]
-            if 0 <= meta.raw_cls < len(CLASS_NAMES)
-            else str(meta.raw_cls)
-        )
-        state.rows.append(_CsvRow(
-            frame_idx=state.frame_idx,
-            detector_class=cls_name,
-            confidence=meta.raw_conf,
-        ))
+
+        # Only accumulate CSV rows when Detected Frames (grading) is active
+        if self._save_detected_frames:
+            cls_name = (
+                CLASS_NAMES[meta.raw_cls]
+                if 0 <= meta.raw_cls < len(CLASS_NAMES)
+                else str(meta.raw_cls)
+            )
+            state.rows.append(_CsvRow(
+                frame_idx=state.frame_idx,
+                detector_class=cls_name,
+                confidence=meta.raw_conf,
+            ))
 
         jobs: list[_WriteJob] = []
         apple_dir = self._apple_dir(state)
         fname = f"frame_{state.frame_idx:03d}.{self._image_ext}"
 
-        if self._save_frames and meta.crop_jpeg is not None:
-            jobs.append(_WriteJob(apple_dir / "processed" / fname, meta.crop_jpeg))
-
+        # Detected Frames: annotated crop → Apple{N}/detected/
         if self._save_detected_frames and meta.detected_jpeg is not None:
             jobs.append(_WriteJob(apple_dir / "detected" / fname, meta.detected_jpeg))
 
-        # Raw source crops (source0, source1, source2)
-        _SRC_NAMES = ("source0", "source1", "source2")
-        for src_name, raw_jpeg in zip(_SRC_NAMES, meta.raw_crop_jpegs):
+        # Processed Frames: ch1/ch2/ch3 raw channel crops → Apple{N}/ch1/, ch2/, ch3/
+        _CH_NAMES = ("ch1", "ch2", "ch3")
+        for ch_name, raw_jpeg in zip(_CH_NAMES, meta.raw_crop_jpegs):
             if raw_jpeg is not None:
-                jobs.append(_WriteJob(apple_dir / src_name / fname, raw_jpeg))
+                jobs.append(_WriteJob(apple_dir / ch_name / fname, raw_jpeg))
 
         return jobs
 
@@ -534,7 +537,8 @@ class GradingRecorder:
         state.final_grade = class_name
         state.final_confidence = float(confidence)
         state.finalized = True
-        self._write_csv(state, finalize=True)
+        if self._save_detected_frames:   # CSV only when grading is active
+            self._write_csv(state, finalize=True)
         return writes
 
     def _on_stop(self) -> list[_WriteJob]:
@@ -549,11 +553,12 @@ class GradingRecorder:
         self._track_to_apple.clear()
 
         for state in self._apples.values():
-            self._write_csv(
-                state,
-                finalize=True,
-                incomplete=not state.finalized,
-            )
+            if self._save_detected_frames:   # CSV only when grading is active
+                self._write_csv(
+                    state,
+                    finalize=True,
+                    incomplete=not state.finalized,
+                )
 
         self._apples.clear()
         log.info(
@@ -762,7 +767,7 @@ class GradingRecorder:
     # ── Filesystem ────────────────────────────────────────────────────────────
 
     def _apple_dir(self, state: _AppleState) -> Path:
-        """Root folder for this apple — subfolders: processed/, source0/, source1/, source2/."""
+        """Root folder for this apple — subfolders: ch1/, ch2/, ch3/, detected/."""
         assert self._session_dir is not None
         return self._session_dir / f"Lane{state.lane}" / f"Apple{state.seq_id}"
 
