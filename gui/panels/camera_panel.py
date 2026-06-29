@@ -639,44 +639,43 @@ class DataLoggingWindow(QWidget):
         self._path_edit.setPlaceholderText("Select a folder…")
         self._path_edit.setReadOnly(True)
         self._path_edit.setEnabled(False)
-        self._path_edit.setFixedHeight(32)
+        self._path_edit.setFixedHeight(34)
         self._path_edit_style_off = f"""
             QLineEdit {{
                 background-color: {BG_ELEVATED}; color: {TEXT_3};
-                border: 1px solid {BORDER}; border-radius: 6px;
-                padding: 0 8px; font-size: 10px;
+                border: 1px solid {BORDER}; border-radius: 7px;
+                padding: 0 10px; font-size: 11px;
             }}
         """
         self._path_edit_style_on = f"""
             QLineEdit {{
                 background-color: {BG_ELEVATED}; color: {TEXT_1};
-                border: 1px solid {ACCENT}55; border-radius: 6px;
-                padding: 0 8px; font-size: 10px;
+                border: 1px solid {BORDER_LT}; border-radius: 7px;
+                padding: 0 10px; font-size: 11px;
             }}
         """
         self._path_edit.setStyleSheet(self._path_edit_style_off)
 
-        self._btn_browse = QPushButton("📂  Browse")
-        self._btn_browse.setFixedHeight(32)
+        self._btn_browse = QPushButton("Browse")
+        self._btn_browse.setFixedHeight(34)
         self._btn_browse.setEnabled(False)
         self._btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Matches _btn_secondary exactly (Load, Apply FPS, etc.)
         self._btn_browse_style_off = f"""
             QPushButton {{
                 background-color: {BG_ELEVATED}; color: {TEXT_3};
-                border: 1px solid {BORDER}; font-size: 11px; font-weight: 600;
-                border-radius: 6px; padding: 0 10px; min-width: 80px;
+                border: 1px solid {BORDER}; font-weight: 600; font-size: 12px;
+                border-radius: 7px; padding: 0 12px;
             }}
         """
         self._btn_browse_style_on = f"""
             QPushButton {{
-                background-color: {BG_ELEVATED}; color: {ACCENT};
-                border: 1px solid {ACCENT}66; font-size: 11px; font-weight: 600;
-                border-radius: 6px; padding: 0 10px; min-width: 80px;
+                background-color: {BG_ELEVATED}; color: {TEXT_1};
+                border: 1px solid {ACCENT}55; font-weight: 600; font-size: 12px;
+                border-radius: 7px; padding: 0 12px;
             }}
-            QPushButton:hover {{
-                background-color: {ACCENT}1A; border-color: {ACCENT};
-            }}
-            QPushButton:pressed {{ background-color: {ACCENT}33; }}
+            QPushButton:hover   {{ background-color: {ACCENT}; color: white; border-color: {ACCENT}; }}
+            QPushButton:pressed {{ background-color: {ACCENT_DK}; color: white; }}
         """
         self._btn_browse.setStyleSheet(self._btn_browse_style_off)
         self._btn_browse.clicked.connect(self._on_browse)
@@ -750,6 +749,9 @@ class DataLoggingWindow(QWidget):
     def show_beside(self, anchor: QWidget) -> None:
         """Position beside `anchor` widget and show."""
         from PyQt6.QtWidgets import QApplication
+        # Recompute size now that the layout is fully realised
+        self.adjustSize()
+        self.setFixedWidth(self.POPUP_WIDTH)
         global_pos = anchor.mapToGlobal(QPoint(0, 0))
         x = global_pos.x() + anchor.width() + 6
         y = global_pos.y()
