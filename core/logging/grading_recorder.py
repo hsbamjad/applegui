@@ -145,7 +145,6 @@ class GradingRecorder:
         self._apples: dict[int, _AppleState] = {}
         self._track_buffer: dict[int, list[_PendingMeta]] = {}
         self._track_to_apple: dict[int, int] = {}
-        self._track_frame_idx: dict[int, int] = {}   # track_id → frame count for processed crops
         self._dirs_made: set[Path] = set()
         self._active = False
         self._saved_images = 0
@@ -400,26 +399,14 @@ class GradingRecorder:
         tracks: tuple[dict, ...],
         raw_frames: tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None] | None,
     ) -> None:
-        # ── Step 1: Encode crops WITHOUT holding the lock ─────────────────────
-        # cv2.imencode releases the GIL, so the inference thread is not starved.
-        # The lock is only acquired below for fast dict bookkeeping (~1 ms).
-        self._raw_frame_tick += 1
-        # Processed Frames (ch1/ch2/ch3 crops) respect the stride setting
-        save_processed = (
-            self._save_frames
-            and raw_frames is not None
-            and self._raw_frame_tick % self._raw_frame_stride == 0
-        )
+        # Encode crops WITHOUT holding the lock (cv2.imencode releases the GIL).
         prepared: list[_PreparedTrack] = []
         for t in tracks:
-            item = self._prepare_track(
-                frame, t,
-                raw_frames if save_processed else None,
-            )
+            item = self._prepare_track(frame, t, raw_frames)
             if item is not None:
                 prepared.append(item)
 
-        # ── Step 2: Apply to state structures — fast dict ops under lock ──────
+        # Apply to state structures — fast dict ops under lock.
         writes: list[_WriteJob] = []
         with self._lock:
             for item in prepared:
@@ -440,13 +427,14 @@ class GradingRecorder:
             raw_cls=int(t["raw_class_id"]),
             raw_conf=float(t["raw_conf"]),
         )
-        # Processed Frames = ch1/ch2/ch3 raw channel crops (no YOLO composite, no annotation)
-        if raw_frames is not None:
+        # Always encode ch1/ch2/ch3 crops when raw frames are available.
+        # Written to disk at commit time only if _save_frames is True.
+        if raw_frames is not None and self._save_frames:
             meta.raw_crop_jpegs = tuple(
                 self._encode_raw_crop(rf, t) if rf is not None else None
                 for rf in raw_frames
             )
-        # Detected Frames = annotated YOLO composite crop (bounding box + grade label)
+        # Annotated crop — written at commit time only if _save_detected_frames is True.
         if self._save_detected_frames:
             meta.detected_jpeg = self._encode_crop(frame, t)
         return _PreparedTrack(
@@ -458,25 +446,10 @@ class GradingRecorder:
     def _apply_prepared(self, item: _PreparedTrack) -> list[_WriteJob]:
         """Must be called under self._lock."""
         track_id = item.track_id
-        seq_id = item.seq_id
-        meta = item.meta
+        seq_id   = item.seq_id
+        meta     = item.meta
         writes: list[_WriteJob] = []
 
-        # ── Processed Frames (ch1/ch2/ch3) — write IMMEDIATELY, no commit needed ─
-        # Completely independent of the grade-commit pipeline so crops appear on
-        # disk even if the apple never crosses the exit gate or Detected is off.
-        if self._save_frames and any(j is not None for j in meta.raw_crop_jpegs):
-            assert self._session_dir is not None
-            fidx = self._track_frame_idx.get(track_id, 0) + 1
-            self._track_frame_idx[track_id] = fidx
-            fname = f"frame_{fidx:03d}.{self._image_ext}"
-            track_dir = self._session_dir / f"Lane{meta.lane}" / f"Track{track_id}"
-            _CH_NAMES = ("ch1", "ch2", "ch3")
-            for ch_name, raw_jpeg in zip(_CH_NAMES, meta.raw_crop_jpegs):
-                if raw_jpeg is not None:
-                    writes.append(_WriteJob(track_dir / ch_name / fname, raw_jpeg))
-
-        # ── Detected Frames (annotated) — use buffer/commit pipeline for per-apple CSV ─
         if seq_id is not None:
             sid = int(seq_id)
             self._track_to_apple[track_id] = sid
@@ -485,14 +458,14 @@ class GradingRecorder:
                     writes.extend(self._append_row(sid, bm))
             writes.extend(self._append_row(sid, meta))
         else:
-            # Only buffer if Detected Frames is active (needs commit for CSV+annotated crops)
-            if self._save_detected_frames:
-                self._track_buffer.setdefault(track_id, []).append(meta)
+            # Buffer ALL frames regardless of which save flags are active.
+            # Flushed at commit time via _on_commit → _append_row.
+            self._track_buffer.setdefault(track_id, []).append(meta)
 
         return writes
 
     def _append_row(self, seq_id: int, meta: _PendingMeta) -> list[_WriteJob]:
-        """Must be called under self._lock.  Returns write jobs for DETECTED frames only."""
+        """Must be called under self._lock.  Writes whatever save flags request."""
         state = self._apples.get(seq_id)
         if state is None:
             state = _AppleState(seq_id=seq_id, lane=meta.lane)
@@ -502,8 +475,21 @@ class GradingRecorder:
             return []
 
         state.frame_idx += 1
+        apple_dir = self._apple_dir(state)
+        fname = f"frame_{state.frame_idx:03d}.{self._image_ext}"
+        jobs: list[_WriteJob] = []
 
-        # Only accumulate CSV rows when Detected Frames (grading) is active
+        # Processed Frames: ch1/ch2/ch3 crops → Apple{N}/ch1/, ch2/, ch3/
+        if self._save_frames:
+            for ch_name, raw_jpeg in zip(("ch1", "ch2", "ch3"), meta.raw_crop_jpegs):
+                if raw_jpeg is not None:
+                    jobs.append(_WriteJob(apple_dir / ch_name / fname, raw_jpeg))
+
+        # Detected Frames: annotated crop → Apple{N}/detected/
+        if self._save_detected_frames and meta.detected_jpeg is not None:
+            jobs.append(_WriteJob(apple_dir / "detected" / fname, meta.detected_jpeg))
+
+        # CSV row — only when Detected Frames is active
         if self._save_detected_frames:
             cls_name = (
                 CLASS_NAMES[meta.raw_cls]
@@ -516,25 +502,14 @@ class GradingRecorder:
                 confidence=meta.raw_conf,
             ))
 
-        jobs: list[_WriteJob] = []
-        apple_dir = self._apple_dir(state)
-        fname = f"frame_{state.frame_idx:03d}.{self._image_ext}"
-
-        # Detected Frames: annotated crop → Apple{N}/detected/
-        if self._save_detected_frames and meta.detected_jpeg is not None:
-            jobs.append(_WriteJob(apple_dir / "detected" / fname, meta.detected_jpeg))
-
-        # NOTE: ch1/ch2/ch3 crops are now written immediately in _apply_prepared
-        # (independent of commit) — NOT here.
-
         return jobs
+
 
     def _on_start(self, session_dir: Path) -> None:
         self._session_dir = session_dir
         self._apples.clear()
         self._track_buffer.clear()
         self._track_to_apple.clear()
-        self._track_frame_idx.clear()   # reset per-track processed-frame counters
         self._dirs_made.clear()
         self._raw_full_frame_counter = 0
         self._detected_frame_counter = 0
@@ -568,7 +543,7 @@ class GradingRecorder:
     def _on_stop(self) -> list[_WriteJob]:
         writes: list[_WriteJob] = []
 
-        # Flush Detected frames for apples that had a commit (track_to_apple populated)
+        # Flush buffered frames for committed apples (track_to_apple has their seq_id)
         for track_id, buffered in list(self._track_buffer.items()):
             sid = self._track_to_apple.get(track_id)
             if sid is None:
@@ -576,24 +551,32 @@ class GradingRecorder:
             for bm in buffered:
                 writes.extend(self._append_row(sid, bm))
 
-        # NOTE: Processed (ch1/ch2/ch3) crops are written immediately in _apply_prepared
-        # so there is nothing to flush here for Processed-only mode.
+        # Flush uncommitted tracks — session stopped before apple crossed exit gate.
+        # Use a fallback lane-based counter so crops are still written.
+        uncommitted = [
+            (tid, buf) for tid, buf in self._track_buffer.items()
+            if tid not in self._track_to_apple and buf
+        ]
+        if uncommitted:
+            lane_counter: dict[int, int] = {}
+            for tid, buf in uncommitted:
+                lane = buf[0].lane
+                lane_counter[lane] = lane_counter.get(lane, 0) + 1
+                # Use a negative seq_id to avoid colliding with committed apples.
+                fallback_sid = -(lane * 1000 + lane_counter[lane])
+                for bm in buf:
+                    writes.extend(self._append_row(fallback_sid, bm))
 
         self._track_buffer.clear()
         self._track_to_apple.clear()
-        self._track_frame_idx.clear()
 
         for state in self._apples.values():
-            if self._save_detected_frames:   # CSV only when grading is active
-                self._write_csv(
-                    state,
-                    finalize=True,
-                    incomplete=not state.finalized,
-                )
+            if self._save_detected_frames:
+                self._write_csv(state, finalize=True, incomplete=not state.finalized)
 
         self._apples.clear()
         log.info(
-            "GradingRecorder session data flushed  "
+            "GradingRecorder session flushed  "
             "(raw_frames_dropped=%d  det_frames_dropped=%d)",
             self._dropped_raw_frames, self._dropped_det_frames,
         )
