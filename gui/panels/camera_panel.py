@@ -690,6 +690,7 @@ class LeftControlPanel(QWidget):
 
     sig_connect_camera        = pyqtSignal(bool)
     sig_load_model            = pyqtSignal(str)
+    sig_unload_model          = pyqtSignal()
     sig_sorter_toggled        = pyqtSignal(bool)
     sig_logging_toggled       = pyqtSignal(bool)             # kept for compat — prefer sig_save_mode_changed
     sig_save_mode_changed     = pyqtSignal(bool)             # Save mode toggled (enables data logging)
@@ -1621,10 +1622,22 @@ class LeftControlPanel(QWidget):
         self._combo_model.setMinimumWidth(WIDGET_MIN_W)
         card.add(self._combo_model)
 
-        self._btn_load = _btn_secondary("Load Model")
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(8)
+
+        self._btn_load = _btn_secondary("Load")
         self._btn_load.setToolTip("Load selected model into GPU memory")
         self._btn_load.clicked.connect(self._on_load_model)
-        card.add(self._btn_load)
+        btn_layout.addWidget(self._btn_load)
+
+        self._btn_unload = _btn_secondary("Unload")
+        self._btn_unload.setToolTip("Unload current model from memory")
+        self._btn_unload.clicked.connect(self.sig_unload_model.emit)
+        self._btn_unload.setEnabled(False)
+        btn_layout.addWidget(self._btn_unload)
+
+        card.add_layout(btn_layout)
 
         self._lbl_model_detail = QLabel("—")
         self._lbl_model_detail.setStyleSheet(
@@ -1780,20 +1793,32 @@ class LeftControlPanel(QWidget):
         return self._dl_win.get_options()
 
     def set_model_loaded(self, name: str) -> None:
-        self._model_status.set_state("online", "Loaded")
-        self._lbl_model_detail.setText(f"▶  {name}")
-        self._lbl_model_detail.setStyleSheet(
-            f"color: {ACCENT}; font-size: 10px; background: transparent;"
-        )
+        if name:
+            self._model_status.set_state("online", "Loaded")
+            self._lbl_model_detail.setText(f"▶  {name}")
+            self._lbl_model_detail.setStyleSheet(
+                f"color: {ACCENT}; font-size: 10px; background: transparent;"
+            )
+            self._btn_load.setEnabled(False)
+            self._btn_unload.setEnabled(True)
+        else:
+            self._model_status.set_state("idle", "No model loaded")
+            self._lbl_model_detail.setText("—")
+            self._lbl_model_detail.setStyleSheet(
+                f"color: {TEXT_3}; font-size: 10px; background: transparent;"
+            )
+            self._btn_load.setEnabled(True)
+            self._btn_unload.setEnabled(False)
 
     def set_model_loading(self, loading: bool) -> None:
         """Disable / re-enable model loader controls during GPU load."""
         self._btn_load.setEnabled(not loading)
+        self._btn_unload.setEnabled(False)
         self._combo_model.setEnabled(not loading)
         if loading:
             self._btn_load.setText("Loading…")
         else:
-            self._btn_load.setText("Load Model")
+            self._btn_load.setText("Load")
 
     def populate_models(self, names: list[str]) -> None:
         self._combo_model.clear()

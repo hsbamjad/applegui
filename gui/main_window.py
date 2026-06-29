@@ -533,6 +533,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         self._left.sig_connect_camera.connect(self._on_camera_toggle)
         self._left.sig_load_model.connect(self._on_load_model)
+        self._left.sig_unload_model.connect(self._on_unload_model)
         self._left.sig_sorter_toggled.connect(self._on_sorter_toggle)
         self._left.sig_save_mode_changed.connect(self._on_save_mode_changed)
         self._left.sig_detect_mode_changed.connect(self._on_detect_mode_changed)
@@ -911,6 +912,25 @@ class MainWindow(QMainWindow):
         )
 
     # ── Other controls ────────────────────────────────────────────────────────
+
+    @pyqtSlot()
+    def _on_unload_model(self) -> None:
+        """Unload the AI model and stop the inference worker."""
+        if self._infer_w is not None:
+            self._infer_w.stop()
+            self._infer_w = None
+        
+        # Reset UI states
+        self._left.set_model_loaded("")
+        self._right.status_group.set_status("AI Model", "idle", "No model loaded")
+        self.statusBar().showMessage("AI model unloaded")
+        
+        # Re-evaluate grading recorder wiring
+        self._wire_infer_logging()
+        
+        # Unpause video if we are in video sim
+        if isinstance(self._cam_w, VideoWorker):
+            self._cam_w.resume()
 
     @pyqtSlot(str)
     def _on_load_model(self, name: str) -> None:
