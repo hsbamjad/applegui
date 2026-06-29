@@ -540,6 +540,7 @@ class MainWindow(QMainWindow):
         self._left.sig_detect_mode_changed.connect(self._on_detect_mode_changed)
         self._left.sig_logging_options.connect(self._on_logging_options)
         self._left.sig_save_path_changed.connect(self._on_save_path_changed)
+        self._left.sig_save_interval_changed.connect(self._on_save_interval_changed)
         # Camera hardware controls — forwarded to CameraWorker while streaming
         self._left.sig_exposure_changed.connect(self._on_exposure_changed)
         self._left.sig_fps_changed.connect(self._on_fps_changed)
@@ -731,7 +732,7 @@ class MainWindow(QMainWindow):
             save_detected_crops   = self._log_detected,
             crop_padding_frac     = float(log_cfg.get("crop_padding_frac", 0.20)),
             crop_max_dim          = int(log_cfg.get("crop_max_dim", 512)),
-            raw_frame_stride      = int(log_cfg.get("raw_frame_stride", 1)),
+            raw_frame_stride      = self._left.get_save_interval(),
             save_raw_full_frames  = self._log_raw,
             max_pending_batches   = int(log_cfg.get("max_pending_batches", 2)),
             max_crops_per_batch   = int(log_cfg.get("max_crops_per_batch", 8)),
@@ -1230,6 +1231,16 @@ class MainWindow(QMainWindow):
             log_cfg  = self._cfg.get("logging", {})
             raw_out  = log_cfg.get("output_dir", "data/sessions")
             self._left.set_logging_path(raw_out)
+
+    def _on_save_interval_changed(self, every_n: int) -> None:
+        """
+        Operator changed the raw-frame save interval in the Data Logging popup.
+        The value is read from the panel spinbox at the next session start.
+        """
+        log.info("Save interval updated: every %d frame(s)", every_n)
+        self.statusBar().showMessage(
+            f"Save interval: every {every_n} frame(s) — takes effect on next session start"
+        )
 
     @pyqtSlot(int, int, int)
     def _on_exposure_changed(self, ch1_us: int, ch2_us: int, ch3_us: int) -> None:

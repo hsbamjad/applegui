@@ -446,6 +446,7 @@ class DataLoggingWindow(QWidget):
     sig_hidden          = pyqtSignal()
     sig_options_changed = pyqtSignal(bool, bool)   # raw, detected
     sig_path_changed    = pyqtSignal(str)           # custom save path ("" = use default)
+    sig_interval_changed = pyqtSignal(int)          # save every N frames
 
     POPUP_WIDTH = 314
     _DL_ACCENT  = WARNING   # harvest amber — distinct from Camera Controls green
@@ -688,6 +689,75 @@ class DataLoggingWindow(QWidget):
         # Wire radio toggles
         self._radio_custom.toggled.connect(self._on_path_mode_toggled)
 
+        # ── Save Interval ──────────────────────────────────────────────
+        _si_sep = QFrame(); _si_sep.setFixedHeight(1)
+        _si_sep.setStyleSheet(f"background-color: {BORDER}66; border: none; margin: 4px 0;")
+        cv.addWidget(_si_sep)
+
+        _si_header = QLabel("Save Interval")
+        _si_header.setStyleSheet(
+            f"color: {self._DL_ACCENT}; font-size: 10px; font-weight: 700; "
+            "letter-spacing: 1.5px; background: transparent;"
+        )
+        cv.addWidget(_si_header)
+
+        # Row: label + spinbox
+        _si_row = QWidget()
+        _si_row.setStyleSheet("background: transparent; border: none;")
+        _si_hl = QHBoxLayout(_si_row)
+        _si_hl.setContentsMargins(0, 4, 0, 0)
+        _si_hl.setSpacing(8)
+
+        _si_lbl = QLabel("Save every")
+        _si_lbl.setStyleSheet(f"color: {TEXT_2}; font-size: 11px; background: transparent;")
+
+        self._spn_interval = QSpinBox()
+        self._spn_interval.setRange(1, 10)
+        self._spn_interval.setValue(1)
+        self._spn_interval.setSuffix(" frame(s)")
+        self._spn_interval.setFixedHeight(34)
+        self._spn_interval.setMinimumWidth(110)
+        self._spn_interval.setToolTip(
+            "Save one raw frame out of every N captured frames.\n"
+            "1 = save every frame  (maximum data, largest disk use)\n"
+            "2 = save every 2nd frame\n"
+            "5 = save every 5th frame  (typical for long runs)\n"
+            "10 = save every 10th frame  (minimum footprint)\n\n"
+            "Takes effect on next session start."
+        )
+        self._spn_interval.setStyleSheet(f"""
+            QSpinBox {{
+                background-color: {BG_ELEVATED}; color: {TEXT_1};
+                border: 1px solid {BORDER}; border-radius: 7px;
+                padding: 0 8px; font-size: 12px;
+                selection-background-color: {ACCENT};
+            }}
+            QSpinBox:hover {{ border-color: {BORDER_LT}; }}
+            QSpinBox:focus {{ border-color: {ACCENT}; }}
+            QSpinBox::up-button, QSpinBox::down-button {{
+                background-color: {BG_HOVER}; border: none;
+                border-left: 1px solid {BORDER}; width: 22px;
+            }}
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+                background-color: {ACCENT};
+            }}
+            QSpinBox::up-button   {{ border-radius: 0 7px 0 0; }}
+            QSpinBox::down-button {{ border-radius: 0 0 7px 0; }}
+        """)
+        self._spn_interval.valueChanged.connect(
+            lambda v: self.sig_interval_changed.emit(v)
+        )
+
+        _si_hl.addWidget(_si_lbl)
+        _si_hl.addStretch()
+        _si_hl.addWidget(self._spn_interval)
+        cv.addWidget(_si_row)
+
+        _si_sub = QLabel("  Applies to Raw Frames only. 1 = every frame (default).")
+        _si_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
+        _si_sub.setWordWrap(True)
+        cv.addWidget(_si_sub)
+
         cv.addStretch()
         outer_vl.addWidget(content)
         root.addWidget(outer)
@@ -745,6 +815,10 @@ class DataLoggingWindow(QWidget):
     def get_custom_path(self) -> str:
         """Return the custom save path, or '' if Default is selected."""
         return self._custom_path
+
+    def get_save_interval(self) -> int:
+        """Return the raw-frame save interval (every N frames; 1 = every frame)."""
+        return self._spn_interval.value()
 
     def show_beside(self, anchor: QWidget) -> None:
         """Position beside `anchor` widget and show."""
@@ -838,6 +912,7 @@ class LeftControlPanel(QWidget):
     sig_detect_mode_changed   = pyqtSignal(bool)             # Detect mode toggled (enables inference)
     sig_logging_options       = pyqtSignal(bool, bool)       # (raw_frames, detected_frames)
     sig_save_path_changed     = pyqtSignal(str)              # custom save path ("" = use default)
+    sig_save_interval_changed = pyqtSignal(int)              # raw-frame save stride (every N frames)
     sig_exposure_changed      = pyqtSignal(int, int, int)    # CH1/CH2/CH3 µs — emitted on Apply
     sig_fps_changed           = pyqtSignal(float)            # FPS — emitted on Apply
     sig_gains_changed         = pyqtSignal(float, float, float)   # CH1/CH2/CH3 dB — emitted on Apply
@@ -873,6 +948,7 @@ class LeftControlPanel(QWidget):
         # Forward data-logging option changes from popup to panel signals
         self._dl_win.sig_options_changed.connect(self.sig_logging_options.emit)
         self._dl_win.sig_path_changed.connect(self.sig_save_path_changed.emit)
+        self._dl_win.sig_interval_changed.connect(self.sig_save_interval_changed.emit)
 
     def _build(self) -> None:
         # ── Scrollable inner container ─────────────────────────────────────────
@@ -1988,6 +2064,10 @@ class LeftControlPanel(QWidget):
     def get_custom_save_path(self) -> str:
         """Return the custom save path selected in the Data Logging popup, or '' for default."""
         return self._dl_win.get_custom_path()
+
+    def get_save_interval(self) -> int:
+        """Return the raw-frame save interval (save every N frames; 1 = every frame)."""
+        return self._dl_win.get_save_interval()
 
 
     def set_model_loaded(self, name: str) -> None:
