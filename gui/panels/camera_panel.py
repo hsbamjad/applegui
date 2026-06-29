@@ -767,14 +767,18 @@ class LeftControlPanel(QWidget):
         )
         self._btn_cam_controls.setStyleSheet(f"""
             QPushButton {{
-                background-color: {ACCENT};
-                color: #0E1A10;
-                border: none;
-                font-weight: 700;
+                background-color: {BG_ELEVATED};
+                color: {ACCENT};
+                border: 1.5px solid {ACCENT};
+                font-weight: 600;
                 font-size: 12px;
                 border-radius: 8px;
             }}
-            QPushButton:hover   {{ background-color: {ACCENT_HV}; color: #0E1A10; }}
+            QPushButton:hover {{
+                background-color: {ACCENT};
+                color: #0E1A10;
+                border-color: {ACCENT};
+            }}
             QPushButton:checked {{
                 background-color: {ACCENT_DK};
                 border: 2px solid {ACCENT};
