@@ -224,12 +224,7 @@ class RealInferenceWorker(QThread):
         if not rec.acquire_batch_slot():
             return
         try:
-            # Pass raw source frames so the recorder can save source0/1/2 crops.
-            # .copy() is intentionally deferred to the background worker to keep
-            # the inference hot path as light as possible; the tuple reference itself
-            # is safe here because _raw_frames is replaced (not mutated) each loop.
-            raw = self._raw_frames  # tuple[ch1, ch2, ch3] or None
-            rec.submit_batch(frame.copy(), active, raw)
+            rec.submit_batch(frame.copy(), active)
         except Exception:
             rec.release_batch_slot()
             raise

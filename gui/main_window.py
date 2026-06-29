@@ -446,7 +446,6 @@ class MainWindow(QMainWindow):
         self._save_mode:       bool                        = False   # Save mode: enables disk logging
         self._detect_mode:     bool                        = False   # Detect mode: enables inference
         self._log_raw:         bool                        = True    # log Raw Frames (default ON)
-        self._log_processed:   bool                        = False   # log Processed Frames (apple patches)
         self._log_detected:    bool                        = False   # log Detected Frames (full-res + boxes)
         self._grading_recorder: GradingRecorder | None   = None
         self._size_acc = None   # AppleSizeAccumulator — created in _start_pipeline
@@ -711,7 +710,6 @@ class MainWindow(QMainWindow):
         self._grading_recorder = GradingRecorder(
             image_format          = log_cfg.get("image_format", "jpg"),
             jpeg_quality          = int(log_cfg.get("jpeg_quality", 92)),
-            save_processed_crops  = self._log_processed,
             save_detected_crops   = self._log_detected,
             crop_padding_frac     = float(log_cfg.get("crop_padding_frac", 0.20)),
             crop_max_dim          = int(log_cfg.get("crop_max_dim", 512)),
@@ -830,9 +828,9 @@ class MainWindow(QMainWindow):
             return
         # Attach the recorder to inference when:
         #   - Save mode is ON, AND
-        #   - Either Detect mode is ON, OR Processed/Detected crops are selected
+        #   - Either Detect mode is ON, OR Detected crops are selected
         #     (crops need inference to run even if user didn't press Detect button)
-        crops_needed = self._log_processed or self._log_detected
+        crops_needed = self._log_detected
         infer_needed = self._detect_mode or crops_needed
         rec = (
             self._grading_recorder
@@ -1163,24 +1161,22 @@ class MainWindow(QMainWindow):
         self._detect_mode = enabled
         self._wire_infer_logging()
 
-    @pyqtSlot(bool, bool, bool)
-    def _on_logging_options(self, raw: bool, processed: bool, detected: bool) -> None:
+    @pyqtSlot(bool, bool)
+    def _on_logging_options(self, raw: bool, detected: bool) -> None:
         """
         User changed Data Logging options in the popup.
         Updates recorder flags live — no session restart needed.
-        Processed/Detected selection automatically enables inference.
+        Detected selection automatically enables inference.
         """
         self._log_raw       = raw
-        self._log_processed = processed
         self._log_detected  = detected
         rec = self._grading_recorder
         if rec is not None:
             rec.set_save_options(
                 save_raw_full_frames = raw,
-                save_processed_crops = processed,
                 save_detected_crops  = detected,
             )
-        # Re-wire: selecting Processed or Detected should start inference even
+        # Re-wire: selecting Detected should start inference even
         # if the Detect mode button is not explicitly toggled.
         self._wire_infer_logging()
 

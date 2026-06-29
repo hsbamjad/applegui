@@ -437,14 +437,13 @@ class DataLoggingWindow(QWidget):
     Frameless floating popup for data-logging options.
     Mirrors CameraControlsWindow pattern with an amber accent.
 
-    Three independent save options:
+    Two independent save options:
       ☑ Raw Frames       — full-res camera frames, all 3 channels
-      ☐ Processed Frames — apple patch crops with annotation overlay
       ☐ Detected Frames  — full-res YOLO composite + detection boxes
     """
 
     sig_hidden          = pyqtSignal()
-    sig_options_changed = pyqtSignal(bool, bool, bool)   # raw, processed, detected
+    sig_options_changed = pyqtSignal(bool, bool)   # raw, detected
 
     POPUP_WIDTH = 314
     _DL_ACCENT  = "#f59e0b"   # amber — distinct from Camera Controls green
@@ -573,24 +572,6 @@ class DataLoggingWindow(QWidget):
         _s2.setStyleSheet(f"background-color: {BORDER}44; border: none; margin: 3px 0;")
         cv.addWidget(_s2)
 
-        # ── Processed Frames ──────────────────────────────────────────
-        self._chk_processed = QCheckBox("Processed Frames")
-        self._chk_processed.setToolTip(
-            "Save apple patch crops from the YOLO model input.\n"
-            "Annotated with bounding box + grade label.\n"
-            "Output:  {session}/Lane{N}/Apple{N}/processed/\n"
-            "Requires Detect mode to be active."
-        )
-        self._chk_processed.setStyleSheet(self._chk_style(ACCENT))
-        self._chk_processed.toggled.connect(self._emit_changed)
-        cv.addWidget(self._chk_processed)
-        proc_sub = QLabel("  Apple patch crops  ·  annotated  ·  per-apple folders")
-        proc_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
-        cv.addWidget(proc_sub)
-
-        _s3 = QFrame(); _s3.setFixedHeight(1)
-        _s3.setStyleSheet(f"background-color: {BORDER}44; border: none; margin: 3px 0;")
-        cv.addWidget(_s3)
 
         # ── Detected Frames ───────────────────────────────────────────
         self._chk_detected = QCheckBox("Detected Frames")
@@ -701,7 +682,6 @@ class DataLoggingWindow(QWidget):
     def _emit_changed(self) -> None:
         self.sig_options_changed.emit(
             self._chk_raw.isChecked(),
-            self._chk_processed.isChecked(),
             self._chk_detected.isChecked(),
         )
 
@@ -717,7 +697,7 @@ class LeftControlPanel(QWidget):
     sig_logging_toggled       = pyqtSignal(bool)             # kept for compat — prefer sig_save_mode_changed
     sig_save_mode_changed     = pyqtSignal(bool)             # Save mode toggled (enables data logging)
     sig_detect_mode_changed   = pyqtSignal(bool)             # Detect mode toggled (enables inference)
-    sig_logging_options       = pyqtSignal(bool, bool, bool) # (raw_frames, processed_frames, detected_frames)
+    sig_logging_options       = pyqtSignal(bool, bool)       # (raw_frames, detected_frames)
     sig_exposure_changed      = pyqtSignal(int, int, int)    # CH1/CH2/CH3 µs — emitted on Apply
     sig_fps_changed           = pyqtSignal(float)            # FPS — emitted on Apply
     sig_gains_changed         = pyqtSignal(float, float, float)   # CH1/CH2/CH3 dB — emitted on Apply
@@ -898,7 +878,7 @@ class LeftControlPanel(QWidget):
         self._btn_data_logging.setEnabled(False)   # enabled only when Save mode is ON
         self._btn_data_logging.setToolTip(
             "Open Data Logging options panel\n"
-            "Raw Frames  ·  Processed Frames  ·  Detected Frames\n"
+            "Raw Frames  ·  Detected Frames\n"
             "(Enable Save mode first)"
         )
         self._btn_data_logging.setStyleSheet(f"""
@@ -1008,13 +988,12 @@ class LeftControlPanel(QWidget):
             self._btn_data_logging.setChecked(False)
         else:
             # Auto-check Raw Frames when Save mode is first enabled
-            raw, proc, det = self._dl_win.get_options()
-            if not raw and not proc and not det:
-                self._dl_win.set_options(True, proc, det)
-        # All 3 options are independently available whenever Save mode is ON
+            raw, det = self._dl_win.get_options()
+            if not raw and not det:
+                self._dl_win.set_options(True, det)
+        # Options are independently available whenever Save mode is ON
         self._dl_win.set_enabled_options(
             raw       = checked,
-            processed = checked,
             detected  = checked,
         )
         self.sig_save_mode_changed.emit(checked)
@@ -1773,7 +1752,7 @@ class LeftControlPanel(QWidget):
         self._btn_data_logging.setToolTip(
             f"Data Logging Options\n"
             f"Output: {path}\n"
-            f"Raw Frames  ·  Processed Frames  ·  Detected Frames"
+            f"Raw Frames  ·  Detected Frames"
         )
 
     def set_save_mode(self, enabled: bool) -> None:
@@ -1785,7 +1764,6 @@ class LeftControlPanel(QWidget):
         # All checkboxes enabled whenever Save mode is ON
         self._dl_win.set_enabled_options(
             raw       = enabled,
-            processed = enabled,
             detected  = enabled,
         )
 
@@ -1796,12 +1774,12 @@ class LeftControlPanel(QWidget):
         self._btn_detect_mode.blockSignals(False)
         # Detect mode does not gate popup checkboxes — Save mode does
 
-    def update_logging_options(self, raw: bool, processed: bool, detected: bool) -> None:
+    def update_logging_options(self, raw: bool, detected: bool) -> None:
         """Sync the Data Logging popup checkboxes without emitting signals."""
-        self._dl_win.set_options(raw, processed, detected)
+        self._dl_win.set_options(raw, detected)
 
     def get_logging_options(self) -> tuple:
-        """Return current logging options as (raw, processed, detected)."""
+        """Return current logging options as (raw, detected)."""
         return self._dl_win.get_options()
 
     def set_model_loaded(self, name: str) -> None:
