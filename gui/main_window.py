@@ -1142,8 +1142,8 @@ class MainWindow(QMainWindow):
         elif "Model loaded" in msg:
             # Model is in GPU memory and running — update left panel
             name = getattr(self, "_loading_model_name", "")
-            self._left.set_model_loaded(name)
             self._left.set_model_loading(False)
+            self._left.set_model_loaded(name)
 
     @pyqtSlot(bool)
     def _on_sorter_toggle(self, enabled: bool) -> None:
