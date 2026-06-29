@@ -430,6 +430,282 @@ class CameraControlsWindow(QWidget):
         self.sig_hidden.emit()
 
 
+# ── Data Logging Floating Window ──────────────────────────────────────────────
+
+class DataLoggingWindow(QWidget):
+    """
+    Frameless floating popup for data-logging options.
+    Mirrors CameraControlsWindow pattern with an amber accent.
+
+    Three independent save options:
+      ☑ Raw Frames       — full-res camera frames, all 3 channels
+      ☐ Processed Frames — apple patch crops with annotation overlay
+      ☐ Detected Frames  — full-res YOLO composite + detection boxes
+    """
+
+    sig_hidden          = pyqtSignal()
+    sig_options_changed = pyqtSignal(bool, bool, bool)   # raw, processed, detected
+
+    POPUP_WIDTH = 314
+    _DL_ACCENT  = "#f59e0b"   # amber — distinct from Camera Controls green
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(
+            parent,
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint,
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedWidth(self.POPUP_WIDTH)
+        self._drag_pos: QPoint | None = None
+        self._build_shell()
+
+    def _build_shell(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        outer = QWidget()
+        outer.setObjectName("dl_outer")
+        outer.setStyleSheet(f"""
+            QWidget#dl_outer {{
+                background-color: {BG_SURFACE};
+                border: 1px solid {self._DL_ACCENT}55;
+                border-radius: 12px;
+            }}
+        """)
+        outer_vl = QVBoxLayout(outer)
+        outer_vl.setContentsMargins(0, 0, 0, 0)
+        outer_vl.setSpacing(0)
+
+        # ── Title bar ───────────────────────────────────────────────────
+        title_bar = QWidget()
+        title_bar.setObjectName("dl_titlebar")
+        title_bar.setFixedHeight(44)
+        title_bar.setCursor(Qt.CursorShape.SizeAllCursor)
+        title_bar.setStyleSheet(f"""
+            QWidget#dl_titlebar {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {self._DL_ACCENT}55, stop:1 {self._DL_ACCENT}22
+                );
+                border-radius: 12px 12px 0 0;
+                border-bottom: 1px solid {self._DL_ACCENT}66;
+            }}
+        """)
+        tb_hl = QHBoxLayout(title_bar)
+        tb_hl.setContentsMargins(16, 0, 12, 0)
+        tb_hl.setSpacing(12)
+
+        ttl = QLabel("💾  Data Logging")
+        ttl.setStyleSheet(
+            f"color: {TEXT_1}; font-size: 14px; font-weight: 700; "
+            "background: transparent; border: none; letter-spacing: 0.2px;"
+        )
+        tb_hl.addWidget(ttl)
+        tb_hl.addStretch()
+
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(28, 28)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                border: 1px solid {BORDER}; border-radius: 14px;
+                font-size: 12px; font-weight: 700; padding: 0;
+            }}
+            QPushButton:hover {{
+                background-color: {DANGER}; color: white; border-color: {DANGER};
+            }}
+            QPushButton:pressed {{ background-color: #DC2626; }}
+        """)
+        close_btn.clicked.connect(self.hide)
+        tb_hl.addWidget(close_btn)
+
+        title_bar.mousePressEvent   = self._tb_mouse_press
+        title_bar.mouseMoveEvent    = self._tb_mouse_move
+        title_bar.mouseReleaseEvent = self._tb_mouse_release
+        outer_vl.addWidget(title_bar)
+
+        # ── Accent divider ──────────────────────────────────────────────
+        div = QFrame()
+        div.setFixedHeight(2)
+        div.setStyleSheet(
+            f"background: qlineargradient("
+            f"x1:0,y1:0,x2:1,y2:0,"
+            f"stop:0 {self._DL_ACCENT},stop:0.6 {self._DL_ACCENT}88,stop:1 transparent);"
+            f" border: none;"
+        )
+        outer_vl.addWidget(div)
+
+        # ── Content ────────────────────────────────────────────────────
+        content = QWidget()
+        content.setStyleSheet("background: transparent; border: none;")
+        cv = QVBoxLayout(content)
+        cv.setContentsMargins(16, 12, 16, 16)
+        cv.setSpacing(5)
+
+        desc = QLabel("Select data types to save during this session:")
+        desc.setStyleSheet(f"color: {TEXT_3}; font-size: 10px; background: transparent;")
+        desc.setWordWrap(True)
+        cv.addWidget(desc)
+
+        _s = QFrame(); _s.setFixedHeight(1)
+        _s.setStyleSheet(f"background-color: {BORDER}66; border: none; margin: 4px 0;")
+        cv.addWidget(_s)
+
+        # ── Raw Frames ─────────────────────────────────────────────────
+        self._chk_raw = QCheckBox("Raw Frames")
+        self._chk_raw.setToolTip(
+            "Save full-resolution raw frames from all 3 camera channels.\n"
+            "ch1 (Color)  ·  ch2 (NIR1)  ·  ch3 (NIR2)\n"
+            "Output:  {session}/raw_frames/ch1/,  ch2/,  ch3/"
+        )
+        self._chk_raw.setStyleSheet(self._chk_style(self._DL_ACCENT))
+        self._chk_raw.toggled.connect(self._emit_changed)
+        cv.addWidget(self._chk_raw)
+        raw_sub = QLabel("  All 3 channels  ·  full resolution  ·  no annotation")
+        raw_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
+        cv.addWidget(raw_sub)
+
+        _s2 = QFrame(); _s2.setFixedHeight(1)
+        _s2.setStyleSheet(f"background-color: {BORDER}44; border: none; margin: 3px 0;")
+        cv.addWidget(_s2)
+
+        # ── Processed Frames ──────────────────────────────────────────
+        self._chk_processed = QCheckBox("Processed Frames")
+        self._chk_processed.setToolTip(
+            "Save apple patch crops from the YOLO model input.\n"
+            "Annotated with bounding box + grade label.\n"
+            "Output:  {session}/Lane{N}/Apple{N}/processed/\n"
+            "Requires Detect mode to be active."
+        )
+        self._chk_processed.setStyleSheet(self._chk_style(ACCENT))
+        self._chk_processed.toggled.connect(self._emit_changed)
+        cv.addWidget(self._chk_processed)
+        proc_sub = QLabel("  Apple patch crops  ·  annotated  ·  per-apple folders")
+        proc_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
+        cv.addWidget(proc_sub)
+
+        _s3 = QFrame(); _s3.setFixedHeight(1)
+        _s3.setStyleSheet(f"background-color: {BORDER}44; border: none; margin: 3px 0;")
+        cv.addWidget(_s3)
+
+        # ── Detected Frames ───────────────────────────────────────────
+        self._chk_detected = QCheckBox("Detected Frames")
+        self._chk_detected.setToolTip(
+            "Save full-resolution YOLO composite with all detection\n"
+            "boxes and grade labels overlaid.\n"
+            "Output:  {session}/detected_frames/\n"
+            "Requires Detect mode to be active."
+        )
+        self._chk_detected.setStyleSheet(self._chk_style("#22d3ee"))
+        self._chk_detected.toggled.connect(self._emit_changed)
+        cv.addWidget(self._chk_detected)
+        det_sub = QLabel("  Full frame  ·  all detection boxes  ·  YOLO composite")
+        det_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
+        cv.addWidget(det_sub)
+
+        cv.addStretch()
+        outer_vl.addWidget(content)
+        root.addWidget(outer)
+        self.adjustSize()
+        self.setFixedWidth(self.POPUP_WIDTH)
+
+    # ── Style helper ───────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _chk_style(color: str) -> str:
+        return f"""
+            QCheckBox {{
+                color: {TEXT_1}; font-size: 12px; font-weight: 600;
+                background: transparent; spacing: 8px;
+            }}
+            QCheckBox::indicator {{
+                width: 16px; height: 16px;
+                border: 2px solid {BORDER}; border-radius: 4px;
+                background-color: {BG_ELEVATED};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {color}; border-color: {color};
+            }}
+            QCheckBox::indicator:hover {{ border-color: {color}; }}
+            QCheckBox:disabled {{ color: {TEXT_3}; }}
+            QCheckBox::indicator:disabled {{
+                background-color: {BG_ELEVATED}; border-color: {BORDER};
+            }}
+        """
+
+    # ── Public API ─────────────────────────────────────────────────────────────
+
+    def set_options(self, raw: bool, processed: bool, detected: bool) -> None:
+        """Set checkbox states without emitting sig_options_changed."""
+        for chk, val in [
+            (self._chk_raw, raw),
+            (self._chk_processed, processed),
+            (self._chk_detected, detected),
+        ]:
+            chk.blockSignals(True)
+            chk.setChecked(val)
+            chk.blockSignals(False)
+
+    def get_options(self) -> tuple:
+        """Return (raw_frames, processed_frames, detected_frames) booleans."""
+        return (
+            self._chk_raw.isChecked(),
+            self._chk_processed.isChecked(),
+            self._chk_detected.isChecked(),
+        )
+
+    def set_enabled_options(self, raw: bool, processed: bool, detected: bool) -> None:
+        """Enable or disable individual checkboxes based on active modes."""
+        self._chk_raw.setEnabled(raw)
+        self._chk_processed.setEnabled(processed)
+        self._chk_detected.setEnabled(detected)
+
+    def show_beside(self, anchor: QWidget) -> None:
+        """Position beside `anchor` widget and show."""
+        from PyQt6.QtWidgets import QApplication
+        global_pos = anchor.mapToGlobal(QPoint(0, 0))
+        x = global_pos.x() + anchor.width() + 6
+        y = global_pos.y()
+        screen = QApplication.primaryScreen().availableGeometry()
+        if x + self.width() > screen.right():
+            x = global_pos.x() - self.width() - 6
+        y = max(screen.top(), min(y, screen.bottom() - self.height()))
+        self.move(x, y)
+        self.show()
+        self.raise_()
+
+    # ── Drag ───────────────────────────────────────────────────────────────────
+
+    def _tb_mouse_press(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+
+    def _tb_mouse_move(self, event) -> None:
+        if self._drag_pos is not None and event.buttons() == Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+
+    def _tb_mouse_release(self, event) -> None:
+        self._drag_pos = None
+
+    def hideEvent(self, event) -> None:  # type: ignore[override]
+        """Emit sig_hidden so sidebar toggle button can sync its state."""
+        super().hideEvent(event)
+        self.sig_hidden.emit()
+
+    # ── Internal ───────────────────────────────────────────────────────────────
+
+    def _emit_changed(self) -> None:
+        self.sig_options_changed.emit(
+            self._chk_raw.isChecked(),
+            self._chk_processed.isChecked(),
+            self._chk_detected.isChecked(),
+        )
+
+
 # ── Left Control Panel ────────────────────────────────────────────────────────
 
 class LeftControlPanel(QWidget):
@@ -438,7 +714,10 @@ class LeftControlPanel(QWidget):
     sig_connect_camera        = pyqtSignal(bool)
     sig_load_model            = pyqtSignal(str)
     sig_sorter_toggled        = pyqtSignal(bool)
-    sig_logging_toggled       = pyqtSignal(bool)
+    sig_logging_toggled       = pyqtSignal(bool)             # kept for compat — prefer sig_save_mode_changed
+    sig_save_mode_changed     = pyqtSignal(bool)             # Save mode toggled (enables data logging)
+    sig_detect_mode_changed   = pyqtSignal(bool)             # Detect mode toggled (enables inference)
+    sig_logging_options       = pyqtSignal(bool, bool, bool) # (raw_frames, processed_frames, detected_frames)
     sig_exposure_changed      = pyqtSignal(int, int, int)    # CH1/CH2/CH3 µs — emitted on Apply
     sig_fps_changed           = pyqtSignal(float)            # FPS — emitted on Apply
     sig_gains_changed         = pyqtSignal(float, float, float)   # CH1/CH2/CH3 dB — emitted on Apply
@@ -455,19 +734,24 @@ class LeftControlPanel(QWidget):
         self.setFixedWidth(PANEL_WIDTH)
         self.setStyleSheet(f"background-color: {BG_SURFACE};")
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
-        # Build the floating camera controls window first (so cards can be added)
+        # Build floating popup windows first, then populate sidebar
         self._cam_win = CameraControlsWindow(self.window())
+        self._dl_win  = DataLoggingWindow(self.window())
         self._build()
-        # Populate floating window: left col = Exposure/FPS/Gain, right col = WB/Black Level
-        # ROI is in the sidebar (always visible — needs channel feeds to be seen).
+        # Populate camera controls: left col = Exposure/FPS/Gain, right col = WB/Black Level
         cam_card, wb_bl_card = self._camera_cards_split()
         self._cam_win.add_widget(cam_card,   col=0)
         self._cam_win.add_widget(wb_bl_card, col=1)
         self._cam_win.finalize()
-        # Sync sidebar button when popup is closed via X or hide()
+        # Sync sidebar buttons when popups are closed via their X button
         self._cam_win.sig_hidden.connect(
             lambda: self._btn_cam_controls.setChecked(False)
         )
+        self._dl_win.sig_hidden.connect(
+            lambda: self._btn_data_logging.setChecked(False)
+        )
+        # Forward data-logging option changes from popup to panel signal
+        self._dl_win.sig_options_changed.connect(self.sig_logging_options.emit)
 
     def _build(self) -> None:
         # ── Scrollable inner container ─────────────────────────────────────────
@@ -530,6 +814,116 @@ class LeftControlPanel(QWidget):
         vlayout.addLayout(_cam_row)
         vlayout.addSpacing(6)
 
+        # ── Mode: Save / Detect toggle buttons ───────────────────────────────
+        vlayout.addWidget(_SectionHeader("Mode"))
+        _mode_card = _Card()
+        _mode_desc = QLabel("Select camera operation mode:")
+        _mode_desc.setStyleSheet(f"color: {TEXT_3}; font-size: 10px; background: transparent;")
+        _mode_card.add(_mode_desc)
+
+        _SAVE_CLR = "#06b6d4"   # cyan — Save mode
+        self._btn_save_mode = QPushButton("💾  Save")
+        self._btn_save_mode.setFixedHeight(36)
+        self._btn_save_mode.setCheckable(True)
+        self._btn_save_mode.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_save_mode.setToolTip(
+            "Enable Save mode — record frames to disk.\n"
+            "Raw Frames are saved by default.\n"
+            "Click 'Data Logging' below to configure save options."
+        )
+        self._btn_save_mode.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                border: 1px solid {BORDER}; font-weight: 700; font-size: 11px;
+                border-radius: 7px;
+            }}
+            QPushButton:hover {{
+                background-color: {_SAVE_CLR}22; color: {_SAVE_CLR};
+                border-color: {_SAVE_CLR}66;
+            }}
+            QPushButton:checked {{
+                background-color: {_SAVE_CLR}33; color: {_SAVE_CLR};
+                border: 2px solid {_SAVE_CLR};
+            }}
+            QPushButton:checked:hover {{ background-color: {_SAVE_CLR}44; }}
+            QPushButton:pressed        {{ background-color: {_SAVE_CLR}44; }}
+        """)
+        self._btn_save_mode.toggled.connect(self._on_save_mode_toggled)
+
+        self._btn_detect_mode = QPushButton("🔍  Detect")
+        self._btn_detect_mode.setFixedHeight(36)
+        self._btn_detect_mode.setCheckable(True)
+        self._btn_detect_mode.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_detect_mode.setToolTip(
+            "Enable Detect mode — run AI model for apple grading.\n"
+            "Load a model in the AI Model section to start detecting.\n"
+            "Data Logging is disabled when only Detect is active."
+        )
+        self._btn_detect_mode.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_ELEVATED}; color: {TEXT_2};
+                border: 1px solid {BORDER}; font-weight: 700; font-size: 11px;
+                border-radius: 7px;
+            }}
+            QPushButton:hover {{
+                background-color: {ACCENT}22; color: {ACCENT_HV};
+                border-color: {ACCENT}66;
+            }}
+            QPushButton:checked {{
+                background-color: {ACCENT}33; color: {ACCENT_HV};
+                border: 2px solid {ACCENT};
+            }}
+            QPushButton:checked:hover {{ background-color: {ACCENT}44; }}
+            QPushButton:pressed        {{ background-color: {ACCENT}44; }}
+        """)
+        self._btn_detect_mode.toggled.connect(self._on_detect_mode_toggled)
+
+        _mode_btn_row = QHBoxLayout()
+        _mode_btn_row.setSpacing(6)
+        _mode_btn_row.setContentsMargins(0, 2, 0, 0)
+        _mode_btn_row.addWidget(self._btn_save_mode)
+        _mode_btn_row.addWidget(self._btn_detect_mode)
+        _mode_card.add_layout(_mode_btn_row)
+        vlayout.addWidget(_mode_card)
+        vlayout.addSpacing(4)
+
+        # ── Data Logging popup button ────────────────────────────────────────
+        vlayout.addWidget(_SectionHeader("Data Logging"))
+        _DL_CLR = "#f59e0b"   # amber — matches DataLoggingWindow accent
+        self._btn_data_logging = QPushButton("Data Logging Options")
+        self._btn_data_logging.setFixedHeight(38)
+        self._btn_data_logging.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_data_logging.setCheckable(True)
+        self._btn_data_logging.setEnabled(False)   # enabled only when Save mode is ON
+        self._btn_data_logging.setToolTip(
+            "Open Data Logging options panel\n"
+            "Raw Frames  ·  Processed Frames  ·  Detected Frames\n"
+            "(Enable Save mode first)"
+        )
+        self._btn_data_logging.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {_DL_CLR}; color: white;
+                border: none; font-weight: 700; font-size: 12px;
+                border-radius: 8px;
+            }}
+            QPushButton:hover   {{ background-color: #fbbf24; }}
+            QPushButton:checked {{
+                background-color: #d97706;
+                border: 2px solid {_DL_CLR}; color: white;
+            }}
+            QPushButton:pressed  {{ background-color: #b45309; }}
+            QPushButton:disabled {{
+                background-color: {BG_ELEVATED}; color: {TEXT_3};
+                border: 1px solid {BORDER};
+            }}
+        """)
+        self._btn_data_logging.clicked.connect(self._on_data_logging_toggle)
+        _dl_row = QHBoxLayout()
+        _dl_row.setContentsMargins(10, 0, 10, 0)
+        _dl_row.addWidget(self._btn_data_logging)
+        vlayout.addLayout(_dl_row)
+        vlayout.addSpacing(6)
+
         # ── ROI card — lives in sidebar so channel feeds are always visible ──
         vlayout.addWidget(_SectionHeader("ROI"))
         vlayout.addWidget(self._roi_card())
@@ -540,9 +934,6 @@ class LeftControlPanel(QWidget):
 
         vlayout.addWidget(_SectionHeader("Sorter"))
         vlayout.addWidget(self._sorter_card())
-
-        vlayout.addWidget(_SectionHeader("Data Logging"))
-        vlayout.addWidget(self._logging_card())
 
         vlayout.addStretch()
 
@@ -597,6 +988,47 @@ class LeftControlPanel(QWidget):
         else:
             self._cam_win.show_beside(self)
             self._btn_cam_controls.setChecked(True)
+
+    def _on_data_logging_toggle(self) -> None:
+        """Show or hide the floating Data Logging options window."""
+        if self._dl_win.isVisible():
+            self._dl_win.hide()
+            self._btn_data_logging.setChecked(False)
+        else:
+            self._dl_win.show_beside(self)
+            self._btn_data_logging.setChecked(True)
+
+    def _on_save_mode_toggled(self, checked: bool) -> None:
+        """User toggled the Save mode button."""
+        # Enable / disable Data Logging access
+        self._btn_data_logging.setEnabled(checked)
+        if not checked:
+            if self._dl_win.isVisible():
+                self._dl_win.hide()
+            self._btn_data_logging.setChecked(False)
+        else:
+            # Auto-check Raw Frames when Save mode is first enabled
+            raw, proc, det = self._dl_win.get_options()
+            if not raw and not proc and not det:
+                self._dl_win.set_options(True, proc, det)
+        # Enable / disable popup options based on combined mode state
+        detect = self._btn_detect_mode.isChecked()
+        self._dl_win.set_enabled_options(
+            raw      = checked,
+            processed = checked and detect,
+            detected  = checked and detect,
+        )
+        self.sig_save_mode_changed.emit(checked)
+
+    def _on_detect_mode_toggled(self, checked: bool) -> None:
+        """User toggled the Detect mode button."""
+        save = self._btn_save_mode.isChecked()
+        self._dl_win.set_enabled_options(
+            raw      = save,
+            processed = save and checked,
+            detected  = save and checked,
+        )
+        self.sig_detect_mode_changed.emit(checked)
 
 
     def _camera_cards_split(self) -> tuple[QWidget, QWidget]:
@@ -1285,20 +1717,11 @@ class LeftControlPanel(QWidget):
             layout.addLayout(row)
         return w
 
-    def _logging_card(self) -> QWidget:
-        card = _Card()
-        self._chk_logging = QCheckBox("Enable Logging")
-        self._chk_logging.setToolTip(
-            "Save per-apple grading frames + CSV to data/sessions/"
-        )
-        self._chk_logging.toggled.connect(self.sig_logging_toggled.emit)
-        card.add(self._chk_logging)
-        self._lbl_log_path = QLabel("Output:  data/sessions/")
-        self._lbl_log_path.setStyleSheet(
-            f"color: {TEXT_3}; font-size: 10px; background: transparent;"
-        )
-        card.add(self._lbl_log_path)
-        return card
+    def _logging_card(self) -> "QWidget":
+        # Retired — Data Logging is now a popup window (DataLoggingWindow).
+        # This stub prevents AttributeError if called by any external code.
+        from PyQt6.QtWidgets import QWidget as _QW
+        return _QW()
 
     # ── Slots ─────────────────────────────────────────────────────────────────
 
@@ -1347,14 +1770,49 @@ class LeftControlPanel(QWidget):
         self._chk_sorter.blockSignals(False)
 
     def set_logging_enabled(self, enabled: bool) -> None:
-        """Programmatically set the Enable Logging checkbox without re-emitting the signal."""
-        self._chk_logging.blockSignals(True)
-        self._chk_logging.setChecked(enabled)
-        self._chk_logging.blockSignals(False)
+        """Backward-compat: programmatically set Save mode state without emitting signals."""
+        self.set_save_mode(enabled)
 
     def set_logging_path(self, path: str) -> None:
-        """Update the session output path label in the Data Logging card."""
-        self._lbl_log_path.setText(f"Output:  {path}")
+        """Update the session output path shown in the Data Logging button tooltip."""
+        self._btn_data_logging.setToolTip(
+            f"Data Logging Options\n"
+            f"Output: {path}\n"
+            f"Raw Frames  ·  Processed Frames  ·  Detected Frames"
+        )
+
+    def set_save_mode(self, enabled: bool) -> None:
+        """Programmatically set Save mode button state without emitting signals."""
+        self._btn_save_mode.blockSignals(True)
+        self._btn_save_mode.setChecked(enabled)
+        self._btn_save_mode.blockSignals(False)
+        self._btn_data_logging.setEnabled(enabled)
+        detect_on = self._btn_detect_mode.isChecked()
+        self._dl_win.set_enabled_options(
+            raw      = enabled,
+            processed = enabled and detect_on,
+            detected  = enabled and detect_on,
+        )
+
+    def set_detect_mode(self, enabled: bool) -> None:
+        """Programmatically set Detect mode button state without emitting signals."""
+        self._btn_detect_mode.blockSignals(True)
+        self._btn_detect_mode.setChecked(enabled)
+        self._btn_detect_mode.blockSignals(False)
+        save_on = self._btn_save_mode.isChecked()
+        self._dl_win.set_enabled_options(
+            raw      = save_on,
+            processed = save_on and enabled,
+            detected  = save_on and enabled,
+        )
+
+    def update_logging_options(self, raw: bool, processed: bool, detected: bool) -> None:
+        """Sync the Data Logging popup checkboxes without emitting signals."""
+        self._dl_win.set_options(raw, processed, detected)
+
+    def get_logging_options(self) -> tuple:
+        """Return current logging options as (raw, processed, detected)."""
+        return self._dl_win.get_options()
 
     def set_model_loaded(self, name: str) -> None:
         self._model_status.set_state("online", "Loaded")

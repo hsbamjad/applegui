@@ -442,7 +442,12 @@ class MainWindow(QMainWindow):
         self._tracker:  ConveyorTracker | None            = None
         self._sorter:   SorterController | None           = None
         self._sorting_enabled: bool                       = False   # gated by Enable Sorting toggle
-        self._logging_enabled: bool                        = False   # gated by Enable Logging toggle
+        self._logging_enabled: bool                        = False   # gated by Save mode (backward compat)
+        self._save_mode:       bool                        = False   # Save mode: enables disk logging
+        self._detect_mode:     bool                        = False   # Detect mode: enables inference
+        self._log_raw:         bool                        = True    # log Raw Frames (default ON)
+        self._log_processed:   bool                        = False   # log Processed Frames (apple patches)
+        self._log_detected:    bool                        = False   # log Detected Frames (full-res + boxes)
         self._grading_recorder: GradingRecorder | None   = None
         self._size_acc = None   # AppleSizeAccumulator — created in _start_pipeline
         self._infer_fps: float = 0.0
@@ -530,7 +535,9 @@ class MainWindow(QMainWindow):
         self._left.sig_connect_camera.connect(self._on_camera_toggle)
         self._left.sig_load_model.connect(self._on_load_model)
         self._left.sig_sorter_toggled.connect(self._on_sorter_toggle)
-        self._left.sig_logging_toggled.connect(self._on_logging_toggle)
+        self._left.sig_save_mode_changed.connect(self._on_save_mode_changed)
+        self._left.sig_detect_mode_changed.connect(self._on_detect_mode_changed)
+        self._left.sig_logging_options.connect(self._on_logging_options)
         # Camera hardware controls — forwarded to CameraWorker while streaming
         self._left.sig_exposure_changed.connect(self._on_exposure_changed)
         self._left.sig_fps_changed.connect(self._on_fps_changed)
@@ -568,8 +575,9 @@ class MainWindow(QMainWindow):
 
         log_cfg = self._cfg.get("logging", {})
         if log_cfg.get("enabled", False):
-            self._left.set_logging_enabled(True)
+            self._save_mode = True
             self._logging_enabled = True
+            self._left.set_save_mode(True)   # sync button state without emitting signal
             self._right.status_group.set_status("Logger", "idle", "Armed")
 
     def closeEvent(self, event) -> None:
@@ -687,7 +695,7 @@ class MainWindow(QMainWindow):
         self._sorter.start()
         log.info("SorterController started (mode=%s)", self._cfg.get("sorter", {}).get("mode", "simulation"))
 
-        if self._logging_enabled and self._grading_recorder is None:
+        if self._save_mode and self._grading_recorder is None:
             self._start_grading_session()
 
     def _start_grading_session(self) -> None:
@@ -701,17 +709,19 @@ class MainWindow(QMainWindow):
             base_dir = SESSIONS_DIR
 
         self._grading_recorder = GradingRecorder(
-            image_format=log_cfg.get("image_format", "jpg"),
-            jpeg_quality=int(log_cfg.get("jpeg_quality", 92)),
-            save_frames=bool(log_cfg.get("save_frames", True)),
-            save_raw_frames=bool(log_cfg.get("save_raw_frames", True)),
-            crop_padding_frac=float(log_cfg.get("crop_padding_frac", 0.20)),
-            crop_max_dim=int(log_cfg.get("crop_max_dim", 512)),
-            raw_crop_max_dim=int(log_cfg.get("raw_crop_max_dim", 256)),
-            raw_frame_stride=int(log_cfg.get("raw_frame_stride", 1)),
-            max_pending_batches=int(log_cfg.get("max_pending_batches", 2)),
-            max_crops_per_batch=int(log_cfg.get("max_crops_per_batch", 8)),
-            heavy_threshold=int(log_cfg.get("heavy_threshold", 12)),
+            image_format         = log_cfg.get("image_format", "jpg"),
+            jpeg_quality         = int(log_cfg.get("jpeg_quality", 92)),
+            save_frames          = self._log_processed,
+            save_raw_frames      = self._log_processed,
+            crop_padding_frac    = float(log_cfg.get("crop_padding_frac", 0.20)),
+            crop_max_dim         = int(log_cfg.get("crop_max_dim", 512)),
+            raw_crop_max_dim     = int(log_cfg.get("raw_crop_max_dim", 256)),
+            raw_frame_stride     = int(log_cfg.get("raw_frame_stride", 1)),
+            save_raw_full_frames = self._log_raw,
+            save_detected_frames = self._log_detected,
+            max_pending_batches  = int(log_cfg.get("max_pending_batches", 2)),
+            max_crops_per_batch  = int(log_cfg.get("max_crops_per_batch", 8)),
+            heavy_threshold      = int(log_cfg.get("heavy_threshold", 12)),
         )
         session_dir = self._grading_recorder.start_session(base_dir)
         self._wire_infer_logging()
@@ -731,7 +741,7 @@ class MainWindow(QMainWindow):
         log_cfg = self._cfg.get("logging", {})
         raw_out = log_cfg.get("output_dir", "data/sessions")
         self._left.set_logging_path(raw_out)
-        if self._logging_enabled:
+        if self._save_mode:
             self._right.status_group.set_status("Logger", "idle", "Armed")
         else:
             self._right.status_group.set_status("Logger", "idle", "Off")
@@ -798,6 +808,15 @@ class MainWindow(QMainWindow):
         self._last_ch3 = ch3
         self._cam_fps_reported = fps
 
+        # Submit raw full-frames for logging when Save mode + Raw Frames option is active
+        if (
+            self._save_mode
+            and self._log_raw
+            and self._grading_recorder is not None
+            and self._grading_recorder._active
+        ):
+            self._grading_recorder.submit_raw_frame(ch1, ch2, ch3)
+
         if self._infer_w is not None and self._infer_w.isRunning():
             self._infer_w.enqueue(ch1, ch2, ch3)
         else:
@@ -811,7 +830,14 @@ class MainWindow(QMainWindow):
     def _wire_infer_logging(self) -> None:
         if self._infer_w is None:
             return
-        rec = self._grading_recorder if self._logging_enabled else None
+        # Recorder is attached to inference only when BOTH Save and Detect modes are on.
+        # Detect-only: no logging, recorder is None.
+        # Save-only: no inference running, so nothing to wire.
+        rec = (
+            self._grading_recorder
+            if self._save_mode and self._detect_mode
+            else None
+        )
         self._infer_w.set_grading_recorder(rec)
 
     def _flush_channel_preview(self) -> None:
@@ -1112,7 +1138,14 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(bool)
     def _on_logging_toggle(self, enabled: bool) -> None:
-        self._logging_enabled = enabled
+        """Legacy slot — kept for compat; prefer _on_save_mode_changed."""
+        self._on_save_mode_changed(enabled)
+
+    @pyqtSlot(bool)
+    def _on_save_mode_changed(self, enabled: bool) -> None:
+        """Save mode toggled — controls whether the GradingRecorder is active."""
+        self._save_mode    = enabled
+        self._logging_enabled = enabled   # backward-compat alias
         if enabled:
             if self._cam_w is not None and self._grading_recorder is None:
                 self._start_grading_session()
@@ -1121,6 +1154,32 @@ class MainWindow(QMainWindow):
         else:
             self._stop_grading_session()
             self._right.status_group.set_status("Logger", "idle", "Off")
+        self._wire_infer_logging()
+
+    @pyqtSlot(bool)
+    def _on_detect_mode_changed(self, enabled: bool) -> None:
+        """Detect mode toggled — controls whether inference results gate the recorder."""
+        self._detect_mode = enabled
+        # Re-wire so recorder is attached/detached from inference based on combined state
+        self._wire_infer_logging()
+
+    @pyqtSlot(bool, bool, bool)
+    def _on_logging_options(self, raw: bool, processed: bool, detected: bool) -> None:
+        """
+        User changed Data Logging options in the popup.
+        Updates recorder flags live — no session restart needed.
+        """
+        self._log_raw       = raw
+        self._log_processed = processed
+        self._log_detected  = detected
+        rec = self._grading_recorder
+        if rec is not None:
+            rec.set_save_options(
+                save_raw_full_frames = raw,
+                save_detected_frames = detected,
+                save_frames          = processed,
+                save_raw_frames      = processed,
+            )
         self._wire_infer_logging()
 
     @pyqtSlot(int, int, int)

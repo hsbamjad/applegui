@@ -115,6 +115,8 @@ class GradingRecorder:
         crop_max_dim: int = 512,
         raw_crop_max_dim: int = 256,    # smaller than processed — faster encode, less I/O
         raw_frame_stride: int = 1,       # save raw crops every Nth logged frame (1=every frame)
+        save_raw_full_frames: bool = False,   # save full-resolution frames (all 3 channels)
+        save_detected_frames: bool = False,   # save full-res YOLO composite + detection boxes
         max_pending_batches: int = _MAX_PENDING_BATCHES,
         max_crops_per_batch: int = _DEFAULT_MAX_CROPS,
         heavy_threshold: int = _DEFAULT_HEAVY_THRESHOLD,
@@ -128,6 +130,12 @@ class GradingRecorder:
         self._raw_crop_max_dim = max(64, raw_crop_max_dim)
         self._raw_frame_stride = max(1, raw_frame_stride)
         self._raw_frame_tick = 0          # counts logged frames for stride gating
+        self._save_raw_full_frames = save_raw_full_frames
+        self._save_detected_frames = save_detected_frames
+        self._raw_full_frame_counter = 0  # monotonic counter for raw_frames/ filenames
+        self._detected_frame_counter = 0  # monotonic counter for detected_frames/ filenames
+        self._dropped_raw_frames = 0
+        self._dropped_det_frames = 0
         self._max_crops = max(1, max_crops_per_batch)
         self._heavy_threshold = max(1, heavy_threshold)
 
@@ -142,6 +150,8 @@ class GradingRecorder:
         self._dropped_batches = 0
 
         self._batch_slots = threading.Semaphore(max_pending_batches)
+        self._raw_slots  = threading.Semaphore(6)   # cap in-flight full-res raw encodes
+        self._det_slots  = threading.Semaphore(3)   # cap in-flight detected-frame encodes
         self._cmd_q: queue.SimpleQueue = queue.SimpleQueue()
         self._write_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="log-wr")
         self._worker = threading.Thread(target=self._run_worker, daemon=True)
@@ -162,6 +172,8 @@ class GradingRecorder:
         self._session_dir = session_dir
         self._saved_images = 0
         self._dropped_batches = 0
+        self._dropped_raw_frames = 0
+        self._dropped_det_frames = 0
         self._active = True
         log.info("GradingRecorder session started: %s", session_dir)
         return session_dir
@@ -220,6 +232,80 @@ class GradingRecorder:
             return
         self.submit_batch(frame_bgr, tracks, raw_frames)
 
+    def submit_raw_frame(
+        self,
+        ch1: np.ndarray | None,
+        ch2: np.ndarray | None,
+        ch3: np.ndarray | None,
+    ) -> None:
+        """
+        Enqueue a full-resolution raw frame save from all 3 camera channels.
+        Non-blocking — drops silently when the worker is backlogged.
+        Thread-safe; may be called from any thread.
+
+        Output layout::
+            {session}/raw_frames/ch1/frame_000001.jpg
+            {session}/raw_frames/ch2/frame_000001.jpg
+            {session}/raw_frames/ch3/frame_000001.jpg
+        """
+        if not self._active or not self._save_raw_full_frames:
+            return
+        if not self._raw_slots.acquire(blocking=False):
+            self._dropped_raw_frames += 1
+            if self._dropped_raw_frames in (1, 50, 200):
+                log.warning(
+                    "GradingRecorder: dropped %d raw-frame batches (encoder backlog)",
+                    self._dropped_raw_frames,
+                )
+            return
+        # Pass references — caller must NOT mutate arrays after this call.
+        # VideoWorker and mock camera create new arrays each frame, so this is safe.
+        self._cmd_q.put(("raw_frame", ch1, ch2, ch3))
+
+    def submit_detected_frame(
+        self,
+        frame_bgr: np.ndarray,
+        active: list[dict],
+    ) -> None:
+        """
+        Enqueue a full-resolution YOLO composite frame with detection boxes overlaid.
+        Non-blocking — drops silently when the worker is backlogged.
+        Should be called on the inference thread.
+
+        Output layout::
+            {session}/detected_frames/frame_000001.jpg
+        """
+        if not self._active or not self._save_detected_frames:
+            return
+        if not active:
+            return
+        if not self._det_slots.acquire(blocking=False):
+            self._dropped_det_frames += 1
+            return
+        # Copy on inference thread so the worker has exclusive ownership.
+        self._cmd_q.put(("det_frame", frame_bgr.copy(), list(active)))
+
+    def set_save_options(
+        self,
+        save_raw_full_frames: bool | None = None,
+        save_detected_frames: bool | None = None,
+        save_frames: bool | None = None,
+        save_raw_frames: bool | None = None,
+    ) -> None:
+        """
+        Update save flags live without restarting the session.
+        Flag changes take effect on the next submitted frame.
+        Thread-safe: Python bool assignment is atomic under the GIL.
+        """
+        if save_raw_full_frames is not None:
+            self._save_raw_full_frames = save_raw_full_frames
+        if save_detected_frames is not None:
+            self._save_detected_frames = save_detected_frames
+        if save_frames is not None:
+            self._save_frames = save_frames
+        if save_raw_frames is not None:
+            self._save_raw_frames = save_raw_frames
+
     def on_grade_committed(
         self,
         seq_id: int,
@@ -277,10 +363,26 @@ class GradingRecorder:
                         writes.extend(self._on_stop())
                     self._flush_writes(writes)
                     done.set()
+                elif kind == "raw_frame":
+                    _, c1, c2, c3 = cmd
+                    try:
+                        self._on_raw_frame(c1, c2, c3)
+                    finally:
+                        self._raw_slots.release()
+                elif kind == "det_frame":
+                    _, frame, active = cmd
+                    try:
+                        self._on_detected_frame(frame, active)
+                    finally:
+                        self._det_slots.release()
             except Exception:
                 log.exception("GradingRecorder worker error on %s", kind)
                 if kind == "batch":
                     self._batch_slots.release()
+                elif kind == "raw_frame":
+                    self._raw_slots.release()
+                elif kind == "det_frame":
+                    self._det_slots.release()
 
     def _on_batch(
         self,
@@ -399,6 +501,8 @@ class GradingRecorder:
         self._track_buffer.clear()
         self._track_to_apple.clear()
         self._dirs_made.clear()
+        self._raw_full_frame_counter = 0
+        self._detected_frame_counter = 0
 
     def _on_commit(
         self,
@@ -444,8 +548,94 @@ class GradingRecorder:
             )
 
         self._apples.clear()
-        log.info("GradingRecorder session data flushed")
+        log.info(
+            "GradingRecorder session data flushed  "
+            "(raw_frames_dropped=%d  det_frames_dropped=%d)",
+            self._dropped_raw_frames, self._dropped_det_frames,
+        )
         return writes
+
+    def _on_raw_frame(
+        self,
+        ch1: np.ndarray | None,
+        ch2: np.ndarray | None,
+        ch3: np.ndarray | None,
+    ) -> None:
+        """
+        Encode and schedule disk writes for full-resolution raw frames.
+        Called on the worker thread — cv2.imencode releases the GIL.
+        Output: {session}/raw_frames/ch1/, ch2/, ch3/
+        """
+        if self._session_dir is None:
+            return
+        self._raw_full_frame_counter += 1
+        n    = self._raw_full_frame_counter
+        fname = f"frame_{n:06d}.{self._image_ext}"
+        for ch_name, frame in (("ch1", ch1), ("ch2", ch2), ("ch3", ch3)):
+            if frame is None:
+                continue
+            img = _normalize_to_bgr(frame)
+            if img is None:
+                continue
+            ok, buf = cv2.imencode(
+                f".{self._image_ext}", img,
+                [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
+            )
+            if ok:
+                path = self._session_dir / "raw_frames" / ch_name / fname
+                self._write_pool.submit(self._write_jpeg, path, buf.tobytes())
+
+    def _on_detected_frame(
+        self,
+        frame: np.ndarray,
+        active: list[dict],
+    ) -> None:
+        """
+        Draw detection boxes on the YOLO composite and schedule a disk write.
+        Called on the worker thread.
+        Output: {session}/detected_frames/
+        """
+        if self._session_dir is None:
+            return
+        self._detected_frame_counter += 1
+        n     = self._detected_frame_counter
+        fname = f"frame_{n:06d}.{self._image_ext}"
+
+        annotated = _normalize_to_bgr(frame)
+        if annotated is None:
+            return
+
+        for t in active:
+            box = t.get("box")
+            if box is None:
+                continue
+            x1, y1, x2, y2 = (int(v) for v in box)
+            cls   = int(t.get("class_id", 0))
+            conf  = float(t.get("conf", 0.0))
+            seq   = t.get("seq_id")
+            lane  = int(t.get("lane", 0))
+            color = _CLASS_COLORS[cls % len(_CLASS_COLORS)]
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            id_part = f"#{seq}" if seq is not None else "?"
+            name    = CLASS_NAMES[cls] if cls < len(CLASS_NAMES) else str(cls)
+            label   = f"{id_part} {name} {conf * 100:.0f}% L{lane}"
+            fs, thick = 0.45, 1
+            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, thick)
+            lx = x1
+            ly = max(lh + 4, y1 - 4)
+            cv2.rectangle(annotated, (lx, ly - lh - 3), (lx + lw + 4, ly + 2), color, -1)
+            cv2.putText(
+                annotated, label, (lx + 2, ly - 1),
+                cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), thick, cv2.LINE_AA,
+            )
+
+        ok, buf = cv2.imencode(
+            f".{self._image_ext}", annotated,
+            [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
+        )
+        if ok:
+            path = self._session_dir / "detected_frames" / fname
+            self._write_pool.submit(self._write_jpeg, path, buf.tobytes())
 
     def _flush_writes(self, jobs: list[_WriteJob]) -> None:
         for job in jobs:
@@ -623,3 +813,25 @@ def _snapshot(t: dict) -> dict:
         "eligible":     bool(t.get("eligible", True)),
         "box":          tuple(int(v) for v in t["box"]),
     }
+
+
+def _normalize_to_bgr(frame: np.ndarray) -> np.ndarray | None:
+    """
+    Convert any input frame to a uint8 BGR array suitable for JPEG encoding.
+    Handles:  grayscale, BGRA, float / uint16 (normalized to 0–255).
+    Returns None if the input is None or has 0 area.
+    """
+    if frame is None:
+        return None
+    if frame.size == 0:
+        return None
+    # Normalize non-uint8 dtypes (float32, uint16, …) to 0–255 range
+    if frame.dtype != np.uint8:
+        frame = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
+    # Ensure 3-channel BGR
+    if frame.ndim == 2:
+        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+    elif frame.ndim == 3 and frame.shape[2] == 4:
+        frame = frame[:, :, :3]  # strip alpha
+    return frame
+
