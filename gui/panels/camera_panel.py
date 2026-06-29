@@ -119,22 +119,22 @@ def _btn_primary(text: str) -> QPushButton:
     btn = QPushButton(text)
     btn.setFixedHeight(38)          # Must set in Python — CSS min-height alone doesn't constrain VBoxLayout
     # Single permanent stylesheet — danger state is toggled via the 'danger' dynamic property.
-    # Base QPushButton rule = purple (always applies); [danger="true"] overrides to red.
+    # Base QPushButton rule = leaf-green (normal); [danger="true"] overrides to autumn red.
     # Avoids calling setStyleSheet() again on state change (which resets Qt size constraints).
     btn.setStyleSheet(f"""
         QPushButton {{
-            background-color: {ACCENT}; color: white; border: none;
+            background-color: {ACCENT}; color: #0E1A10; border: none;
             font-weight: 700; font-size: 12px;
             border-radius: 8px;
         }}
-        QPushButton:hover   {{ background-color: {ACCENT_HV}; }}
-        QPushButton:pressed {{ background-color: {ACCENT_DK}; }}
+        QPushButton:hover   {{ background-color: {ACCENT_HV}; color: #0E1A10; }}
+        QPushButton:pressed {{ background-color: {ACCENT_DK}; color: {TEXT_1}; }}
         QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3}; }}
         QPushButton[danger="true"] {{
-            background-color: {DANGER};
+            background-color: {DANGER}; color: white;
         }}
-        QPushButton[danger="true"]:hover   {{ background-color: #D97060; }}
-        QPushButton[danger="true"]:pressed {{ background-color: #A0473A; }}
+        QPushButton[danger="true"]:hover   {{ background-color: #D97060; color: white; }}
+        QPushButton[danger="true"]:pressed {{ background-color: #A0473A; color: white; }}
     """)
     btn.setProperty("danger", "false")
     return btn
@@ -315,7 +315,7 @@ class CameraControlsWindow(QWidget):
             QPushButton:hover {{
                 background-color: {DANGER}; color: white; border-color: {DANGER};
             }}
-            QPushButton:pressed {{ background-color: #DC2626; }}
+            QPushButton:pressed {{ background-color: #A0473A; }}
         """)
         close_btn.clicked.connect(self.hide)
         tb_hl.addWidget(close_btn)
@@ -446,7 +446,7 @@ class DataLoggingWindow(QWidget):
     sig_options_changed = pyqtSignal(bool, bool)   # raw, detected
 
     POPUP_WIDTH = 314
-    _DL_ACCENT  = "#f59e0b"   # amber — distinct from Camera Controls green
+    _DL_ACCENT  = WARNING   # harvest amber — distinct from Camera Controls green
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(
@@ -517,7 +517,7 @@ class DataLoggingWindow(QWidget):
             QPushButton:hover {{
                 background-color: {DANGER}; color: white; border-color: {DANGER};
             }}
-            QPushButton:pressed {{ background-color: #DC2626; }}
+            QPushButton:pressed {{ background-color: #A0473A; }}
         """)
         close_btn.clicked.connect(self.hide)
         tb_hl.addWidget(close_btn)
@@ -580,7 +580,7 @@ class DataLoggingWindow(QWidget):
             "Output:  {session}/Lane{L}/Apple{N}/\n"
             "Requires Detect mode to be active."
         )
-        self._chk_detected.setStyleSheet(self._chk_style("#22d3ee"))
+        self._chk_detected.setStyleSheet(self._chk_style(INFO))
         self._chk_detected.toggled.connect(self._emit_changed)
         cv.addWidget(self._chk_detected)
         det_sub = QLabel("  Annotated frames  ·  cropped per apple ID")
@@ -767,20 +767,21 @@ class LeftControlPanel(QWidget):
         )
         self._btn_cam_controls.setStyleSheet(f"""
             QPushButton {{
-                background-color: {SUCCESS};
-                color: white;
+                background-color: {ACCENT};
+                color: #0E1A10;
                 border: none;
                 font-weight: 700;
                 font-size: 12px;
                 border-radius: 8px;
             }}
-            QPushButton:hover   {{ background-color: {SUCCESS}CC; }}
+            QPushButton:hover   {{ background-color: {ACCENT_HV}; color: #0E1A10; }}
             QPushButton:checked {{
-                background-color: {SUCCESS}AA;
-                border: 2px solid {SUCCESS};
-                color: white;
+                background-color: {ACCENT_DK};
+                border: 2px solid {ACCENT};
+                color: {TEXT_1};
             }}
-            QPushButton:pressed {{ background-color: {SUCCESS}88; }}
+            QPushButton:checked:hover {{ background-color: {ACCENT}; color: #0E1A10; }}
+            QPushButton:pressed {{ background-color: {ACCENT_DK}; color: {TEXT_1}; }}
         """)
         self._btn_cam_controls.clicked.connect(self._on_cam_controls_toggle)
 
@@ -815,15 +816,15 @@ class LeftControlPanel(QWidget):
                 border-radius: 7px;
             }}
             QPushButton:hover {{
-                background-color: {_SAVE_CLR}22; color: {_SAVE_CLR};
-                border-color: {_SAVE_CLR}66;
+                background-color: {BG_HOVER}; color: {WARNING};
+                border-color: {WARNING};
             }}
             QPushButton:checked {{
-                background-color: {_SAVE_CLR}33; color: {_SAVE_CLR};
-                border: 2px solid {_SAVE_CLR};
+                background-color: {BG_ELEVATED}; color: {WARNING};
+                border: 2px solid {WARNING};
             }}
-            QPushButton:checked:hover {{ background-color: {_SAVE_CLR}44; }}
-            QPushButton:pressed        {{ background-color: {_SAVE_CLR}44; }}
+            QPushButton:checked:hover {{ background-color: {BG_HOVER}; color: {WARNING}; }}
+            QPushButton:pressed        {{ background-color: {BG_HOVER}; color: {WARNING}; }}
         """)
         self._btn_save_mode.toggled.connect(self._on_save_mode_toggled)
 

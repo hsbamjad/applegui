@@ -127,7 +127,7 @@ QPushButton:disabled {{
     border-color: {BORDER};
 }}
 
-/* ── Primary CTA: solid leaf-green, bold cream text ──────────── */
+/* ── Primary CTA: solid leaf-green, dark forest text ─────────── */
 QPushButton#btn_primary {{
     background-color: {ACCENT};
     color: #0E1A10;
