@@ -576,15 +576,14 @@ class DataLoggingWindow(QWidget):
         # ── Detected Frames ───────────────────────────────────────────
         self._chk_detected = QCheckBox("Detected Frames")
         self._chk_detected.setToolTip(
-            "Save full-resolution YOLO composite with all detection\n"
-            "boxes and grade labels overlaid.\n"
-            "Output:  {session}/detected_frames/\n"
+            "Save annotated crops of each detected apple.\n"
+            "Output:  {session}/Lane{L}/Apple{N}/\n"
             "Requires Detect mode to be active."
         )
         self._chk_detected.setStyleSheet(self._chk_style("#22d3ee"))
         self._chk_detected.toggled.connect(self._emit_changed)
         cv.addWidget(self._chk_detected)
-        det_sub = QLabel("  Full frame  ·  all detection boxes  ·  YOLO composite")
+        det_sub = QLabel("  Annotated frames  ·  cropped per apple ID")
         det_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
         cv.addWidget(det_sub)
 
