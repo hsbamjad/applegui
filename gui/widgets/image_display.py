@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QPixmap, QImage, QFont, QColor, QPainter, QPen, QBrush
 from PyQt6.QtCore import Qt, pyqtSlot
 
-from gui.styles import CH_COLORS, BG_BASE, BG_CARD, BORDER, TEXT_1, TEXT_2, TEXT_3
+from gui.styles import CH_COLORS, BG_BASE, BG_CARD, BORDER, TEXT_1, TEXT_2, TEXT_3, INFO
 
 
 CHANNEL_META = [
@@ -329,7 +329,7 @@ class ChannelPanel(QWidget):
             painter.drawRect(right, ry, (img_x + img_w) - right, rh_px)
 
         # Dashed cyan border around ROI
-        pen = QPen(QColor("#06b6d4"))
+        pen = QPen(QColor(INFO))
         pen.setWidth(2)
         pen.setStyle(Qt.PenStyle.DashLine)
         painter.setPen(pen)
@@ -364,11 +364,11 @@ class ChannelPanel(QWidget):
         ly = ry + 4
         # Background pill
         painter.setBrush(QBrush(QColor(0, 0, 0, 160)))
-        pen2 = QPen(QColor("#06b6d4"))
+        pen2 = QPen(QColor(INFO))
         pen2.setWidth(1)
         painter.setPen(pen2)
         painter.drawRoundedRect(lx - 2, ly - 2, tw, th, 3, 3)
-        painter.setPen(QColor("#06b6d4"))
+        painter.setPen(QColor(INFO))
         painter.drawText(lx + 2, ly + fm.ascent(), label_text)
 
         painter.end()

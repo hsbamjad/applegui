@@ -39,7 +39,7 @@ from PyQt6.QtGui import QFont, QColor, QPainter, QLinearGradient
 
 from gui.styles import (
     APP_STYLESHEET, BG_BASE, BG_SURFACE, BG_CARD,
-    ACCENT, ACCENT_HV, ACCENT_DK, SUCCESS, WARNING, DANGER,
+    ACCENT, ACCENT_HV, ACCENT_DK, SUCCESS, WARNING, DANGER, INFO,
     TEXT_1, TEXT_2, TEXT_3, BORDER, CH_COLORS,
 )
 from gui.panels.camera_panel import LeftControlPanel
@@ -100,10 +100,10 @@ class HeaderBar(QWidget):
 
         # Mode badge — subtle pill
         if self._mode == "mock":
-            badge_bg, badge_bdr, badge_tc = "#1C2240", "#2E3D68", "#6A7899"
+            badge_bg, badge_bdr, badge_tc = "#1A2A1C", "#2C3E2F", "#536550"
             badge_txt = "MOCK MODE"
         else:
-            badge_bg, badge_bdr, badge_tc = "#0D2218", "#1A4832", SUCCESS
+            badge_bg, badge_bdr, badge_tc = "#163320", "#2A5535", SUCCESS
             badge_txt = "JAI  LIVE"
 
         self._badge = QLabel(f"  {badge_txt}  ")
@@ -120,11 +120,11 @@ class HeaderBar(QWidget):
     def set_mode(self, mode: str) -> None:
         """Update badge at runtime to reflect actual camera mode."""
         if mode == "jai":
-            bg, bdr, tc, txt = "#0D2218", "#1A4832", SUCCESS, "JAI  LIVE"
+            bg, bdr, tc, txt = "#163320", "#2A5535", SUCCESS, "JAI  LIVE"
         elif mode == "simulation":
-            bg, bdr, tc, txt = "#1F1A00", "#4A3C00", "#FBBF24", "VIDEO  SIM"
+            bg, bdr, tc, txt = "#2A1E08", "#5A3E10", "#D4A843", "VIDEO  SIM"
         else:
-            bg, bdr, tc, txt = "#1C2240", "#2E3D68", "#6A7899", "MOCK MODE"
+            bg, bdr, tc, txt = "#1A2A1C", "#2C3E2F", "#536550", "MOCK MODE"
         self._badge.setText(f"  {txt}  ")
         self._badge.setStyleSheet(f"""
             QLabel {{
@@ -139,9 +139,9 @@ class HeaderBar(QWidget):
     def paintEvent(self, event) -> None:  # type: ignore[override]
         painter = QPainter(self)
         grad = QLinearGradient(0, 0, self.width(), 0)
-        grad.setColorAt(0.0, QColor("#0F172A"))
-        grad.setColorAt(0.5, QColor("#162032"))
-        grad.setColorAt(1.0, QColor("#0F172A"))
+        grad.setColorAt(0.0, QColor("#0A1209"))
+        grad.setColorAt(0.5, QColor("#122015"))
+        grad.setColorAt(1.0, QColor("#0A1209"))
         painter.fillRect(self.rect(), grad)
         pen = painter.pen()
         pen.setColor(QColor(ACCENT + "50"))
@@ -1292,11 +1292,11 @@ class MainWindow(QMainWindow):
         """Updates the permanent sync status label on the right corner of the status bar."""
         if ch1_bid == -1:
             self._lbl_sync.setText("Sync: --  ·  IDs: -- / -- / --")
-            self._lbl_sync.setStyleSheet("color: #94A3B8; font-family: monospace; font-size: 11px; margin-right: 10px;")
+            self._lbl_sync.setStyleSheet(f"color: {TEXT_2}; font-family: monospace; font-size: 11px; margin-right: 10px;")
             return
         
         sync_str = "OK" if synced else "MISMATCH"
-        color = "#10B981" if synced else "#EF4444"  # emerald green if OK, bright red if MISMATCH
+        color = SUCCESS if synced else DANGER
         self._lbl_sync.setText(f"Sync: {sync_str}  ·  IDs: {ch1_bid} / {ch2_bid} / {ch3_bid}")
         self._lbl_sync.setStyleSheet(f"color: {color}; font-family: monospace; font-size: 11px; font-weight: bold; margin-right: 10px;")
 

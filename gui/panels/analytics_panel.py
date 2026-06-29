@@ -68,7 +68,7 @@ def _section_header(text: str) -> QWidget:
     hl.setSpacing(8)
     lbl = QLabel(text.upper())
     lbl.setStyleSheet(
-        "color: #A8B4CC; font-size: 10px; font-weight: 700; "
+        f"color: {TEXT_3}; font-size: 10px; font-weight: 700; "
         "letter-spacing: 2px; background: transparent;"
     )
     line = QFrame()
