@@ -1,37 +1,59 @@
 """
-gui/styles.py — Obsidian Slate Theme
+gui/styles.py — Verdant Grove Theme
 =====================================
-"Deep Midnight" professional dashboard aesthetic.
-Based on Tailwind CSS slate scale for proven readability ratios.
+"Forest & Cream" professional dashboard aesthetic.
+Designed for a precision agriculture / fruit sorting context.
 
-Accent: Indigo #6366F1  |  Background: #0F172A  |  Surface: #1E293B
+Palette inspiration: old-growth forest, worn parchment, copper tools.
+
+  Background:  #0E1A10  — Deep Forest Night
+  Surface:     #162019  — Shadowed Grove
+  Card:        #1E2E21  — Undergrowth
+  Elevated:    #263629  — Moss Bank
+  Hover:       #2E4032  — Fern Shadow
+
+  Accent:      #5DA669  — Leaf Green
+  Accent HV:   #77C285  — Young Shoot
+  Accent DK:   #3F8750  — Deep Canopy
+
+  Text 1:      #EEE8D9  — Warm Cream (primary)
+  Text 2:      #A8B89A  — Sage (secondary / label)
+  Text 3:      #536550  — Dim Moss (disabled)
+
+  Border:      #2C3E2F  — Dark Bark
+  Border LT:   #3D5440  — Lighter Bark
+
+  Success:     #72C472  — Ripe Green
+  Warning:     #D4A843  — Harvest Amber
+  Danger:      #C85C4A  — Autumn Red
+  Info:        #62B6C0  — Morning Mist
 """
 
-# ── Obsidian Slate Palette ────────────────────────────────────────────────────
-BG_BASE     = "#0F172A"   # slate-900  — deepest background
-BG_SURFACE  = "#1E293B"   # slate-800  — panel / sidebar
-BG_CARD     = "#243347"   # slate-750  — card fill
-BG_ELEVATED = "#2D3E54"   # slate-700  — elevated / dropdown
-BG_HOVER    = "#354A62"   # slate-650  — hover state
+# ── Verdant Grove Palette ─────────────────────────────────────────────────────
+BG_BASE     = "#0E1A10"   # deep forest night
+BG_SURFACE  = "#162019"   # shadowed grove
+BG_CARD     = "#1E2E21"   # undergrowth
+BG_ELEVATED = "#263629"   # moss bank
+BG_HOVER    = "#2E4032"   # fern shadow
 
-ACCENT      = "#6366F1"   # indigo-500 — primary action
-ACCENT_HV   = "#818CF8"   # indigo-400 — hover
-ACCENT_DK   = "#4F46E5"   # indigo-600 — pressed
+ACCENT      = "#5DA669"   # leaf green — primary action
+ACCENT_HV   = "#77C285"   # young shoot — hover
+ACCENT_DK   = "#3F8750"   # deep canopy — pressed
 
-SUCCESS     = "#10B981"   # emerald-500
-WARNING     = "#F59E0B"   # amber-500
-DANGER      = "#EF4444"   # red-500
-INFO        = "#38BDF8"   # sky-400
+SUCCESS     = "#72C472"   # ripe green
+WARNING     = "#D4A843"   # harvest amber
+DANGER      = "#C85C4A"   # autumn red
+INFO        = "#62B6C0"   # morning mist
 
-TEXT_1      = "#F1F5F9"   # slate-100  — primary text
-TEXT_2      = "#94A3B8"   # slate-400  — secondary / label
-TEXT_3      = "#475569"   # slate-600  — disabled / dim
+TEXT_1      = "#EEE8D9"   # warm cream — primary text
+TEXT_2      = "#A8B89A"   # sage — secondary / label
+TEXT_3      = "#536550"   # dim moss — disabled / dim
 
-BORDER      = "#334155"   # slate-700
-BORDER_LT   = "#475569"   # slate-600
+BORDER      = "#2C3E2F"   # dark bark
+BORDER_LT   = "#3D5440"   # lighter bark
 
-# Channel spectrum accent colors — distinct, same cool family
-CH_COLORS   = ["#60A5FA", "#34D399", "#A78BFA"]   # blue-400, emerald-400, violet-400
+# Channel spectrum accent colors — forest family: warm gold, sky mist, copper
+CH_COLORS   = ["#D4A843", "#62B6C0", "#C87B4A"]   # amber, mist-blue, copper
 
 COLORS = {
     "bg_base": BG_BASE, "bg_surface": BG_SURFACE, "bg_card": BG_CARD,
@@ -44,7 +66,7 @@ COLORS = {
 
 APP_STYLESHEET = f"""
 /* ══════════════════════════════════════════════════════════════
-   Apple Sorting GUI  ·  Obsidian Slate Theme
+   Apple Sorting GUI  ·  Verdant Grove Theme
    Michigan State University  ·  ASABE AIM26  ·  2026
    ══════════════════════════════════════════════════════════════ */
 
@@ -105,10 +127,10 @@ QPushButton:disabled {{
     border-color: {BORDER};
 }}
 
-/* ── Primary CTA: solid indigo, bold white text ───────────────── */
+/* ── Primary CTA: solid leaf-green, bold cream text ──────────── */
 QPushButton#btn_primary {{
     background-color: {ACCENT};
-    color: white;
+    color: #0E1A10;
     border: none;
     font-weight: 700;
     font-size: 12px;
@@ -118,18 +140,18 @@ QPushButton#btn_primary {{
 }}
 QPushButton#btn_primary:hover {{
     background-color: {ACCENT_HV};
-    color: white;
+    color: #0E1A10;
 }}
 QPushButton#btn_primary:pressed {{
     background-color: {ACCENT_DK};
-    color: white;
+    color: {TEXT_1};
 }}
 QPushButton#btn_primary:disabled {{
     background-color: {BG_ELEVATED};
     color: {TEXT_3};
 }}
 
-/* ── Danger: solid red, bold white text ───────────────────────── */
+/* ── Danger: autumn red ───────────────────────────────────────── */
 QPushButton#btn_danger {{
     background-color: {DANGER};
     color: white;
@@ -140,11 +162,11 @@ QPushButton#btn_danger {{
     border-radius: 8px;
 }}
 QPushButton#btn_danger:hover {{
-    background-color: #F87171;
+    background-color: #D97060;
     color: white;
 }}
 QPushButton#btn_danger:pressed {{
-    background-color: #DC2626;
+    background-color: #A0473A;
     color: white;
 }}
 
@@ -188,7 +210,7 @@ QComboBox QAbstractItemView {{
     border-radius: 8px;
     color: {TEXT_1};
     selection-background-color: {ACCENT};
-    selection-color: white;
+    selection-color: #0E1A10;
     padding: 4px;
     outline: none;
 }}
@@ -200,7 +222,7 @@ QComboBox QAbstractItemView::item {{
 }}
 QComboBox QAbstractItemView::item:selected {{
     background-color: {ACCENT};
-    color: white;
+    color: #0E1A10;
 }}
 
 /* ── SpinBox ──────────────────────────────────────────────────── */

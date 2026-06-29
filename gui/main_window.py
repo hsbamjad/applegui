@@ -100,10 +100,10 @@ class HeaderBar(QWidget):
 
         # Mode badge — subtle pill
         if self._mode == "mock":
-            badge_bg, badge_bdr, badge_tc = "#1C2240", "#2E3D68", "#6A7899"
+            badge_bg, badge_bdr, badge_tc = "#1A2A1C", "#2C3E2F", "#536550"
             badge_txt = "MOCK MODE"
         else:
-            badge_bg, badge_bdr, badge_tc = "#0D2218", "#1A4832", SUCCESS
+            badge_bg, badge_bdr, badge_tc = "#163320", "#2A5535", SUCCESS
             badge_txt = "JAI  LIVE"
 
         self._badge = QLabel(f"  {badge_txt}  ")
@@ -120,11 +120,11 @@ class HeaderBar(QWidget):
     def set_mode(self, mode: str) -> None:
         """Update badge at runtime to reflect actual camera mode."""
         if mode == "jai":
-            bg, bdr, tc, txt = "#0D2218", "#1A4832", SUCCESS, "JAI  LIVE"
+            bg, bdr, tc, txt = "#163320", "#2A5535", SUCCESS, "JAI  LIVE"
         elif mode == "simulation":
-            bg, bdr, tc, txt = "#1F1A00", "#4A3C00", "#FBBF24", "VIDEO  SIM"
+            bg, bdr, tc, txt = "#2A1E08", "#5A3E10", "#D4A843", "VIDEO  SIM"
         else:
-            bg, bdr, tc, txt = "#1C2240", "#2E3D68", "#6A7899", "MOCK MODE"
+            bg, bdr, tc, txt = "#1A2A1C", "#2C3E2F", "#536550", "MOCK MODE"
         self._badge.setText(f"  {txt}  ")
         self._badge.setStyleSheet(f"""
             QLabel {{
@@ -139,9 +139,9 @@ class HeaderBar(QWidget):
     def paintEvent(self, event) -> None:  # type: ignore[override]
         painter = QPainter(self)
         grad = QLinearGradient(0, 0, self.width(), 0)
-        grad.setColorAt(0.0, QColor("#0F172A"))
-        grad.setColorAt(0.5, QColor("#162032"))
-        grad.setColorAt(1.0, QColor("#0F172A"))
+        grad.setColorAt(0.0, QColor("#0A1209"))
+        grad.setColorAt(0.5, QColor("#122015"))
+        grad.setColorAt(1.0, QColor("#0A1209"))
         painter.fillRect(self.rect(), grad)
         pen = painter.pen()
         pen.setColor(QColor(ACCENT + "50"))
