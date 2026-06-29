@@ -1001,7 +1001,6 @@ class LeftControlPanel(QWidget):
 
     def _on_save_mode_toggled(self, checked: bool) -> None:
         """User toggled the Save mode button."""
-        # Enable / disable Data Logging access
         self._btn_data_logging.setEnabled(checked)
         if not checked:
             if self._dl_win.isVisible():
@@ -1012,23 +1011,18 @@ class LeftControlPanel(QWidget):
             raw, proc, det = self._dl_win.get_options()
             if not raw and not proc and not det:
                 self._dl_win.set_options(True, proc, det)
-        # Enable / disable popup options based on combined mode state
-        detect = self._btn_detect_mode.isChecked()
+        # All 3 options are independently available whenever Save mode is ON
         self._dl_win.set_enabled_options(
-            raw      = checked,
-            processed = checked and detect,
-            detected  = checked and detect,
+            raw       = checked,
+            processed = checked,
+            detected  = checked,
         )
         self.sig_save_mode_changed.emit(checked)
 
     def _on_detect_mode_toggled(self, checked: bool) -> None:
-        """User toggled the Detect mode button."""
-        save = self._btn_save_mode.isChecked()
-        self._dl_win.set_enabled_options(
-            raw      = save,
-            processed = save and checked,
-            detected  = save and checked,
-        )
+        """User toggled the Detect mode button (on-screen detections only)."""
+        # Detect mode controls on-screen display; it does NOT gate the logging checkboxes.
+        # Processed/Detected crops are independently controlled in Data Logging popup.
         self.sig_detect_mode_changed.emit(checked)
 
 
@@ -1788,11 +1782,11 @@ class LeftControlPanel(QWidget):
         self._btn_save_mode.setChecked(enabled)
         self._btn_save_mode.blockSignals(False)
         self._btn_data_logging.setEnabled(enabled)
-        detect_on = self._btn_detect_mode.isChecked()
+        # All checkboxes enabled whenever Save mode is ON
         self._dl_win.set_enabled_options(
-            raw      = enabled,
-            processed = enabled and detect_on,
-            detected  = enabled and detect_on,
+            raw       = enabled,
+            processed = enabled,
+            detected  = enabled,
         )
 
     def set_detect_mode(self, enabled: bool) -> None:
@@ -1800,12 +1794,7 @@ class LeftControlPanel(QWidget):
         self._btn_detect_mode.blockSignals(True)
         self._btn_detect_mode.setChecked(enabled)
         self._btn_detect_mode.blockSignals(False)
-        save_on = self._btn_save_mode.isChecked()
-        self._dl_win.set_enabled_options(
-            raw      = save_on,
-            processed = save_on and enabled,
-            detected  = save_on and enabled,
-        )
+        # Detect mode does not gate popup checkboxes — Save mode does
 
     def update_logging_options(self, raw: bool, processed: bool, detected: bool) -> None:
         """Sync the Data Logging popup checkboxes without emitting signals."""
