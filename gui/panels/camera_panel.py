@@ -866,16 +866,17 @@ class LeftControlPanel(QWidget):
                 border-radius: 7px;
             }}
             QPushButton:hover {{
-                background-color: {ACCENT}22; color: {ACCENT_HV};
-                border-color: {ACCENT}66;
+                background-color: {ACCENT_DK}; color: white;
+                border-color: {ACCENT};
             }}
             QPushButton:checked {{
                 background-color: {ACCENT}; color: white;
                 border: 2px solid {ACCENT_DK};
             }}
-            QPushButton:checked:hover {{ background-color: {ACCENT_HV}; color: white; }}
+            QPushButton:checked:hover {{ background-color: {ACCENT_HV}; color: white; border-color: {ACCENT_HV}; }}
             QPushButton:pressed        {{ background-color: {ACCENT_DK}; color: white; }}
         """)
+
         self._btn_detect_mode.toggled.connect(self._on_detect_mode_toggled)
 
         _mode_btn_row = QHBoxLayout()
