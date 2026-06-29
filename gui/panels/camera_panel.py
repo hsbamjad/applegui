@@ -498,7 +498,7 @@ class DataLoggingWindow(QWidget):
         tb_hl.setContentsMargins(16, 0, 12, 0)
         tb_hl.setSpacing(12)
 
-        ttl = QLabel("💾  Data Logging")
+        ttl = QLabel("Data Logging")
         ttl.setStyleSheet(
             f"color: {TEXT_1}; font-size: 14px; font-weight: 700; "
             "background: transparent; border: none; letter-spacing: 0.2px;"
@@ -822,7 +822,7 @@ class LeftControlPanel(QWidget):
         _mode_card.add(_mode_desc)
 
         _SAVE_CLR = "#06b6d4"   # cyan — Save mode
-        self._btn_save_mode = QPushButton("💾  Save")
+        self._btn_save_mode = QPushButton("Save")
         self._btn_save_mode.setFixedHeight(36)
         self._btn_save_mode.setCheckable(True)
         self._btn_save_mode.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -850,7 +850,7 @@ class LeftControlPanel(QWidget):
         """)
         self._btn_save_mode.toggled.connect(self._on_save_mode_toggled)
 
-        self._btn_detect_mode = QPushButton("🔍  Detect")
+        self._btn_detect_mode = QPushButton("Detect")
         self._btn_detect_mode.setFixedHeight(36)
         self._btn_detect_mode.setCheckable(True)
         self._btn_detect_mode.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -870,11 +870,11 @@ class LeftControlPanel(QWidget):
                 border-color: {ACCENT}66;
             }}
             QPushButton:checked {{
-                background-color: {ACCENT}33; color: {ACCENT_HV};
-                border: 2px solid {ACCENT};
+                background-color: {ACCENT}; color: white;
+                border: 2px solid {ACCENT_DK};
             }}
-            QPushButton:checked:hover {{ background-color: {ACCENT}44; }}
-            QPushButton:pressed        {{ background-color: {ACCENT}44; }}
+            QPushButton:checked:hover {{ background-color: {ACCENT_HV}; color: white; }}
+            QPushButton:pressed        {{ background-color: {ACCENT_DK}; color: white; }}
         """)
         self._btn_detect_mode.toggled.connect(self._on_detect_mode_toggled)
 
