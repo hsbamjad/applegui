@@ -1012,10 +1012,7 @@ class MainWindow(QMainWindow):
     def _on_graded_batch(self, graded: list) -> None:
         """Grade commits — always processed immediately, never coalesced."""
         for rec in graded:
-            # Only commit grades to the recorder when Detected Frames is active.
-            # This prevents CSV writes and annotated crop saving when user only
-            # has Processed Frames (ch1/ch2/ch3 crops) checked.
-            if self._grading_recorder is not None and self._log_detected:
+            if self._grading_recorder is not None:
                 self._grading_recorder.on_grade_committed(
                     seq_id=rec.seq_id,
                     lane=rec.lane,

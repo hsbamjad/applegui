@@ -69,10 +69,11 @@ class _PendingMeta:
     lane: int
     raw_cls: int
     raw_conf: float
+    crop_jpeg:      bytes | None = None   # processed: clean (unannotated) crop
     detected_jpeg:  bytes | None = None   # detected: annotated crop with box + label
     raw_crop_jpegs: tuple[bytes | None, bytes | None, bytes | None] = field(
         default_factory=lambda: (None, None, None)
-    )  # ch1/ch2/ch3 crops saved under Apple{N}/ch1/, ch2/, ch3/
+    )  # (source0, source1, source2) raw crops — no annotation overlay
 
 
 @dataclass
