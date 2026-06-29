@@ -491,10 +491,11 @@ class GradingRecorder:
             jobs.append(_WriteJob(apple_dir / "detected" / fname, meta.detected_crop_jpeg))
 
         # Processed crops: per-channel raw crops → Apple{N}/processed/ch1/, ch2/, ch3/
-        _CH_NAMES = ("ch1", "ch2", "ch3")
-        for ch_name, proc_jpeg in zip(_CH_NAMES, meta.processed_crop_jpegs):
-            if proc_jpeg is not None:
-                jobs.append(_WriteJob(apple_dir / "processed" / ch_name / fname, proc_jpeg))
+        if meta.processed_crop_jpegs is not None:
+            _CH_NAMES = ("ch1", "ch2", "ch3")
+            for ch_name, proc_jpeg in zip(_CH_NAMES, meta.processed_crop_jpegs):
+                if proc_jpeg is not None:
+                    jobs.append(_WriteJob(apple_dir / "processed" / ch_name / fname, proc_jpeg))
 
         return jobs
 
