@@ -13,7 +13,7 @@ Output layout::
     {session}/raw_frames/ch2/frame_XXXXXX.jpg   # full-res raw ch2 (NIR1)  — no annotation
     {session}/raw_frames/ch3/frame_XXXXXX.jpg   # full-res raw ch3 (NIR2)  — no annotation
 
-    {session}/Lane{L}/Apple{N}/detected/frame_XXX.jpg       # composite YOLO crop + boxes
+    {session}/Lane{L}/Apple{N}/frame_XXX.jpg       # composite YOLO crop + boxes
     {session}/Lane{L}/Apple{N}.csv                          # per-apple detection CSV
 """
 
@@ -446,8 +446,7 @@ class GradingRecorder:
             # Pre-create the apple directory and subdirectories synchronously to avoid 
             # thread-pool race conditions on Windows when multiple jobs try to create them.
             apple_dir = self._apple_dir(state)
-            if self._save_detected_crops:
-                (apple_dir / "detected").mkdir(parents=True, exist_ok=True)
+
 
         if state.finalized:
             return []
@@ -468,9 +467,9 @@ class GradingRecorder:
         apple_dir = self._apple_dir(state)
         fname = f"frame_{state.frame_idx:03d}.{self._image_ext}"
 
-        # Detected crop: composite YOLO frame + boxes → Apple{N}/detected/
+        # Detected crop: composite YOLO frame + boxes → Apple{N}/
         if self._save_detected_crops and meta.detected_crop_jpeg is not None:
-            jobs.append(_WriteJob(apple_dir / "detected" / fname, meta.detected_crop_jpeg))
+            jobs.append(_WriteJob(apple_dir / fname, meta.detected_crop_jpeg))
 
         return jobs
 
