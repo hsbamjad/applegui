@@ -1,7 +1,7 @@
 """
 scripts/camera_live_view.py
 ============================
-JAI FS-3200T — Live 3-channel synchronized viewer
+JAI FS-3200T - Live 3-channel synchronized viewer
 Uses the same MultiSource pipeline pattern as camera_probe_jai.py.
 
 Displays CH1 (Color), CH2 (NIR1), CH3 (NIR2) side-by-side in real time.
@@ -30,7 +30,7 @@ logger = get_logger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 BUFFER_COUNT  = 16
-TIMEOUT_MS    = 500        # short timeout — we're in a live loop
+TIMEOUT_MS    = 500        # short timeout - we're in a live loop
 DISPLAY_W     = 640        # width per channel panel
 DISPLAY_H     = 480        # height per channel panel
 OUT_DIR       = Path("scripts/probe_output")
@@ -170,7 +170,7 @@ if connection_id is None:
 logger.info("\n── Connect ───────────────────────────────────────────────────────────")
 result, device = eb.PvDevice.CreateAndConnect(connection_id)
 if device is None:
-    logger.error(f"  [ERROR] {result.GetCodeString()} — Close eBUS Player first")
+    logger.error(f"  [ERROR] {result.GetCodeString()} - Close eBUS Player first")
     sys.exit(1)
 logger.info(f"  [OK] Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
 
@@ -206,7 +206,7 @@ logger.info(f"  [OK] {len(sources)} streams open simultaneously")
 logger.info("\n── Start Acquisition ─────────────────────────────────────────────────")
 for src in sources:
     src.start_acquisition()
-logger.info(f"  [OK] All sources streaming — warming up 2s ...")
+logger.info(f"  [OK] All sources streaming - warming up 2s ...")
 time.sleep(2.0)
 
 # Drain initial frames (interleaved)
@@ -216,7 +216,7 @@ for _ in range(30):
         if r.IsOK():
             src.pipeline.ReleaseBuffer(buf)
 
-logger.info("  [OK] Ready — opening live view window")
+logger.info("  [OK] Ready - opening live view window")
 logger.info("       Q = quit  |  S = save snapshot  |  N = toggle NIR normalize\n")
 
 # ── 4. Live display loop ──────────────────────────────────────────────────────
@@ -241,7 +241,7 @@ try:
                 last_frames[i] = (raw, bid)
 
             if last_frames[i] is None:
-                # No frame yet — show black panel
+                # No frame yet - show black panel
                 panels.append(np.zeros((DISPLAY_H, DISPLAY_W, 3), dtype=np.uint8))
                 block_ids.append(None)
                 continue
@@ -275,7 +275,7 @@ try:
 
             panels.append(panel)
 
-        # Sync indicator — show if all blockIDs match
+        # Sync indicator - show if all blockIDs match
         synced = (len(set(b for b in block_ids if b is not None)) == 1
                   and None not in block_ids)
 
@@ -303,7 +303,7 @@ try:
                     (DISPLAY_W * len(panels) - 340, DISPLAY_H - 8),
                     FONT, 0.45, (120, 120, 120), 1)
 
-        cv2.imshow("JAI FS-3200T — Live 3-Channel View", display)
+        cv2.imshow("JAI FS-3200T - Live 3-Channel View", display)
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q') or key == 27:   # Q or ESC

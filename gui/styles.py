@@ -1,32 +1,32 @@
 """
-gui/styles.py — Verdant Grove Theme
+gui/styles.py - Verdant Grove Theme
 =====================================
 "Forest & Cream" professional dashboard aesthetic.
 Designed for a precision agriculture / fruit sorting context.
 
 Palette inspiration: old-growth forest, worn parchment, copper tools.
 
-  Background:  #0E1A10  — Deep Forest Night
-  Surface:     #162019  — Shadowed Grove
-  Card:        #1E2E21  — Undergrowth
-  Elevated:    #263629  — Moss Bank
-  Hover:       #2E4032  — Fern Shadow
+  Background:  #0E1A10  - Deep Forest Night
+  Surface:     #162019  - Shadowed Grove
+  Card:        #1E2E21  - Undergrowth
+  Elevated:    #263629  - Moss Bank
+  Hover:       #2E4032  - Fern Shadow
 
-  Accent:      #5DA669  — Leaf Green
-  Accent HV:   #77C285  — Young Shoot
-  Accent DK:   #3F8750  — Deep Canopy
+  Accent:      #5DA669  - Leaf Green
+  Accent HV:   #77C285  - Young Shoot
+  Accent DK:   #3F8750  - Deep Canopy
 
-  Text 1:      #EEE8D9  — Warm Cream (primary)
-  Text 2:      #A8B89A  — Sage (secondary / label)
-  Text 3:      #536550  — Dim Moss (disabled)
+  Text 1:      #EEE8D9  - Warm Cream (primary)
+  Text 2:      #A8B89A  - Sage (secondary / label)
+  Text 3:      #536550  - Dim Moss (disabled)
 
-  Border:      #2C3E2F  — Dark Bark
-  Border LT:   #3D5440  — Lighter Bark
+  Border:      #2C3E2F  - Dark Bark
+  Border LT:   #3D5440  - Lighter Bark
 
-  Success:     #72C472  — Ripe Green
-  Warning:     #D4A843  — Harvest Amber
-  Danger:      #C85C4A  — Autumn Red
-  Info:        #62B6C0  — Morning Mist
+  Success:     #72C472  - Ripe Green
+  Warning:     #D4A843  - Harvest Amber
+  Danger:      #C85C4A  - Autumn Red
+  Info:        #62B6C0  - Morning Mist
 """
 
 # ── Verdant Grove Palette ─────────────────────────────────────────────────────
@@ -36,23 +36,23 @@ BG_CARD     = "#1E2E21"   # undergrowth
 BG_ELEVATED = "#263629"   # moss bank
 BG_HOVER    = "#2E4032"   # fern shadow
 
-ACCENT      = "#5DA669"   # leaf green — primary action
-ACCENT_HV   = "#77C285"   # young shoot — hover
-ACCENT_DK   = "#3F8750"   # deep canopy — pressed
+ACCENT      = "#5DA669"   # leaf green - primary action
+ACCENT_HV   = "#77C285"   # young shoot - hover
+ACCENT_DK   = "#3F8750"   # deep canopy - pressed
 
 SUCCESS     = "#72C472"   # ripe green
 WARNING     = "#D4A843"   # harvest amber
 DANGER      = "#C85C4A"   # autumn red
 INFO        = "#62B6C0"   # morning mist
 
-TEXT_1      = "#EEE8D9"   # warm cream — primary text
-TEXT_2      = "#A8B89A"   # sage — secondary / label
-TEXT_3      = "#536550"   # dim moss — disabled / dim
+TEXT_1      = "#EEE8D9"   # warm cream - primary text
+TEXT_2      = "#A8B89A"   # sage - secondary / label
+TEXT_3      = "#536550"   # dim moss - disabled / dim
 
 BORDER      = "#2C3E2F"   # dark bark
 BORDER_LT   = "#3D5440"   # lighter bark
 
-# Channel spectrum accent colors — forest family: warm gold, sky mist, copper
+# Channel spectrum accent colors - forest family: warm gold, sky mist, copper
 CH_COLORS   = ["#D4A843", "#62B6C0", "#C87B4A"]   # amber, mist-blue, copper
 
 COLORS = {
@@ -367,17 +367,22 @@ QTabWidget::tab-bar {{
 }}
 QTabBar {{
     background: transparent;
+    border-bottom: 1px solid {BORDER};
 }}
 QTabBar::tab {{
     background-color: {BG_SURFACE};
     color: {TEXT_3};
     border: none;
+    border-left: 1px solid {BORDER};
     border-bottom: 2px solid transparent;
     padding: 6px 20px;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.8px;
     min-width: 120px;
+}}
+QTabBar::tab:first {{
+    border-left: none;
 }}
 QTabBar::tab:selected {{
     background-color: {BG_BASE};

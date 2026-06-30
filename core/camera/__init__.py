@@ -1,7 +1,7 @@
 """
 core/camera/__init__.py
 ========================
-Camera Interface Module — Public API
+Camera Interface Module - Public API
 
 Supported backends:
   - JAI FSFE-3200T-10GE via Harvesters (GenICam/GenTL)  [mode: "jai"]

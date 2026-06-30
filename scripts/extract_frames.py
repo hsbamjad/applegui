@@ -1,12 +1,12 @@
 """
-extract_frames.py  —  Step 1: Frame Feature Extractor  (v2 — Full Redesign)
+extract_frames.py  -  Step 1: Frame Feature Extractor  (v2 - Full Redesign)
 =============================================================================
 Michigan State University | Apple GUI | feature/apple-size-ml branch
 
 WHAT CHANGED (v2)
 -----------------
   Old:  Custom SimpleTracker → unreliable, ghost tracks (e.g. Apple 14 in G1)
-  New:  model.track() with bytetrack.yaml — same tracker used in production
+  New:  model.track() with bytetrack.yaml - same tracker used in production
         inference (gui/workers/inference_worker.py line 275).
 
   Old:  Raw binary masks from YOLO → jagged / sharp corners.
@@ -19,13 +19,13 @@ WHAT CHANGED (v2)
   Old:  Ghost filter = MIN_CX_TRAVEL 200 px (too aggressive for late-entrants).
   New:  Ghost filter = MIN_CX_RANGE 80 px  (cx_max − cx_min).
         Ghost tracks (stationary belt artifacts) have cx_range ≈ 10 px.
-        Real apples — even late-entering ones — have cx_range ≥ 80 px.
+        Real apples - even late-entering ones - have cx_range ≥ 80 px.
 
 PIPELINE (per session)
 ----------------------
   1.  Iterate BMP frames from Source0/<session>.
   2.  Build RB-NIR1 composite (same band combo as production model).
-  3.  model.track(bytetrack.yaml, persist=True) — YOLO assigns stable IDs.
+  3.  model.track(bytetrack.yaml, persist=True) - YOLO assigns stable IDs.
   4.  Per detection:
         a. Get polygon from masks.xy.
         b. Apply convex hull  → smooth binary mask (no sharp corners).
@@ -69,11 +69,11 @@ OUTPUT (pickle per session)
         "cx_range":       1261,       # cx_max - cx_min (travel across frame)
         "best_quality":   0.84,       # quality score of consensus frame
 
-        # Consensus mask — best-quality frame's convex-hull silhouette
+        # Consensus mask - best-quality frame's convex-hull silhouette
         "consensus_mask": np.ndarray, # binary uint8 H×W (cropped to consensus_rect)
         "consensus_rect": [x1,y1,x2,y2], # location of consensus_mask in full frame
 
-        # Lightweight per-frame metadata (no mask images — saves ~100× space)
+        # Lightweight per-frame metadata (no mask images - saves ~100× space)
         "frames": [
           {
             "frame_no":  1042,   # original BMP frame number
@@ -84,7 +84,7 @@ OUTPUT (pickle per session)
             "conf":      0.87,   # YOLO detection confidence
             "cls_id":    1,      # 0=Fresh 1=Processing 2=Cull
             "quality":   0.72,   # circularity × completeness
-            # ── Per-frame diameter estimates (pixels) — Step 2 features ──────
+            # ── Per-frame diameter estimates (pixels) - Step 2 features ──────
             "d_maxw":  float,   # M1: max projection width
             "d_sym":   float,   # M2: bilateral symmetry (Mizushima & Lu 2013)
             "d_ell":   float,   # M3: ellipse major axis
@@ -166,7 +166,7 @@ def load_gt(gt_path: str, session: str) -> list:
       Columns: Session | Apple# | D1 | D2 | SurfaceClass | Average
       'Session' column only has a value (e.g. 'G1') in the FIRST row of each
       session block; remaining rows of that session have None in that column.
-      'Average' = (D1 + D2) / 2  in mm  — this is the GT diameter.
+      'Average' = (D1 + D2) / 2  in mm  - this is the GT diameter.
 
     Returns a list of Average floats in the order they appear for the session.
     Falls back gracefully (empty list + warning) on any error.
@@ -174,7 +174,7 @@ def load_gt(gt_path: str, session: str) -> list:
     try:
         wb = openpyxl.load_workbook(gt_path, read_only=True, data_only=True)
 
-        # Find the sheet — prefer a sheet named after the session, fall back to Sheet1
+        # Find the sheet - prefer a sheet named after the session, fall back to Sheet1
         target_sheet = None
         for name in wb.sheetnames:
             if name.strip().upper() == session.strip().upper():
@@ -216,7 +216,7 @@ def load_gt(gt_path: str, session: str) -> list:
         for row in rows:
             label = row[0]  # session column
             if label is not None:
-                # New session starting — check if it matches our target
+                # New session starting - check if it matches our target
                 in_session = str(label).strip().upper() == session.strip().upper()
             if not in_session:
                 continue
@@ -251,9 +251,9 @@ def build_model_input(src0_bgr: np.ndarray, src1_gray: np.ndarray) -> np.ndarray
       Channel 2 : NIR1  (src1 grayscale)
 
     Handles all Source1 image formats robustly:
-      - (H, W)    — already 2-D grayscale (most common)
-      - (H, W, 1) — 1-channel BMP (some cameras/OS save this way)
-      - (H, W, 3) — 3-channel BGR accidentally loaded without GRAYSCALE flag
+      - (H, W)    - already 2-D grayscale (most common)
+      - (H, W, 1) - 1-channel BMP (some cameras/OS save this way)
+      - (H, W, 3) - 3-channel BGR accidentally loaded without GRAYSCALE flag
     """
     R = src0_bgr[:, :, 2]
     B = src0_bgr[:, :, 0]
@@ -272,7 +272,7 @@ def build_model_input(src0_bgr: np.ndarray, src1_gray: np.ndarray) -> np.ndarray
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MASK PROCESSING  (ellipse-fit based — smooth, round, physically correct)
+# MASK PROCESSING  (ellipse-fit based - smooth, round, physically correct)
 # ─────────────────────────────────────────────────────────────────────────────
 def make_smooth_mask(
     poly:    np.ndarray,    # YOLO masks.xy contour  (N x 2 float, image coords)
@@ -300,7 +300,7 @@ def make_smooth_mask(
       crop_rect    : [mx1, my1, mx2, my2] in full-frame pixel coords
       quality      : float in [0, 1]
       ellipse_abs  : (center_x, center_y, axis_a, axis_b, angle) in full-frame
-                     coords — or None if fitting failed
+                     coords - or None if fitting failed
     """
     if poly is None or len(poly) < 5:          # fitEllipse needs >= 5 points
         return None, None, 0.0, None
@@ -321,7 +321,7 @@ def make_smooth_mask(
     try:
         ellipse_full = cv2.fitEllipse(hull)     # ((cx,cy), (ma,mi), angle)
     except cv2.error:
-        # Degenerate polygon — fall back to bbox circle
+        # Degenerate polygon - fall back to bbox circle
         cx_f = (x1 + x2) / 2.0
         cy_f = (y1 + y2) / 2.0
         r    = max((x2 - x1), (y2 - y1)) / 2.0
@@ -383,7 +383,7 @@ def compute_consensus_ellipse(
 ) -> tuple:
     """
     Compute a robust consensus ellipse using only frames where the apple is
-    fully in view — defined as frames where cx is within the CENTRAL portion
+    fully in view - defined as frames where cx is within the CENTRAL portion
     of the apple's traversal.
 
     Why cx-based rather than bbox-edge-based?
@@ -619,7 +619,7 @@ def process_session(
         if src0 is None:
             continue
 
-        # Source1 (NIR1) — optional; fall back to zeros if missing
+        # Source1 (NIR1) - optional; fall back to zeros if missing
         src1_path = src1_dir / src0_path.name
         if src1_path.exists():
             src1 = cv2.imread(str(src1_path), cv2.IMREAD_GRAYSCALE)
@@ -718,7 +718,7 @@ def process_session(
             # ── All 4 diameter methods from raw YOLO polygon ─────────────────
             # Computed on the CONVEX HULL of the raw polygon (same hull used
             # in make_smooth_mask). Using the raw poly (not the rendered ellipse
-            # mask) gives independent estimates — essential for Step 2 ML.
+            # mask) gives independent estimates - essential for Step 2 ML.
             if poly is not None and len(poly) >= 5:
                 # Render hull to a small binary mask for mask_diameter functions
                 hull_pts = cv2.convexHull(
@@ -755,11 +755,11 @@ def process_session(
                 "conf":      conf,
                 "cls_id":    cls,
                 "quality":   quality,
-                # Per-frame ellipse axes (pixels) — from consensus ellipse
+                # Per-frame ellipse axes (pixels) - from consensus ellipse
                 "ell_a":     ellipse_abs[2] if ellipse_abs else None,
                 "ell_b":     ellipse_abs[3] if ellipse_abs else None,
                 "ell_angle": ellipse_abs[4] if ellipse_abs else None,
-                # Per-frame diameter estimates (pixels) — M1-M4, Step 2 features
+                # Per-frame diameter estimates (pixels) - M1-M4, Step 2 features
                 "d_maxw":    d_maxw,
                 "d_sym":     d_sym,
                 "d_ell":     d_ell,
@@ -780,11 +780,11 @@ def process_session(
         entry_cx  = td["entry_cx"]
 
         if n_frames  < MIN_FRAMES:
-            continue   # too few frames — phantom detection
+            continue   # too few frames - phantom detection
         if cx_range  < MIN_CX_RANGE:
-            continue   # barely moved — stationary belt artifact (ghost)
+            continue   # barely moved - stationary belt artifact (ghost)
         if entry_cx  > entry_px:
-            continue   # first seen after entry zone — not a full traversal
+            continue   # first seen after entry zone - not a full traversal
 
         td["n_frames"]  = n_frames
         td["cx_range"]  = cx_range
@@ -830,7 +830,7 @@ def process_session(
             consensus_rect = td["best_rect"]
 
         # Quality: median of CENTRAL-traversal frame quality values only
-        # (same 20-80% cx filter — excludes partial entry/exit frames)
+        # (same 20-80% cx filter - excludes partial entry/exit frames)
         cx_range_td = td["cx_max"] - td["cx_min"]
         cx_low_q  = td["cx_min"] + 0.20 * cx_range_td
         cx_high_q = td["cx_max"] - 0.20 * cx_range_td
@@ -863,7 +863,7 @@ def process_session(
             "n_frames":         td["n_frames"],
             "cx_range":         td["cx_range"],
             "best_quality":     best_q,
-            # Consensus ellipse — median over all frames
+            # Consensus ellipse - median over all frames
             "consensus_params": consensus_params,
             "consensus_mask":   consensus_mask,
             "consensus_rect":   consensus_rect,

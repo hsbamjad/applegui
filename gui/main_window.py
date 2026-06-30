@@ -1,7 +1,7 @@
 """
 gui/main_window.py
 ==================
-Main application window — fully wired demo pipeline.
+Main application window - fully wired demo pipeline.
 
 On "Connect Camera":
   1. CameraWorker (QThread) starts → pushes mock frames to 3-channel display
@@ -45,6 +45,8 @@ from gui.styles import (
 from gui.panels.camera_panel import LeftControlPanel
 from gui.panels.stats_panel      import RightStatsPanel
 from gui.panels.analytics_panel  import AnalyticsPanel
+from gui.panels.logs_panel       import LogsPanel
+from gui.widgets.panel_header import PanelHeaderBar
 from gui.widgets.image_display import MultiChannelDisplay
 from gui.workers.camera_worker import CameraWorker
 from gui.workers.video_worker  import VideoWorker
@@ -58,7 +60,7 @@ log = get_logger(__name__)
 
 
 def _load_config(path=None) -> dict:
-    """Load config.yaml — defaults to the canonical location via utils.paths."""
+    """Load config.yaml - defaults to the canonical location via utils.paths."""
     from utils.paths import CONFIG_PATH
     resolved = Path(path) if path else CONFIG_PATH
     try:
@@ -98,7 +100,7 @@ class HeaderBar(QWidget):
         layout.addWidget(title)
         layout.addStretch()
 
-        # Mode badge — subtle pill
+        # Mode badge - subtle pill
         if self._mode == "mock":
             badge_bg, badge_bdr, badge_tc = "#1A2A1C", "#2C3E2F", "#536550"
             badge_txt = "MOCK MODE"
@@ -194,7 +196,7 @@ class ModelInputPanel(QWidget):
     sees at inference time, with tracking boxes and grade labels overlaid.
 
     This makes it immediately clear to the viewer which spectral channels
-    drive the AI decision — scientifically honest and great for demo purposes.
+    drive the AI decision - scientifically honest and great for demo purposes.
     """
 
     # Band-combo → human-readable description
@@ -220,60 +222,17 @@ class ModelInputPanel(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ── Top accent bar (indigo — AI colour) ──────────────────────
-        accent = QWidget()
-        accent.setFixedHeight(3)
-        accent.setStyleSheet(f"background-color: {ACCENT}; border: none;")
-        root.addWidget(accent)
-
-        # ── Header row ───────────────────────────────────────────────
-        hdr = QWidget()
-        hdr.setFixedHeight(32)
-        hdr.setStyleSheet(
-            f"background-color: {BG_SURFACE}; "
-            f"border-bottom: 1px solid {BORDER}; border: none;"
-        )
-        hdr_layout = QHBoxLayout(hdr)
-        hdr_layout.setContentsMargins(12, 0, 12, 0)
-        hdr_layout.setSpacing(8)
-
-        icon = QLabel("◆")
-        icon.setStyleSheet(f"color: {ACCENT}; font-size: 10px; background: transparent;")
-
-        title_lbl = QLabel("AI MODEL INPUT")
-        title_lbl.setStyleSheet(
-            f"color: {TEXT_1}; font-size: 10px; font-weight: 700; "
-            f"letter-spacing: 1.2px; background: transparent;"
-        )
-
-        sep = QLabel("·")
-        sep.setStyleSheet(f"color: {TEXT_3}; background: transparent;")
-
         band_desc = self._BAND_LABELS.get(self._mode.lower(), self._mode)
-        self._band_lbl = QLabel(band_desc)
-        self._band_lbl.setStyleSheet(
-            f"color: {TEXT_2}; font-size: 10px; background: transparent;"
-        )
-
-        hdr_layout.addWidget(icon)
-        hdr_layout.addWidget(title_lbl)
-        hdr_layout.addWidget(sep)
-        hdr_layout.addWidget(self._band_lbl)
-        hdr_layout.addStretch()
-
         self._count_lbl = QLabel("0 graded")
         self._count_lbl.setStyleSheet(
             f"color: {SUCCESS}; font-size: 10px; font-weight: 600; "
             f"background: transparent;"
         )
-        self._fps_lbl = QLabel("-- FPS")
-        self._fps_lbl.setStyleSheet(
-            f"color: {TEXT_3}; font-size: 10px; background: transparent;"
+        self._header = PanelHeaderBar(
+            "◆", "AI Model Input", band_desc, right=self._count_lbl,
         )
-        hdr_layout.addWidget(self._count_lbl)
-        hdr_layout.addSpacing(12)
-        hdr_layout.addWidget(self._fps_lbl)
-        root.addWidget(hdr)
+        self._band_lbl = self._header.subtitle_label()
+        root.addWidget(self._header)
 
         # ── Image area ───────────────────────────────────────────────
         self._display = QLabel()
@@ -314,7 +273,7 @@ class ModelInputPanel(QWidget):
 
     # ------------------------------------------------------------------
     def update_frame(
-        self, frame: np.ndarray, graded_count: int, fps: float = 0.0,
+        self, frame: np.ndarray, graded_count: int,
     ) -> None:
         """Push an annotated model-input composite to the display."""
         import cv2
@@ -343,7 +302,6 @@ class ModelInputPanel(QWidget):
         )
         self._display.setPixmap(pixmap)
         self._last_display_fps = self._measure_display_fps()
-        self._fps_lbl.setText(f"{self._last_display_fps:.1f} FPS")
         self._count_lbl.setText(f"{graded_count} graded")
         self._has_frame = True
 
@@ -363,15 +321,14 @@ class ModelInputPanel(QWidget):
         self._has_frame = False
         self._disp_times.clear()
         self._last_display_fps = 0.0
-        self._fps_lbl.setText("-- FPS")
         self._count_lbl.setText("0 graded")
         self._draw_placeholder()
 
     def set_mode(self, input_mode: str) -> None:
-        """Update the band-config label in the header — called when a new model is loaded."""
+        """Update the band-config label in the header - called when a new model is loaded."""
         self._mode = input_mode
         band_desc = self._BAND_LABELS.get(input_mode.lower(), input_mode)
-        self._band_lbl.setText(band_desc)
+        self._header.set_subtitle(band_desc)
 
 
 # ── Center panel ──────────────────────────────────────────────────────────────
@@ -402,7 +359,7 @@ class CenterPanel(QWidget):
         self.channel_display = MultiChannelDisplay(self)
         splitter.addWidget(self.channel_display)
 
-        # Bottom: tab widget — AI Model Input | Analytics
+        # Bottom: tab widget - AI Model Input | Analytics | Logs
         from PyQt6.QtWidgets import QTabWidget
         self._tabs = QTabWidget()
         self._tabs.setDocumentMode(True)   # removes the pane border for a cleaner look
@@ -413,9 +370,13 @@ class CenterPanel(QWidget):
         self.model_input_panel = ModelInputPanel(input_mode=input_mode)
         self._tabs.addTab(self.model_input_panel, "◆  AI Model Input")
 
-        # ── Tab 1: Analytics — live PyQtGraph charts ──────────────────
+        # ── Tab 1: Analytics - live PyQtGraph charts ──────────────────
         self.analytics_panel = AnalyticsPanel()
         self._tabs.addTab(self.analytics_panel, "▣  Analytics")
+
+        # ── Tab 2: System Logs ─────────────────────────────────────────
+        self.logs_panel = LogsPanel()
+        self._tabs.addTab(self.logs_panel, "▤  Logs")
 
         splitter.addWidget(self._tabs)
         splitter.setSizes([700, 300])
@@ -428,7 +389,7 @@ class CenterPanel(QWidget):
 # ── Main Window ───────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
-    """Apple Sorting GUI — fully wired demo pipeline."""
+    """Apple Sorting GUI - fully wired demo pipeline."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -449,7 +410,7 @@ class MainWindow(QMainWindow):
         self._log_detected:    bool                        = False   # log Detected Frames (full-res + boxes)
         self._custom_save_path: str                        = ""      # operator-chosen base dir ("" = use config)
         self._grading_recorder: GradingRecorder | None   = None
-        self._size_acc = None   # AppleSizeAccumulator — created in _start_pipeline
+        self._size_acc = None   # AppleSizeAccumulator - created in _start_pipeline
         self._infer_fps: float = 0.0
         self._loading_model_name: str = ""
         self._last_ch1:        np.ndarray | None = None
@@ -482,8 +443,8 @@ class MainWindow(QMainWindow):
 
     def _setup_window(self) -> None:
         self.setWindowTitle("Infield Apple Sorting System")
-        self.setMinimumSize(1360, 760)
-        self.resize(1560, 920)
+        self.setMinimumSize(1640, 760)
+        self.resize(1720, 920)
         self.setStyleSheet(APP_STYLESHEET)
 
     def _build_ui(self) -> None:
@@ -518,6 +479,9 @@ class MainWindow(QMainWindow):
 
         root.addWidget(self._splitter, stretch=1)
 
+        # Left panel is dual-column (~549 px); give center the remaining space.
+        self._splitter.setSizes([549, 900, 256])
+
         status = QStatusBar()
         status.setStyleSheet(
             f"QStatusBar {{ background: {BG_SURFACE}; color: {TEXT_2}; "
@@ -530,6 +494,7 @@ class MainWindow(QMainWindow):
         status.addPermanentWidget(self._lbl_sync)
 
         status.showMessage(f"Ready  ·  Mode: {self._mode.upper()}")
+        log.info("Application started  ·  mode=%s", self._mode)
 
     def _connect_signals(self) -> None:
         self._left.sig_connect_camera.connect(self._on_camera_toggle)
@@ -541,16 +506,17 @@ class MainWindow(QMainWindow):
         self._left.sig_logging_options.connect(self._on_logging_options)
         self._left.sig_save_path_changed.connect(self._on_save_path_changed)
         self._left.sig_save_interval_changed.connect(self._on_save_interval_changed)
-        # Camera hardware controls — forwarded to CameraWorker while streaming
+        self._left.sig_save_resolution_changed.connect(self._on_save_resolution_changed)
+        # Camera hardware controls - forwarded to CameraWorker while streaming
         self._left.sig_exposure_changed.connect(self._on_exposure_changed)
         self._left.sig_fps_changed.connect(self._on_fps_changed)
         self._left.sig_gains_changed.connect(self._on_gains_changed)
-        # White balance controls — Source0 (Color CH1) only
+        # White balance controls - Source0 (Color CH1) only
         self._left.sig_awb_triggered.connect(self._on_awb_triggered)
         self._left.sig_wb_revert.connect(self._on_wb_revert)
-        # Black Level controls — all 3 sources independently
+        # Black Level controls - all 3 sources independently
         self._left.sig_black_level_changed.connect(self._on_black_level_changed)
-        # ROI controls — all 3 sources simultaneously
+        # ROI controls - all 3 sources simultaneously
         self._left.sig_roi_changed.connect(self._on_roi_changed)
         self._left.sig_roi_reset.connect(self._on_roi_reset)
         self._left.sig_roi_preview.connect(self._on_roi_preview)
@@ -582,10 +548,11 @@ class MainWindow(QMainWindow):
             self._logging_enabled = True
             self._left.set_save_mode(True)   # sync button state without emitting signal
             self._right.status_group.set_status("Logger", "idle", "Armed")
+        self._left.set_save_max_dim(int(log_cfg.get("save_max_dim", 0)))
 
     def closeEvent(self, event) -> None:
-        """Guarantee camera disconnect on window close — releases eBUS device lock."""
-        log.info("MainWindow closing — stopping pipeline …")
+        """Guarantee camera disconnect on window close - releases eBUS device lock."""
+        log.info("MainWindow closing - stopping pipeline …")
         self._stop_pipeline()
         event.accept()
 
@@ -731,8 +698,8 @@ class MainWindow(QMainWindow):
             jpeg_quality          = int(log_cfg.get("jpeg_quality", 92)),
             save_detected_crops   = self._log_detected,
             crop_padding_frac     = float(log_cfg.get("crop_padding_frac", 0.20)),
-            crop_max_dim          = int(log_cfg.get("crop_max_dim", 512)),
             raw_frame_stride      = self._left.get_save_interval(),
+            save_max_dim          = self._left.get_save_max_dim(),
             save_raw_full_frames  = self._log_raw,
             max_pending_batches   = int(log_cfg.get("max_pending_batches", 2)),
             max_crops_per_batch   = int(log_cfg.get("max_crops_per_batch", 8)),
@@ -805,7 +772,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(object, object, object, float)
     def _on_frame(self, ch1, ch2, ch3, fps: float) -> None:
-        """Coalesce bursts — always keep latest frame, never flood infer/GUI."""
+        """Coalesce bursts - always keep latest frame, never flood infer/GUI."""
         self._pending_frame = (ch1, ch2, ch3, fps)
         if not self._frame_coalesce_pending:
             self._frame_coalesce_pending = True
@@ -837,7 +804,7 @@ class MainWindow(QMainWindow):
         else:
             self._center.channel_display.update_frames(ch1, ch2, ch3, fps)
 
-        # A newer frame arrived while we were processing — apply it once more.
+        # A newer frame arrived while we were processing - apply it once more.
         if self._pending_frame is not pf:
             self._frame_coalesce_pending = True
             QTimer.singleShot(0, self._apply_pending_frame)
@@ -859,7 +826,7 @@ class MainWindow(QMainWindow):
         self._infer_w.set_grading_recorder(rec)
 
     def _flush_channel_preview(self) -> None:
-        """Timer-driven channel refresh — never blocks camera or inference enqueue."""
+        """Timer-driven channel refresh - never blocks camera or inference enqueue."""
         if self._last_ch1 is None:
             return
         if self._infer_w is not None and self._infer_w.isRunning():
@@ -950,7 +917,7 @@ class MainWindow(QMainWindow):
             self._infer_w.stop()
             self._infer_w = None
 
-        # Stop mock worker — real inference takes over all stats from here
+        # Stop mock worker - real inference takes over all stats from here
         if self._inf_w is not None:
             self._inf_w.stop()
             self._inf_w = None
@@ -1031,7 +998,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(object, list)
     def _on_track_preview(self, thumb: np.ndarray, active: list) -> None:
-        """Coalesced UI refresh — logging already handled on inference thread."""
+        """Coalesced UI refresh - logging already handled on inference thread."""
         self._last_input_frame = thumb
         self._display_active = active
         if not self._preview_ui_pending:
@@ -1047,7 +1014,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(list)
     def _on_graded_batch(self, graded: list) -> None:
-        """Grade commits — always processed immediately, never coalesced."""
+        """Grade commits - always processed immediately, never coalesced."""
         for rec in graded:
             if self._grading_recorder is not None:
                 self._grading_recorder.on_grade_committed(
@@ -1148,7 +1115,7 @@ class MainWindow(QMainWindow):
             # Re-enable loader so user can try another model
             self._left.set_model_loading(False)
         elif "Model loaded" in msg:
-            # Model is in GPU memory and running — update left panel
+            # Model is in GPU memory and running - update left panel
             name = getattr(self, "_loading_model_name", "")
             self._left.set_model_loading(False)
             self._left.set_model_loaded(name)
@@ -1168,19 +1135,19 @@ class MainWindow(QMainWindow):
         elif actual_mode == "serial":
             state, label = "online", "Active (Serial)"
         else:
-            # requested serial but fell back — warn the user
+            # requested serial but fell back - warn the user
             state, label = "warning", "Simulation (no Arduino)"
 
         self._right.status_group.set_status("Sorter", state, label)
 
     @pyqtSlot(bool)
     def _on_logging_toggle(self, enabled: bool) -> None:
-        """Legacy slot — kept for compat; prefer _on_save_mode_changed."""
+        """Legacy slot - kept for compat; prefer _on_save_mode_changed."""
         self._on_save_mode_changed(enabled)
 
     @pyqtSlot(bool)
     def _on_save_mode_changed(self, enabled: bool) -> None:
-        """Save mode toggled — controls whether the GradingRecorder is active."""
+        """Save mode toggled - controls whether the GradingRecorder is active."""
         self._save_mode    = enabled
         self._logging_enabled = enabled   # backward-compat alias
         if enabled:
@@ -1195,7 +1162,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(bool)
     def _on_detect_mode_changed(self, enabled: bool) -> None:
-        """Detect mode toggled — enables on-screen detections and inference."""
+        """Detect mode toggled - enables on-screen detections and inference."""
         self._detect_mode = enabled
         self._wire_infer_logging()
 
@@ -1203,7 +1170,7 @@ class MainWindow(QMainWindow):
     def _on_logging_options(self, raw: bool, detected: bool) -> None:
         """
         User changed Data Logging options in the popup.
-        Updates recorder flags live — no session restart needed.
+        Updates recorder flags live - no session restart needed.
         Detected selection automatically enables inference.
         """
         self._log_raw       = raw
@@ -1239,8 +1206,24 @@ class MainWindow(QMainWindow):
         """
         log.info("Save interval updated: every %d frame(s)", every_n)
         self.statusBar().showMessage(
-            f"Save interval: every {every_n} frame(s) — takes effect on next session start"
+            f"Save interval: every {every_n} frame(s) - takes effect on next session start"
         )
+
+    def _on_save_resolution_changed(self, max_dim: int) -> None:
+        """
+        Operator changed the save resolution in the Data Logging popup.
+        The value is read from the panel at the next session start.
+        """
+        if max_dim <= 0:
+            log.info("Save resolution updated: default (full resolution)")
+            self.statusBar().showMessage(
+                "Save resolution: full sensor / native apple crops - next session"
+            )
+        else:
+            log.info("Save resolution updated: max %d px", max_dim)
+            self.statusBar().showMessage(
+                f"Save resolution: downscale cap {max_dim} px longest side - next session"
+            )
 
     @pyqtSlot(int, int, int)
     def _on_exposure_changed(self, ch1_us: int, ch2_us: int, ch3_us: int) -> None:
@@ -1254,7 +1237,7 @@ class MainWindow(QMainWindow):
                 f"Exposure: applying CH1={ch1_us:,} CH2={ch2_us:,} CH3={ch3_us:,} µs…"
             )
         else:
-            self.statusBar().showMessage("Exposure: camera not connected — connect first")
+            self.statusBar().showMessage("Exposure: camera not connected - connect first")
 
     @pyqtSlot(float)
     def _on_fps_changed(self, fps: float) -> None:
@@ -1269,7 +1252,7 @@ class MainWindow(QMainWindow):
         elif self._is_sim:
             self.statusBar().showMessage("FPS: not applicable in video simulation mode")
         else:
-            self.statusBar().showMessage("Frame rate: camera not connected — connect first")
+            self.statusBar().showMessage("Frame rate: camera not connected - connect first")
 
     @pyqtSlot(float, float, float)
     def _on_gains_changed(self, ch1_db: float, ch2_db: float, ch3_db: float) -> None:
@@ -1281,7 +1264,7 @@ class MainWindow(QMainWindow):
                 f"Gain: applying CH1={ch1_db:.1f} CH2={ch2_db:.1f} CH3={ch3_db:.1f} dB…"
             )
         else:
-            self.statusBar().showMessage("Gain: camera not connected — connect first")
+            self.statusBar().showMessage("Gain: camera not connected - connect first")
 
     @pyqtSlot(float, float, float)
     def _on_gains_readback(self, ch1: float, ch2: float, ch3: float) -> None:
@@ -1291,10 +1274,10 @@ class MainWindow(QMainWindow):
         """
         self._left.update_gains(ch1, ch2, ch3)
         self.statusBar().showMessage(
-            f"Gain confirmed —  "
+            f"Gain confirmed -  "
             f"CH1: {ch1:.1f} dB  |  CH2: {ch2:.1f} dB  |  CH3: {ch3:.1f} dB"
         )
-        log.info("Gain readback — CH1=%.1f CH2=%.1f CH3=%.1f dB", ch1, ch2, ch3)
+        log.info("Gain readback - CH1=%.1f CH2=%.1f CH3=%.1f dB", ch1, ch2, ch3)
 
     @pyqtSlot(int, int, int)
     def _on_exposure_readback(self, ch1: int, ch2: int, ch3: int) -> None:
@@ -1304,10 +1287,10 @@ class MainWindow(QMainWindow):
         """
         self._left.update_exposures(ch1, ch2, ch3)
         self.statusBar().showMessage(
-            f"Exposure confirmed —  "
+            f"Exposure confirmed -  "
             f"CH1: {ch1:,} µs  |  CH2: {ch2:,} µs  |  CH3: {ch3:,} µs"
         )
-        log.info("Exposure readback — CH1=%d CH2=%d CH3=%d µs", ch1, ch2, ch3)
+        log.info("Exposure readback - CH1=%d CH2=%d CH3=%d µs", ch1, ch2, ch3)
 
     @pyqtSlot(float)
     def _on_cam_fps(self, cam_fps: float) -> None:
@@ -1338,7 +1321,7 @@ class MainWindow(QMainWindow):
     def _on_awb_triggered(self) -> None:
         """
         Forward One-Push AWB trigger to CameraWorker.
-        The worker runs trigger_auto_white_balance() (blocking ~0–3 s in its own
+        The worker runs trigger_auto_white_balance() (blocking ~0-3 s in its own
         thread), then emits sig_wb_readback which calls _on_wb_readback here.
         """
         running = self._cam_w is not None and self._cam_w.isRunning()
@@ -1349,7 +1332,7 @@ class MainWindow(QMainWindow):
             self._cam_w.trigger_awb()
         else:
             self.statusBar().showMessage(
-                "White Balance: camera not connected — connect first"
+                "White Balance: camera not connected - connect first"
             )
 
     @pyqtSlot()
@@ -1364,7 +1347,7 @@ class MainWindow(QMainWindow):
             self._cam_w.revert_white_balance()
         else:
             self.statusBar().showMessage(
-                "White Balance: camera not connected — connect first"
+                "White Balance: camera not connected - connect first"
             )
 
     @pyqtSlot(bool, float, float, float)
@@ -1375,19 +1358,19 @@ class MainWindow(QMainWindow):
         Called after AWB calibration completes or Revert finishes.
         Updates the WB ratio display and status bar.
         When the readback follows a Revert, the Revert button is disabled again
-        because _saved_wb has been cleared in camera_interface — no snapshot remains.
+        because _saved_wb has been cleared in camera_interface - no snapshot remains.
         """
         was_revert = self._wb_reverting
         self._wb_reverting = False   # reset flag for next operation
         self._left.update_white_balance(success, r, g, b, revert_done=was_revert)
         if success:
             self.statusBar().showMessage(
-                f"White Balance confirmed — R: {r:.4f}  G: {g:.4f}  B: {b:.4f}"
+                f"White Balance confirmed - R: {r:.4f}  G: {g:.4f}  B: {b:.4f}"
             )
-            log.info("WB readback — R=%.4f G=%.4f B=%.4f", r, g, b)
+            log.info("WB readback - R=%.4f G=%.4f B=%.4f", r, g, b)
         else:
             self.statusBar().showMessage(
-                "White Balance: calibration failed — check connection and try again"
+                "White Balance: calibration failed - check connection and try again"
             )
             log.warning("WB readback: failed")
 
@@ -1406,7 +1389,7 @@ class MainWindow(QMainWindow):
             )
         else:
             self.statusBar().showMessage(
-                "Black Level: camera not connected — connect first"
+                "Black Level: camera not connected - connect first"
             )
 
     @pyqtSlot(float, float, float)
@@ -1419,9 +1402,9 @@ class MainWindow(QMainWindow):
         """
         self._left.update_black_levels(ch1, ch2, ch3)
         self.statusBar().showMessage(
-            f"Black Level confirmed — CH1: {ch1:.1f}  CH2: {ch2:.1f}  CH3: {ch3:.1f} DN"
+            f"Black Level confirmed - CH1: {ch1:.1f}  CH2: {ch2:.1f}  CH3: {ch3:.1f} DN"
         )
-        log.info("Black Level readback — CH1=%.1f CH2=%.1f CH3=%.1f DN", ch1, ch2, ch3)
+        log.info("Black Level readback - CH1=%.1f CH2=%.1f CH3=%.1f DN", ch1, ch2, ch3)
 
     # ── ROI slots ──────────────────────────────────────────────────────────────
 
@@ -1436,11 +1419,11 @@ class MainWindow(QMainWindow):
             pct = round(100 * width * height / (2048 * 1536))
             self.statusBar().showMessage(
                 f"ROI: applying {width}×{height} @ ({offset_x}, {offset_y}) "
-                f"— {pct}% of full frame…"
+                f"- {pct}% of full frame…"
             )
         else:
             self.statusBar().showMessage(
-                "ROI: camera not connected — connect first"
+                "ROI: camera not connected - connect first"
             )
 
     @pyqtSlot()
@@ -1467,12 +1450,12 @@ class MainWindow(QMainWindow):
         pct = round(100 * w * h / (2048 * 1536))
         full = (x == 0 and y == 0 and w == 2048 and h == 1536)
         if full:
-            msg = "ROI confirmed — Full Frame 2048×1536"
+            msg = "ROI confirmed - Full Frame 2048×1536"
         else:
-            msg = (f"ROI confirmed — {w}×{h} px @ ({x}, {y})  "
-                   f"[{pct}% of frame — {(100-pct)}% data saved]")
+            msg = (f"ROI confirmed - {w}×{h} px @ ({x}, {y})  "
+                   f"[{pct}% of frame - {(100-pct)}% data saved]")
         self.statusBar().showMessage(msg)
-        log.info("ROI readback — x=%d y=%d w=%d h=%d (%d%% of frame)", x, y, w, h, pct)
+        log.info("ROI readback - x=%d y=%d w=%d h=%d (%d%% of frame)", x, y, w, h, pct)
         # Update the active ROI reference so future overlay previews map correctly
         # against the new frame content, then clear the preview border.
         self._center.channel_display.set_active_roi(x, y, w, h)
@@ -1484,7 +1467,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         """
         Instantly update the ROI cut-line overlay on the live camera display
-        as the user moves the spinboxes — no Apply click required to see the
+        as the user moves the spinboxes - no Apply click required to see the
         effect on the image.
         """
         self._center.channel_display.set_roi_preview(ox, oy, w, h)

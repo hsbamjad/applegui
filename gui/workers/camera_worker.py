@@ -1,11 +1,11 @@
 """
 gui/workers/camera_worker.py
 =============================
-QThread camera worker — drives the real JAI camera or mock backend.
+QThread camera worker - drives the real JAI camera or mock backend.
 
 Signals:
-  sig_frame(ch1, ch2, ch3, fps)  — new hardware-synchronized frame triplet
-  sig_status(message, is_error)  — connection / error events
+  sig_frame(ch1, ch2, ch3, fps)  - new hardware-synchronized frame triplet
+  sig_status(message, is_error)  - connection / error events
 
 Mode is controlled by config["mode"]:
   "mock" → synthetic frames (works without camera hardware)
@@ -152,7 +152,7 @@ class CameraWorker(QThread):
             if actual > 0:
                 self.sig_exposure_readback.emit(actual, actual, actual)
         else:
-            log.warning("set_exposure ignored — camera not connected")
+            log.warning("set_exposure ignored - camera not connected")
 
     def set_exposures(self, ch1_us: int, ch2_us: int, ch3_us: int) -> None:
         """
@@ -166,7 +166,7 @@ class CameraWorker(QThread):
                 actuals.append(actuals[-1] if actuals else ch1_us)
             self.sig_exposure_readback.emit(actuals[0], actuals[1], actuals[2])
         else:
-            log.warning("set_exposures ignored — camera not connected")
+            log.warning("set_exposures ignored - camera not connected")
 
     def set_fps(self, fps: float) -> None:
         """
@@ -178,14 +178,14 @@ class CameraWorker(QThread):
         if self._camera is not None:
             self._camera.set_fps(fps)
             log.info("CameraWorker: hardware=%.0f FPS, display target=%.0f FPS", fps, fps)
-            # Read back independent exposures — firmware may have clamped them at new FPS
+            # Read back independent exposures - firmware may have clamped them at new FPS
             actuals = self._camera.get_exposures_per_source()
             if actuals and len(actuals) >= 1:
                 while len(actuals) < 3:
                     actuals.append(actuals[-1])
                 self.sig_exposure_readback.emit(actuals[0], actuals[1], actuals[2])
         else:
-            log.warning("set_fps ignored — camera not connected")
+            log.warning("set_fps ignored - camera not connected")
 
     def get_exposure(self) -> int:
         """Read current ExposureTime from firmware. Returns -1 if not connected."""
@@ -203,7 +203,7 @@ class CameraWorker(QThread):
             if actual >= 0:
                 self.sig_gains_readback.emit(actual, actual, actual)
         else:
-            log.warning("set_gain ignored — camera not connected")
+            log.warning("set_gain ignored - camera not connected")
 
     def set_gains(self, ch1_db: float, ch2_db: float, ch3_db: float) -> None:
         """
@@ -218,7 +218,7 @@ class CameraWorker(QThread):
                 actuals.append(actuals[-1] if actuals else ch1_db)
             self.sig_gains_readback.emit(actuals[0], actuals[1], actuals[2])
         else:
-            log.warning("set_gains ignored — camera not connected")
+            log.warning("set_gains ignored - camera not connected")
 
     # ── White Balance controls (Source0 / Color CH1 only) ────────────────────
 
@@ -232,7 +232,7 @@ class CameraWorker(QThread):
             success, r, g, b = self._camera.trigger_auto_white_balance()
             self.sig_wb_readback.emit(success, r, g, b)
         else:
-            log.warning("trigger_awb ignored — camera not connected")
+            log.warning("trigger_awb ignored - camera not connected")
             self.sig_wb_readback.emit(False, 1.0, 1.0, 1.0)
 
     def set_white_balance(self, r: float, g: float, b: float) -> None:
@@ -244,7 +244,7 @@ class CameraWorker(QThread):
             actual = self._camera.set_white_balance_ratios(r, g, b)
             self.sig_wb_readback.emit(True, actual[0], actual[1], actual[2])
         else:
-            log.warning("set_white_balance ignored — camera not connected")
+            log.warning("set_white_balance ignored - camera not connected")
             self.sig_wb_readback.emit(False, r, g, b)
 
     def revert_white_balance(self) -> None:
@@ -256,7 +256,7 @@ class CameraWorker(QThread):
             success, r, g, b = self._camera.revert_white_balance()
             self.sig_wb_readback.emit(success, r, g, b)
         else:
-            log.warning("revert_white_balance ignored — camera not connected")
+            log.warning("revert_white_balance ignored - camera not connected")
             self.sig_wb_readback.emit(False, 1.0, 1.0, 1.0)
 
     # ── Black Level controls (per-source hardware pedestal) ──────────────────
@@ -275,7 +275,7 @@ class CameraWorker(QThread):
                 actuals.append(actuals[-1] if actuals else ch1)
             self.sig_black_level_readback.emit(actuals[0], actuals[1], actuals[2])
         else:
-            log.warning("set_black_levels ignored — camera not connected")
+            log.warning("set_black_levels ignored - camera not connected")
 
     # ── ROI (Region of Interest) controls ───────────────────────────────────
 
@@ -290,7 +290,7 @@ class CameraWorker(QThread):
             self.sig_roi_readback.emit(int(actual[0]), int(actual[1]),
                                        int(actual[2]), int(actual[3]))
         else:
-            log.warning("set_roi ignored — camera not connected")
+            log.warning("set_roi ignored - camera not connected")
 
     def reset_roi(self) -> None:
         """
@@ -302,4 +302,4 @@ class CameraWorker(QThread):
             self.sig_roi_readback.emit(int(actual[0]), int(actual[1]),
                                        int(actual[2]), int(actual[3]))
         else:
-            log.warning("reset_roi ignored — camera not connected")
+            log.warning("reset_roi ignored - camera not connected")

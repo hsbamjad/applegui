@@ -5,7 +5,7 @@ Premium multi-channel image display widget.
 
 Design: Thin 3px colored top-border accent per channel.
         Dark image area. Minimal, clean info footer.
-        No garish colored headers — subtle and professional.
+        No garish colored headers - subtle and professional.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ class ChannelPanel(QWidget):
         self._meta   = CHANNEL_META[idx]
         self._color  = CH_COLORS[idx]
         self._frames = 0
-        # ROI preview overlay — sensor-space rectangle (None = no overlay)
+        # ROI preview overlay - sensor-space rectangle (None = no overlay)
         self._roi_preview: tuple[int, int, int, int] | None = None  # (ox, oy, w, h)
         # Active ROI: the sensor-space region the camera is currently streaming.
         # Defaults to full frame. Updated by set_active_roi() after firmware confirms.
@@ -161,20 +161,20 @@ class ChannelPanel(QWidget):
 
         cx, cy = w // 2, h // 2
 
-        # Barely-visible crosshair — 4% opacity
+        # Barely-visible crosshair - 4% opacity
         pen = QPen(QColor(self._color + "0A"))
         pen.setWidth(1)
         painter.setPen(pen)
         painter.drawLine(cx, 0, cx, h)
         painter.drawLine(0, cy, w, cy)
 
-        # Outer guide circle — 5% opacity
+        # Outer guide circle - 5% opacity
         pen.setColor(QColor(self._color + "0D"))
         painter.setPen(pen)
         r = min(w, h) // 3
         painter.drawEllipse(cx - r, cy - r, 2 * r, 2 * r)
 
-        # NO SIGNAL text — 20% opacity, wide letter spacing
+        # NO SIGNAL text - 20% opacity, wide letter spacing
         font = QFont("Segoe UI Variable", 10)
         font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 5)
         painter.setFont(font)
@@ -380,14 +380,14 @@ class ChannelPanel(QWidget):
 
     def set_active_roi(self, ox: int, oy: int, w: int, h: int) -> None:
         """
-        Update the active ROI — the sensor-space region the camera is currently
+        Update the active ROI - the sensor-space region the camera is currently
         streaming. Called after firmware confirms a new ROI so subsequent overlays
         map against the correct frame content instead of the full 2048x1536 sensor.
         """
         self._active_roi = (ox, oy, w, h)
 
     def clear_roi_preview(self) -> None:
-        """Remove the ROI overlay (applied — no longer previewing)."""
+        """Remove the ROI overlay (applied - no longer previewing)."""
         self._roi_preview = None
 
     def reset(self) -> None:

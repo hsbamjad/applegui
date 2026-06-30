@@ -29,7 +29,7 @@ for p in _DLL_PATHS:
 try:
     import eBUS as eb
 except ImportError as e:
-    print(f"ERROR: Cannot import eBUS — {e}")
+    print(f"ERROR: Cannot import eBUS - {e}")
     sys.exit(1)
 
 print("eBUS imported OK\n")
@@ -101,7 +101,7 @@ for name in candidates:
 # ── Write test ────────────────────────────────────────────────────────────
 print()
 print("=" * 65)
-print("WRITE TEST — try SetValue(30.0) on AcquisitionFrameRate")
+print("WRITE TEST - try SetValue(30.0) on AcquisitionFrameRate")
 print("=" * 65)
 param = nm.GetFloat("AcquisitionFrameRate")
 if param is None:

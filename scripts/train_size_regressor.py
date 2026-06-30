@@ -1,5 +1,5 @@
 """
-scripts/train_size_regressor.py  —  Step 5: ML Regression Training
+scripts/train_size_regressor.py  -  Step 5: ML Regression Training
 ====================================================================
 Michigan State University | Apple GUI | feature/apple-size-ml branch
 

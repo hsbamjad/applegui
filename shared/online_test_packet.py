@@ -513,8 +513,8 @@ def final_grading(
     2. 放松 cull top-K 阈值，避免强 cull evidence 被压成 processing/fresh；
     3. corrected_diameter = median_diameter - 2.3 mm；
     4. corrected_diameter < 50 mm 仍然作为 hard cull rule；
-    5. 50–65 mm 不直接 hard return processing，而是给 processing_score 加尺寸 bonus；
-    6. 65–67 mm 内 processing bonus 线性衰减；
+    5. 50-65 mm 不直接 hard return processing，而是给 processing_score 加尺寸 bonus；
+    6. 65-67 mm 内 processing bonus 线性衰减；
     7. 放宽 processing 判断，减少 processing → fresh；
     8. 收紧 fresh 判断，fresh 必须有足够 clean dominant 证据；
     9. fallback 前增加 defect fallback：有缺陷证据但不够 cull，则判 processing。

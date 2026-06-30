@@ -1,7 +1,7 @@
 """
 scripts/camera_probe_jai.py
 ============================
-JAI Camera Probe — eBUS Python API v6.6.1
+JAI Camera Probe - eBUS Python API v6.6.1
 Simultaneous 3-source acquisition using the official Pleora MultiSource pattern.
 
 Key differences from single-stream approach:
@@ -70,7 +70,7 @@ def get_p(nm, name):
         pass
     return "N/A"
 
-# ── Source class — mirrors official MultiSource.py pattern ───────────────────
+# ── Source class - mirrors official MultiSource.py pattern ───────────────────
 class Source:
     """One physical sensor on the FS-3200T. Each has its own stream + pipeline."""
 
@@ -97,7 +97,7 @@ class Source:
         if result.IsFailure():
             result, self.source_channel = nm.GetIntegerValue("SourceStreamChannel")
         if result.IsFailure():
-            logger.warning(f"  [WARNING] {self.source_name}: could not read SourceIDValue — defaulting to {self.ch_index}")
+            logger.warning(f"  [WARNING] {self.source_name}: could not read SourceIDValue - defaulting to {self.ch_index}")
             self.source_channel = self.ch_index
 
         pf  = get_p(nm, "PixelFormat")
@@ -204,7 +204,7 @@ if device is None:
     sys.exit(1)
 logger.info(f"  [OK] Connected  (GEV: {isinstance(device, eb.PvDeviceGEV)})")
 
-# Negotiate max packet size across the network path (CRITICAL — prevents packet loss)
+# Negotiate max packet size across the network path (CRITICAL - prevents packet loss)
 # Must be called BEFORE opening any streams
 if isinstance(device, eb.PvDeviceGEV):
     r = device.NegotiatePacketSize()
@@ -282,7 +282,7 @@ for src in sources:
     img_data, pf = src.retrieve_one()
     frames[src.source_name]    = (img_data, pf)
 
-# Synchronization check — blockIDs printed per-source above; verify they match
+# Synchronization check - blockIDs printed per-source above; verify they match
 logger.info("  ↑ Verify blockIDs above are identical across all 3 sources")
 
 
@@ -310,7 +310,7 @@ source_results = []
 for ch_idx, src in enumerate(sources):
     img_data, pf = frames[src.source_name]
     if img_data is None:
-        logger.warning(f"  [WARNING] CH{ch_idx+1} ({src.source_name}): no data — skipped")
+        logger.warning(f"  [WARNING] CH{ch_idx+1} ({src.source_name}): no data - skipped")
         continue
 
     fname = OUT_DIR / f"ch{ch_idx+1}.png"
@@ -318,12 +318,12 @@ for ch_idx, src in enumerate(sources):
     if pf == "BayerRG8":
         img_save = cv2.cvtColor(img_data, cv2.COLOR_BayerBG2BGR)
     else:
-        img_save = img_data   # Mono8 NIR — raw, unchanged
+        img_save = img_data   # Mono8 NIR - raw, unchanged
 
     # Raw save (correct pixel values for processing)
     cv2.imwrite(str(fname), img_save)
 
-    # Normalized save (for visual inspection — stretches dark images to full range)
+    # Normalized save (for visual inspection - stretches dark images to full range)
     norm_fname = OUT_DIR / f"ch{ch_idx+1}_norm.png"
     img_norm = cv2.normalize(img_save, None, 0, 255, cv2.NORM_MINMAX)
     cv2.imwrite(str(norm_fname), img_norm)

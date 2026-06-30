@@ -55,7 +55,7 @@ dependencies:
 #   conda env remove -n applegui
 #   conda env create -f environment.yml
 #
-# Shuttle PC only (not in this file — install separately):
+# Shuttle PC only (not in this file - install separately):
 #   - JAI eBUS SDK (GenTL producer .cti file) → jai.com/support-software
 #   - nidaqmx → pip install nidaqmx  (only if using NI-DAQ hardware)
 #

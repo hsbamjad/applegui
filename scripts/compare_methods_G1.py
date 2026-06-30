@@ -179,7 +179,7 @@ fig.patch.set_facecolor(DARK)
 for ax, vals, title in zip(
     axes,
     [all_method_maes, all_method_rmses],
-    ["MAE (mm) — lower is better", "RMSE (mm) — lower is better"]
+    ["MAE (mm) - lower is better", "RMSE (mm) - lower is better"]
 ):
     ax.set_facecolor(PANEL)
     for sp in ax.spines.values(): sp.set_edgecolor("#30363d")
@@ -204,7 +204,7 @@ for ax, vals, title in zip(
                 f"{val:.2f}", ha="center", fontsize=10,
                 color=TEXT, fontweight="bold")
 
-fig.suptitle("G1 — All 4 Diameter Methods Comparison", fontsize=15,
+fig.suptitle("G1 - All 4 Diameter Methods Comparison", fontsize=15,
              fontweight="bold", color=TEXT, y=1.01)
 plt.tight_layout()
 out1 = os.path.join(OUT_DIR, "G1_method_comparison_bars.png")
@@ -234,7 +234,7 @@ ax.set_xticks(x)
 ax.set_xticklabels([f"#{r['apple_idx']}\nL{r['lane']}P{r['pos']}"
                     for r in records], fontsize=8, color=TEXT)
 ax.set_ylabel("Error: Estimated - GT (mm)", fontsize=11, color=TEXT)
-ax.set_title("Per-Apple Error by Method — G1 Session", fontsize=13,
+ax.set_title("Per-Apple Error by Method - G1 Session", fontsize=13,
              fontweight="bold", color=TEXT)
 ax.legend(fontsize=9.5, facecolor=PANEL, edgecolor="#30363d",
           labelcolor=TEXT, loc="upper right", ncol=2)

@@ -8,11 +8,11 @@ __pycache__/
 dist/
 build/
 
-# Conda — environment is reproduced from environment.yml, not committed
+# Conda - environment is reproduced from environment.yml, not committed
 .conda/
 conda-meta/
 
-# Runtime data — generated during operation, not source code
+# Runtime data - generated during operation, not source code
 data/logs/
 data/images/
 data/sessions/
@@ -22,7 +22,7 @@ data/frame_features/
 data/method_comparison/
 data/ml_results/
 
-# AI model weights — too large for Git, share via separate link
+# AI model weights - too large for Git, share via separate link
 models/*.pt
 models/*.pth
 models/*.onnx
@@ -52,10 +52,10 @@ desktop.ini
 *.bak
 output.txt
 
-# Hardware docs — large binary files (share separately)
+# Hardware docs - large binary files (share separately)
 docs/hardware/*.png
 docs/hardware/*.jpg
 
-# Reference PDFs — large binaries (share separately)
+# Reference PDFs - large binaries (share separately)
 docs/*.pdf
 scripts/api_doc.txt

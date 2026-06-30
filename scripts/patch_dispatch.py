@@ -23,7 +23,7 @@ old = (
 new = (
     "            # Dispatch gate: Fresh/Processing need minimum confidence to avoid\n"
     "            # false actuations. Cull is ALWAYS dispatched regardless of confidence\n"
-    "            # because Cull = safe default — if sorter stays in last position (Fresh/\n"
+    "            # because Cull = safe default - if sorter stays in last position (Fresh/\n"
     "            # Processing), the Cull apple ends up in the wrong bin.\n"
     "            _MIN_DISPATCH_CONF = 0.28\n"
     "            if self._sorter and self._sorting_enabled:\n"

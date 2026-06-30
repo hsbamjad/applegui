@@ -1,5 +1,5 @@
 """
-scripts/visualize_session.py  —  Apple Size Estimation  |  Tech-HUD Visualization
+scripts/visualize_session.py  -  Apple Size Estimation  |  Tech-HUD Visualization
 ===================================================================================
 Michigan State University | Apple GUI | feature/apple-size-ml branch
 
@@ -11,8 +11,8 @@ Professional animated visualization showing HOW the sizing pipeline works:
   • Fitted ellipse drawn over the apple (shows the ellipse fitting step)
   • Diameter measurement line that rotates (shows max-width scan)
   • Crosshair through apple centroid
-  • Convergence sparkline — tiny live graph showing estimate stabilising
-  • Circular progress arc — how many frames seen vs total
+  • Convergence sparkline - tiny live graph showing estimate stabilising
+  • Circular progress arc - how many frames seen vs total
 
   FRAME-LEVEL EFFECTS:
   • Vertical scan sweep line moving across frame (lab scanner aesthetic)
@@ -20,10 +20,10 @@ Professional animated visualization showing HOW the sizing pipeline works:
   • Fixed right-side HUD panel with session stats
 
   DATA SHOWN PER APPLE:
-  • LIVE  — running quality-weighted area×scale estimate (updates every frame)
-  • ML    — trained Ridge model prediction (computed from all frames upfront)
-  • GT    — caliper ground truth
-  • Error — colour-coded (green ≤3mm, orange ≤5mm, red >5mm)
+  • LIVE  - running quality-weighted area×scale estimate (updates every frame)
+  • ML    - trained Ridge model prediction (computed from all frames upfront)
+  • GT    - caliper ground truth
+  • Error - colour-coded (green ≤3mm, orange ≤5mm, red >5mm)
 
 Usage (shuttle):
     python scripts/visualize_session.py ^
@@ -33,7 +33,7 @@ Usage (shuttle):
         --model "D:\\HA\\apple_gui\\models\\size_model.pkl" ^
         --out "D:\\HA\\apple_gui\\data\\viz"
 
-Quick test — first 600 frames only:
+Quick test - first 600 frames only:
     ... --max_frames 600
 """
 
@@ -81,7 +81,7 @@ SPARKLINE_LEN = 100      # frames of history in convergence graph
 ALPHA_TRIM    = 0.10
 CENTRAL_FRAC  = 0.60
 
-# Neon palette (BGR)  — one per apple (18 apples max)
+# Neon palette (BGR)  - one per apple (18 apples max)
 PALETTE = [
     (  0, 255, 180),  # neon green
     (255, 140,   0),  # neon orange
@@ -166,7 +166,7 @@ def draw_scanline_mask(img, mask_uint8, x1, y1, color, alpha=0.35, stride=4):
     img[y1:y1+roi.shape[0], x1:x1+roi.shape[1]] = roi
 
 def draw_sparkline(img, values, x, y, w, h, color, bg=BG_PANEL):
-    """Mini convergence graph — shows estimate stabilising over time."""
+    """Mini convergence graph - shows estimate stabilising over time."""
     cv2.rectangle(img, (x-1,y-1), (x+w+1,y+h+1), (50,60,80), 1)
     cv2.rectangle(img, (x,y), (x+w,y+h), bg, -1)
     if len(values) < 2:
@@ -537,9 +537,9 @@ def main():
             if ep and bw>4 and bh>4:
                 # a_px / b_px are already in full-resolution pixels
                 # (cv2.fitEllipse on the cropped mask returns pixel coords
-                # at the same scale as the original image — the crop just
+                # at the same scale as the original image - the crop just
                 # shifts the coordinate origin, does NOT rescale pixels).
-                # Do NOT multiply by bw/mask_w — that incorrectly shrinks
+                # Do NOT multiply by bw/mask_w - that incorrectly shrinks
                 # the ellipse because mask_w = bbox_w + 2*MASK_PAD (60px).
                 r_a   = max(1, int(ep["a_px"]))
                 r_b   = max(1, int(ep["b_px"]))
@@ -549,7 +549,7 @@ def main():
                             r_ang, 0, 360,
                             tuple(int(v*0.60) for v in color),
                             1, cv2.LINE_AA)
-                # Major axis endpoints — this is the REAL measurement axis
+                # Major axis endpoints - this is the REAL measurement axis
                 # (angle in OpenCV ellipse = angle of major axis from x-axis)
                 draw_diameter_line(bgr, cx, cy,
                                    r_a * 2,       # full major axis length

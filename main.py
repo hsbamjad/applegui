@@ -1,5 +1,5 @@
 """
-Infield Apple Sorting System — Entry Point
+Infield Apple Sorting System - Entry Point
 ==========================================
 Michigan State University | ASABE AIM26 | 2026
 

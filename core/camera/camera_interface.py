@@ -1,7 +1,7 @@
 """
 core/camera/camera_interface.py
 ================================
-Camera interface — mock and real JAI eBUS backends.
+Camera interface - mock and real JAI eBUS backends.
 
 Supports two backends controlled by config["camera"]["mode"]:
   "mock" → MockCamera  (synthetic frames, works on any machine)
@@ -9,9 +9,9 @@ Supports two backends controlled by config["camera"]["mode"]:
 
 Frame triplet format:
   Each acquisition returns a FrameTriplet of 3 NumPy arrays:
-    ch1: np.ndarray shape (1536, 2048, 3) dtype uint8  — Color BGR (BayerBG2BGR)
-    ch2: np.ndarray shape (1536, 2048)    dtype uint8  — NIR1 ~800nm (Mono8, normalized)
-    ch3: np.ndarray shape (1536, 2048)    dtype uint8  — NIR2 ~900nm (Mono8, normalized)
+    ch1: np.ndarray shape (1536, 2048, 3) dtype uint8  - Color BGR (BayerBG2BGR)
+    ch2: np.ndarray shape (1536, 2048)    dtype uint8  - NIR1 ~800nm (Mono8, normalized)
+    ch3: np.ndarray shape (1536, 2048)    dtype uint8  - NIR2 ~900nm (Mono8, normalized)
 
 Threading:
   CameraInterface is NOT thread-safe on its own.
@@ -127,7 +127,7 @@ class _JAISource:
         try:
             import eBUS as eb
         except ImportError:
-            log.error("eBUS SDK not found — cannot open JAI source")
+            log.error("eBUS SDK not found - cannot open JAI source")
             return False
 
         nm    = self._device.GetParameters()
@@ -245,12 +245,12 @@ class JAICamera:
             e_str = str(e)
             if "DLL load failed" in e_str or "specified procedure" in e_str:
                 log.error(
-                    "eBUS DLL mismatch — wheel version doesn't match installed JAI SDK DLLs.\n"
+                    "eBUS DLL mismatch - wheel version doesn't match installed JAI SDK DLLs.\n"
                     "  Fix: install the matching eBUS SDK runtime (same version as the .whl).\n"
                     "  Error: %s", e_str
                 )
             else:
-                log.error("eBUS SDK not installed — cannot connect to JAI camera. Error: %s", e_str)
+                log.error("eBUS SDK not installed - cannot connect to JAI camera. Error: %s", e_str)
             return False
 
         jai_cfg    = self._cfg.get("jai", {})
@@ -290,7 +290,7 @@ class JAICamera:
                 iface = sys_obj.GetInterface(i)
                 for j in range(iface.GetDeviceCount()):
                     connection_id = iface.GetDeviceInfo(j).GetConnectionID()
-                    log.info("  → No MAC/IP match — using first found device")
+                    log.info("  → No MAC/IP match - using first found device")
                     break
                 if connection_id:
                     break
@@ -307,7 +307,7 @@ class JAICamera:
             return False
 
         if self._device is None:
-            log.error("JAICamera: connect failed: %s — is eBUS Player open?",
+            log.error("JAICamera: connect failed: %s - is eBUS Player open?",
                       result.GetCodeString())
             return False
         log.info("JAICamera: connected (GEV: %s)", isinstance(self._device, eb.PvDeviceGEV))
@@ -358,14 +358,14 @@ class JAICamera:
                 if r.IsOK():
                     src.pipeline.ReleaseBuffer(buf)
                     counts[src._source_name] += 1
-        log.info("JAICamera: drained %s — ready", counts)
+        log.info("JAICamera: drained %s - ready", counts)
 
         self._running = True
         self._grab_thread = threading.Thread(
             target=self._grab_loop, daemon=True, name="JAI-grab"
         )
         self._grab_thread.start()
-        log.info("JAICamera: background grab thread started — ready")
+        log.info("JAICamera: background grab thread started - ready")
         return True
 
     # ── Background grab loop ──────────────────────────────────────────────────
@@ -402,10 +402,10 @@ class JAICamera:
 
                 # ── Block ID validation ────────────────────────────────────
                 # All 3 bids must match. After ROI restart, sources may be
-                # 1-2 frames out of phase — advance lagging ones to recover.
+                # 1-2 frames out of phase - advance lagging ones to recover.
                 if not (bids[0] == bids[1] == bids[2]):
                     max_bid  = max(bids)
-                    log.debug("Sync mismatch bids=%s — re-syncing to bid=%d",
+                    log.debug("Sync mismatch bids=%s - re-syncing to bid=%d",
                               bids, max_bid)
                     for i, src in enumerate(self._sources):
                         attempts = 0
@@ -421,11 +421,11 @@ class JAICamera:
                             break
 
                     if not ok or not (bids[0] == bids[1] == bids[2]):
-                        # Could not recover — skip and try next iteration
-                        log.debug("Sync recovery incomplete bids=%s — skipping", bids)
+                        # Could not recover - skip and try next iteration
+                        log.debug("Sync recovery incomplete bids=%s - skipping", bids)
                         continue
 
-                    log.debug("Sync recovered — bids=%s", bids)
+                    log.debug("Sync recovered - bids=%s", bids)
 
                 block_id = bids[0]
 
@@ -451,8 +451,8 @@ class JAICamera:
         """
         Convert raw sensor buffers into a FrameTriplet.
 
-        NO downsampling — frames are returned at full sensor resolution (2048×1536).
-        NO normalization — NIR pixel values are exactly what the sensor captured.
+        NO downsampling - frames are returned at full sensor resolution (2048×1536).
+        NO normalization - NIR pixel values are exactly what the sensor captured.
         The display widget (image_display.py) handles scaling via Qt SmoothTransformation.
 
         CH1: Bayer demosaic only (BayerRG8 → BGR). Full res.
@@ -463,19 +463,19 @@ class JAICamera:
         raw1, _,   bid1 = raws[1]
         raw2, _,   bid2 = raws[2]
 
-        # CH1 — Bayer demosaic at full resolution, no resize
+        # CH1 - Bayer demosaic at full resolution, no resize
         if pf0 == "BayerRG8":
             ch1 = cv2.cvtColor(raw0, cv2.COLOR_BayerBG2BGR)
         else:
             ch1 = raw0
 
-        # CH2, CH3 — raw sensor values, untouched
+        # CH2, CH3 - raw sensor values, untouched
         ch2 = raw1
         ch3 = raw2
 
         if self._frame_idx % 90 == 0:
             log.info(
-                "NIR raw stats — CH2: min=%d max=%d  |  CH3: min=%d max=%d",
+                "NIR raw stats - CH2: min=%d max=%d  |  CH3: min=%d max=%d",
                 int(ch2.min()), int(ch2.max()),
                 int(ch3.min()), int(ch3.max()),
             )
@@ -497,7 +497,7 @@ class JAICamera:
     def grab(self) -> Optional[FrameTriplet]:
         """
         Non-blocking: return the latest frame from the background grab thread.
-        Never blocks on the camera — always returns immediately.
+        Never blocks on the camera - always returns immediately.
         """
         if not self._running:
             return None
@@ -669,15 +669,15 @@ class JAICamera:
 
         Changing FPS has one important side-effect:
           Max allowed exposure shrinks: max_exp_us = 1,000,000 / fps
-          (firmware enforces this — any existing exposure above the new limit
+          (firmware enforces this - any existing exposure above the new limit
            will be silently clamped by the camera).
 
-        The FS-3200T supports 1–107 FPS at full 2048×1536 resolution.
+        The FS-3200T supports 1-107 FPS at full 2048×1536 resolution.
         Lower FPS → more light per frame → brighter NIR. Useful in dark conditions.
         Higher FPS → faster throughput → shorter max exposure.
 
         Args:
-            fps: Desired frame rate in frames per second. Range: 1–107.
+            fps: Desired frame rate in frames per second. Range: 1-107.
 
         Returns:
             True on success, False on failure.
@@ -688,7 +688,7 @@ class JAICamera:
         try:
             nm    = self._device.GetParameters()
             # Some firmware versions require this enable flag before FPS can be written.
-            # Returns None if the parameter doesn't exist (e.g. Shuttle PC unit) — safe to skip.
+            # Returns None if the parameter doesn't exist (e.g. Shuttle PC unit) - safe to skip.
             enable = nm.GetBoolean("AcquisitionFrameRateEnable")
             if enable:
                 enable.SetValue(True)
@@ -708,12 +708,12 @@ class JAICamera:
                 clamped = float(max(float(min_fps), min(float(max_fps), fps)))
                 if abs(clamped - fps) > 0.01:
                     log.warning(
-                        "set_fps: %.1f FPS outside camera range [%.2f, %.2f] — clamping to %.2f",
+                        "set_fps: %.1f FPS outside camera range [%.2f, %.2f] - clamping to %.2f",
                         fps, float(min_fps), float(max_fps), clamped,
                     )
                 fps = clamped
             except Exception as ce:
-                log.debug("set_fps: could not read min/max — %s", ce)
+                log.debug("set_fps: could not read min/max - %s", ce)
 
             r = param.SetValue(fps)
             if r.IsOK():
@@ -736,7 +736,7 @@ class JAICamera:
         Core gain-writing loop shared by set_gain() and set_gain_per_source().
 
         gains_per_source[i] is written to self._sources[i].
-        Only writes to '*All' GainSelector entries — never Red/Green/Blue which
+        Only writes to '*All' GainSelector entries - never Red/Green/Blue which
         would destroy white balance on the color channel.
         Returns list of actual readback values (same length as self._sources).
         """
@@ -800,7 +800,7 @@ class JAICamera:
                               src._source_name, sel, gain_db, actual)
                     wrote = True
                 else:
-                    log.warning("Gain %s [%s]: rejected %.1f dB — %s",
+                    log.warning("Gain %s [%s]: rejected %.1f dB - %s",
                                 src._source_name, sel, gain_db, r.GetCodeString())
 
             if not wrote:
@@ -1067,7 +1067,7 @@ class JAICamera:
         try:
             import eBUS as eb
 
-            # 1. Save current ratios as revert target — only on the FIRST AWB run.
+            # 1. Save current ratios as revert target - only on the FIRST AWB run.
             # Subsequent AWB clicks must NOT overwrite this snapshot; Revert should
             # always return to the state before *any* AWB was applied this session.
             if self._saved_wb is None:
@@ -1090,7 +1090,7 @@ class JAICamera:
                 log.error("AWB: BalanceWhiteAuto.SetValue('Once') failed: %s",
                           r_set.GetCodeString())
                 return (False, 1.0, 1.0, 1.0)
-            log.info("AWB: BalanceWhiteAuto = Once — calibrating…")
+            log.info("AWB: BalanceWhiteAuto = Once - calibrating…")
 
             # 3. Poll until firmware reverts flag to 'Off' (max 3 s)
             deadline = time.time() + 3.0
@@ -1133,7 +1133,7 @@ class JAICamera:
         Returns (success, r, g, b). Fails gracefully if no save point exists.
         """
         if self._saved_wb is None:
-            log.warning("revert_white_balance: no saved WB target — AWB not yet triggered")
+            log.warning("revert_white_balance: no saved WB target - AWB not yet triggered")
             return (False, 1.0, 1.0, 1.0)
         r, g, b = self._saved_wb
         log.info("AWB revert: restoring R=%.4f G=%.4f B=%.4f", r, g, b)
@@ -1167,7 +1167,7 @@ class JAICamera:
             stack = eb.PvGenStateStack(nm)
             stack.SetEnumValue("SourceSelector", src._source_name)
 
-            # Set BlackLevelSelector — try 'All' first, then enumerate to find best entry
+            # Set BlackLevelSelector - try 'All' first, then enumerate to find best entry
             bls = nm.GetEnum("BlackLevelSelector")
             if bls:
                 # Try 'All' directly
@@ -1321,7 +1321,7 @@ class JAICamera:
                         pass
             return result
         except Exception as e:
-            log.warning("get_roi_limits exception: %s — using defaults", e)
+            log.warning("get_roi_limits exception: %s - using defaults", e)
             return defaults
 
     def set_roi(
@@ -1332,7 +1332,7 @@ class JAICamera:
 
         IMPORTANT: Width/Height/OffsetX/OffsetY are locked while streaming.
         We must stop acquisition on all sources, write the registers, then
-        restart acquisition. This causes a ~0.5s frame gap — acceptable for
+        restart acquisition. This causes a ~0.5s frame gap - acceptable for
         a deliberate calibration action.
 
         Safe write order per source:
@@ -1403,7 +1403,7 @@ class JAICamera:
                 p_h  = nm.GetInteger("Height")
 
                 if p_ox and p_oy and p_w and p_h:
-                    # GenICam SFNC write order — CRITICAL:
+                    # GenICam SFNC write order - CRITICAL:
                     # Constraint: OffsetX + Width  <= MaxWidth  (2048)
                     #             OffsetY + Height <= MaxHeight (1536)
                     #
@@ -1451,13 +1451,13 @@ class JAICamera:
             # each source so the grab loop begins with all sources at the
             # same frame number, avoiding block ID divergence.
             log.info("ROI: post-restart stabilisation drain …")
-            time.sleep(0.05)   # 50 ms — let all sources begin transmitting
+            time.sleep(0.05)   # 50 ms - let all sources begin transmitting
             for _ in range(5):
                 for src in self._sources:
                     r, buf, op = src.pipeline.RetrieveNextBuffer(100)
                     if r.IsOK():
                         src.pipeline.ReleaseBuffer(buf)
-            log.info("ROI: pipeline stabilised — resuming grab")
+            log.info("ROI: pipeline stabilised - resuming grab")
 
             # ── Step 4: Read back actual values from Source0 ────────────────
             actual = self.get_roi()
@@ -1532,7 +1532,7 @@ class JAICamera:
 
 class CameraInterface:
     """
-    Unified camera interface — wraps mock or real JAI camera.
+    Unified camera interface - wraps mock or real JAI camera.
     Backend selected by config["mode"]: "mock" or "jai".
     """
 
@@ -1552,7 +1552,7 @@ class CameraInterface:
                 log.error("JAICamera.connect() raised unexpected error: %s", e)
                 ok = False
             if not ok:
-                log.warning("JAICamera failed — falling back to mock mode")
+                log.warning("JAICamera failed - falling back to mock mode")
                 self._mode    = "mock"
                 self._backend = None
             else:
@@ -1577,7 +1577,7 @@ class CameraInterface:
         return self._mock_frame()
 
     def _mock_frame(self) -> FrameTriplet:
-        """Animated apple blob moving across frame — informative mock for development."""
+        """Animated apple blob moving across frame - informative mock for development."""
         H, W = 480, 640    # display-sized mock (no need to generate 2048×1536 of noise)
         fps  = self._cfg.get("mock", {}).get("fps", 30)
 
@@ -1604,10 +1604,10 @@ class CameraInterface:
         b_ch = np.clip(bg1.astype(np.float32) + inside * 40  + glow * 50,  0, 255).astype(np.uint8)
         ch1  = np.stack([b_ch, g_ch, r_ch], axis=2)   # BGR
 
-        # CH2: NIR1 — diffuse glow (internal structure)
+        # CH2: NIR1 - diffuse glow (internal structure)
         ch2 = np.clip(bg2.astype(np.float32) + inside * 110 + glow * 160, 0, 255).astype(np.uint8)
 
-        # CH3: NIR2 — dimmer, subtle contrast (water content)
+        # CH3: NIR2 - dimmer, subtle contrast (water content)
         ch3 = np.clip(bg3.astype(np.float32) + inside * 80  + glow * 120, 0, 255).astype(np.uint8)
 
         self._frame_idx += 1
@@ -1630,35 +1630,35 @@ class CameraInterface:
         """Delegate to JAICamera.set_exposure(). No-op in mock mode."""
         if self._mode == "jai" and self._backend:
             return self._backend.set_exposure(exposure_us)
-        log.debug("set_exposure: mock mode — ignored")
+        log.debug("set_exposure: mock mode - ignored")
         return exposure_us
 
     def set_exposures_per_source(self, exposures: list[int]) -> list[int]:
         """Delegate to JAICamera.set_exposures_per_source(). No-op in mock mode."""
         if self._mode == "jai" and self._backend:
             return self._backend.set_exposures_per_source(exposures)
-        log.debug("set_exposures_per_source: mock mode — ignored")
+        log.debug("set_exposures_per_source: mock mode - ignored")
         return exposures
 
     def set_fps(self, fps: float) -> bool:
         """Delegate to JAICamera.set_fps(). No-op in mock mode."""
         if self._mode == "jai" and self._backend:
             return self._backend.set_fps(fps)
-        log.debug("set_fps: mock mode — ignored")
+        log.debug("set_fps: mock mode - ignored")
         return True
 
     def set_gain(self, gain_db: float) -> float:
         """Delegate to JAICamera.set_gain(). Returns actual readback. No-op in mock mode."""
         if self._mode == "jai" and self._backend:
             return self._backend.set_gain(gain_db)
-        log.debug("set_gain: mock mode — ignored")
+        log.debug("set_gain: mock mode - ignored")
         return gain_db
 
     def set_gain_per_source(self, gains: list[float]) -> list[float]:
         """Delegate to JAICamera.set_gain_per_source(). No-op in mock mode."""
         if self._mode == "jai" and self._backend:
             return self._backend.set_gain_per_source(gains)
-        log.debug("set_gain_per_source: mock mode — ignored")
+        log.debug("set_gain_per_source: mock mode - ignored")
         return gains
 
     def get_exposure(self) -> int:
@@ -1689,28 +1689,28 @@ class CameraInterface:
         """Write R/G/B WB ratios to Source0 GenICam registers. No-op in mock mode."""
         if self._mode == "jai" and self._backend:
             return self._backend.set_white_balance_ratios(r, g, b)
-        log.debug("set_white_balance_ratios: mock mode — ignored")
+        log.debug("set_white_balance_ratios: mock mode - ignored")
         return (r, g, b)
 
     def trigger_auto_white_balance(self) -> tuple:
         """Trigger One-Push AWB on Source0. Returns (success, r, g, b). No-op in mock mode."""
         if self._mode == "jai" and self._backend:
             return self._backend.trigger_auto_white_balance()
-        log.debug("trigger_auto_white_balance: mock mode — no-op")
+        log.debug("trigger_auto_white_balance: mock mode - no-op")
         return (False, 1.0, 1.0, 1.0)
 
     def revert_white_balance(self) -> tuple:
         """Restore pre-AWB WB ratios on Source0. Returns (success, r, g, b). No-op in mock mode."""
         if self._mode == "jai" and self._backend:
             return self._backend.revert_white_balance()
-        log.debug("revert_white_balance: mock mode — no-op")
+        log.debug("revert_white_balance: mock mode - no-op")
         return (False, 1.0, 1.0, 1.0)
 
     def set_black_levels_per_source(self, levels: list[float]) -> list[float]:
         """Write BlackLevel (DN) to all 3 sources independently. No-op in mock mode."""
         if self._mode == "jai" and self._backend:
             return self._backend.set_black_levels_per_source(levels)
-        log.debug("set_black_levels_per_source: mock mode — ignored")
+        log.debug("set_black_levels_per_source: mock mode - ignored")
         return levels
 
     def get_black_levels_per_source(self) -> list[float]:
@@ -1733,7 +1733,7 @@ class CameraInterface:
         """Apply ROI to all sources. Returns (actual_x, actual_y, actual_w, actual_h)."""
         if self._mode == "jai" and self._backend:
             return self._backend.set_roi(offset_x, offset_y, width, height)
-        log.debug("set_roi: mock mode — no-op")
+        log.debug("set_roi: mock mode - no-op")
         return (offset_x, offset_y, width, height)
 
     def get_roi(self) -> tuple:
@@ -1746,7 +1746,7 @@ class CameraInterface:
         """Reset ROI to full frame. Returns (0, 0, max_w, max_h)."""
         if self._mode == "jai" and self._backend:
             return self._backend.reset_roi()
-        log.debug("reset_roi: mock mode — no-op")
+        log.debug("reset_roi: mock mode - no-op")
         return (0, 0, 2048, 1536)
 
     def grab_fps(self) -> float:

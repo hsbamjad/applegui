@@ -27,7 +27,7 @@ Offline reference
 extract_frames.py uses:
   - masks.xy polygon in original image coords (2048×1536)
   - cv2.convexHull → hull_crop  (bbox + 4 px padding)
-  - all_diameters(hull_crop, angle_step=5) — 36 rotations
+  - all_diameters(hull_crop, angle_step=5) - 36 rotations
   - quality = axis_ratio × completeness
 
 This module matches that exactly, using angle_step=10 (18 rotations)
@@ -55,7 +55,7 @@ logger = get_logger(__name__)
 
 def _compute_hull_diameters(hull_crop: np.ndarray, angle_step: int) -> dict:
     """
-    High-quality hull diameter computation — runs in background thread.
+    High-quality hull diameter computation - runs in background thread.
 
     angle_step=10 → 18 rotations (vs 2 in old approach, 36 in offline pipeline).
     On a 200×200 px crop: ~1ms.  Matches offline accuracy within ~0.5mm.
@@ -80,7 +80,7 @@ class AppleSizeAccumulator:
     min_frames     : minimum frames required to attempt sizing (default 4)
     bg_angle_step  : angle resolution for background max_width computation.
                      10 = 18 rotations (default, offline-quality speed/accuracy).
-                     5  = 36 rotations (exactly offline — slightly slower).
+                     5  = 36 rotations (exactly offline - slightly slower).
     """
 
     def __init__(
@@ -99,7 +99,7 @@ class AppleSizeAccumulator:
         self._model:        object = None   # sklearn Pipeline (scaler + Ridge)
         self._feature_cols: list[str] = []
 
-        # Thread pool — 2 workers handle hull diameter computation in parallel
+        # Thread pool - 2 workers handle hull diameter computation in parallel
         self._pool = ThreadPoolExecutor(
             max_workers=2,
             thread_name_prefix="sizing",
@@ -111,7 +111,7 @@ class AppleSizeAccumulator:
 
     def _load_model(self, path: Path) -> None:
         if not path.exists():
-            logger.warning("Sizing model not found at %s — sizing disabled", path)
+            logger.warning("Sizing model not found at %s - sizing disabled", path)
             return
         try:
             with open(path, "rb") as f:
@@ -136,7 +136,7 @@ class AppleSizeAccumulator:
 
     def update(self, yolo_result, active_tracks: list) -> None:
         """
-        Fast per-frame update — runs on the inference thread.
+        Fast per-frame update - runs on the inference thread.
 
         For each visible tracked apple:
           1. Computes convex hull + fitEllipse + quality  (~0.1ms)
@@ -155,7 +155,7 @@ class AppleSizeAccumulator:
         track_ids  = boxes.id.cpu().numpy().astype(int)
         tid_to_idx = {int(tid): i for i, tid in enumerate(track_ids)}
 
-        # masks.xy — polygon in ORIGINAL image coordinates (e.g. 2048×1536).
+        # masks.xy - polygon in ORIGINAL image coordinates (e.g. 2048×1536).
         # Same coordinate space as extract_frames.py (retina_masks=True).
         polys      = yolo_result.masks.xy
         boxes_xyxy = boxes.xyxy.cpu().numpy()
@@ -244,13 +244,13 @@ class AppleSizeAccumulator:
             # ── Submit slow diameter computation to background thread ───────────
             future = self._pool.submit(
                 _compute_hull_diameters,
-                hull_crop,          # small crop (~200×200) — thread-safe copy
+                hull_crop,          # small crop (~200×200) - thread-safe copy
                 self._bg_angle_step,
             )
 
             self._tracks.setdefault(tid, []).append((partial_meas, future))
 
-    # ── Commit (apple exits — MAIN THREAD) ────────────────────────────────────
+    # ── Commit (apple exits - MAIN THREAD) ────────────────────────────────────
 
     def commit(self, track_id: int, lane: int = 0) -> Optional[float]:
         """
@@ -276,7 +276,7 @@ class AppleSizeAccumulator:
 
         if len(stored) < self._min_frames:
             logger.debug(
-                "Track %d: only %d frames (need %d) — sizing skipped",
+                "Track %d: only %d frames (need %d) - sizing skipped",
                 track_id, len(stored), self._min_frames,
             )
             return None
@@ -294,7 +294,7 @@ class AppleSizeAccumulator:
                     "d_area": diams["d_area"],
                 }
             except Exception as exc:
-                logger.warning("Hull diameters future failed — using ellipse fallback: %s", exc)
+                logger.warning("Hull diameters future failed - using ellipse fallback: %s", exc)
                 # Fallback: use ell_a as proxy for missing methods
                 meas = {
                     **partial_meas,
@@ -325,7 +325,7 @@ class AppleSizeAccumulator:
 
         features = fuse_apple(apple)
         if features is None:
-            logger.debug("Track %d: fuse_apple returned None — sizing skipped", track_id)
+            logger.debug("Track %d: fuse_apple returned None - sizing skipped", track_id)
             return None
 
         # ── Feature vector in training order ──────────────────────────────────
@@ -362,7 +362,7 @@ class AppleSizeAccumulator:
 
     def clear(self) -> None:
         """
-        Reset all state — call when pipeline stops.
+        Reset all state - call when pipeline stops.
         Cancels pending background futures and shuts down the thread pool,
         then creates a fresh pool ready for the next session.
         """
@@ -372,7 +372,7 @@ class AppleSizeAccumulator:
         self._tracks.clear()
         self._committed.clear()
 
-        # Shut down pool (don't wait for running tasks — they'll finish quickly)
+        # Shut down pool (don't wait for running tasks - they'll finish quickly)
         self._pool.shutdown(wait=False)
 
         # Fresh pool for next session

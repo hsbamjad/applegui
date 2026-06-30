@@ -1,12 +1,12 @@
 """
 gui/panels/analytics_panel.py
 ==============================
-Analytics tab — two live PyQtGraph charts:
+Analytics tab - two live PyQtGraph charts:
 
-  Left:  Grade Distribution — bar chart
+  Left:  Grade Distribution - bar chart
          Fresh (green) / Processing (amber) / Cull (red) accumulated counts.
 
-  Right: Throughput Over Time — rolling line chart.
+  Right: Throughput Over Time - rolling line chart.
          True apples/min measured from a sliding 60-second event window.
          Every grade event appends time.monotonic(); the 1-Hz sampler counts
          how many timestamps fall within the last 60 s.
@@ -39,6 +39,7 @@ from gui.styles import (
     ACCENT, SUCCESS, WARNING, DANGER,
     TEXT_1, TEXT_2, TEXT_3, BORDER,
 )
+from gui.widgets.panel_header import PanelHeaderBar
 
 # ── Throughput rolling window (seconds = samples at 1 Hz) ─────────────────────
 _WINDOW_S = 60          # keep 60 data-points (≈ 60 s at 1-sample/s)
@@ -243,7 +244,7 @@ class GradeBarChart(QWidget):
             layout.addLayout(row)
             self._counts_labels[grade] = cnt
 
-        warn = QLabel("pyqtgraph not installed — chart unavailable")
+        warn = QLabel("pyqtgraph not installed - chart unavailable")
         warn.setAlignment(Qt.AlignmentFlag.AlignCenter)
         warn.setStyleSheet(f"color: {TEXT_3}; font-size: 10px; background: transparent;")
         layout.addWidget(warn)
@@ -285,7 +286,7 @@ class ThroughputLineChart(QWidget):
         time.monotonic() to a deque of timestamps.
       - A 1-Hz QTimer fires _sample_tick(), which counts timestamps
         that fall within the last 60 seconds.  That count IS the
-        apples/min value — no conveyor-speed spinner involved.
+        apples/min value - no conveyor-speed spinner involved.
       - The 60-point history deque stores one sample per second,
         giving a full 60-second view of the rate over time.
       - sig_throughput_updated(float) is emitted each tick so other
@@ -296,7 +297,7 @@ class ThroughputLineChart(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        # Timestamps of grade events — maxlen keeps only last ~5 min
+        # Timestamps of grade events - maxlen keeps only last ~5 min
         # of events so old ones are auto-dropped
         self._grade_times: deque[float] = deque(maxlen=3600)
         # Rolling history: one APM sample per second, 60 slots
@@ -316,7 +317,7 @@ class ThroughputLineChart(QWidget):
         # Thin accent bar at top
         top_bar = QWidget()
         top_bar.setFixedHeight(2)
-        top_bar.setStyleSheet(f"background-color: {SUCCESS}60; border: none;")
+        top_bar.setStyleSheet(f"background-color: {ACCENT}60; border: none;")
         root.addWidget(top_bar)
 
         inner = QVBoxLayout()
@@ -424,7 +425,7 @@ class ThroughputLineChart(QWidget):
     # ── Fallback ──────────────────────────────────────────────────────────────
 
     def _build_fallback(self, layout: QVBoxLayout) -> None:
-        warn = QLabel("pyqtgraph not installed — chart unavailable")
+        warn = QLabel("pyqtgraph not installed - chart unavailable")
         warn.setAlignment(Qt.AlignmentFlag.AlignCenter)
         warn.setStyleSheet(f"color: {TEXT_3}; font-size: 10px; background: transparent;")
         layout.addWidget(warn)
@@ -534,7 +535,7 @@ class AnalyticsPanel(QWidget):
     Contains two side-by-side live charts.
 
     Usage in MainWindow:
-        # On each committed grade (no speed arg — measured internally):
+        # On each committed grade (no speed arg - measured internally):
         self._center.analytics_panel.record_grade(grade)
 
         # On pipeline start/stop:
@@ -547,22 +548,34 @@ class AnalyticsPanel(QWidget):
         super().__init__(parent)
         self.setStyleSheet(f"background-color: {BG_BASE};")
 
-        root = QHBoxLayout(self)
-        root.setContentsMargins(6, 6, 6, 6)
-        root.setSpacing(6)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        self._header = PanelHeaderBar(
+            "▣",
+            "Analytics",
+            "Grade distribution · throughput over time",
+        )
+        root.addWidget(self._header)
+
+        charts = QHBoxLayout()
+        charts.setContentsMargins(6, 6, 6, 6)
+        charts.setSpacing(6)
 
         self.grade_chart      = GradeBarChart(self)
         self.throughput_chart = ThroughputLineChart(self)
 
-        root.addWidget(self.grade_chart,      stretch=1)
-        root.addWidget(self.throughput_chart, stretch=1)
+        charts.addWidget(self.grade_chart,      stretch=1)
+        charts.addWidget(self.throughput_chart, stretch=1)
+        root.addLayout(charts, stretch=1)
 
     # ── Forwarded public API ──────────────────────────────────────────────────
 
     def record_grade(self, grade: str) -> None:
         """
         Record one committed grade event.  Internally stamps time.monotonic()
-        so throughput is computed from real event timing — no conveyor-speed
+        so throughput is computed from real event timing - no conveyor-speed
         spinner involved.
         """
         self.grade_chart.record_grade(grade)

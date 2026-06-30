@@ -13,7 +13,7 @@ Command Protocol:
   Send ASCII string over serial: "<lane><submodule>\n"
   e.g. "1A\n" → Lane 1, Submodule A (Fresh)
        "2B\n" → Lane 2, Submodule B (Processing)
-  No command → apple falls to Outlet C (Cull) — safe default
+  No command → apple falls to Outlet C (Cull) - safe default
 
 Timing:
   delay_ms = (camera_to_gate_m / conveyor_speed_m_s) * 1000
@@ -39,9 +39,9 @@ log = get_logger(__name__)
 
 class SortOutlet(Enum):
     """Physical outlet destinations on the sorting unit."""
-    A = "A"   # Fresh — Submodule A fires
-    B = "B"   # Processing — Submodule B fires
-    C = "C"   # Cull — default, no command needed
+    A = "A"   # Fresh - Submodule A fires
+    B = "B"   # Processing - Submodule B fires
+    C = "C"   # Cull - default, no command needed
 
 
 # Grade → action digit mapping (confirmed with hardware person + Arduino sketch)
@@ -68,7 +68,7 @@ class GradeCommand:
     apple_id:       int          # Tracking ID from YOLO
     lane:           int          # 1, 2, or 3
     grade:          str          # "Fresh" | "Processing" | "Cull"
-    confidence:     float        # 0.0–1.0 from model
+    confidence:     float        # 0.0-1.0 from model
     graded_at_ns:   int          # time.time_ns() when grade was decided
     fire_at_ns:     int          # time.time_ns() when command must be sent
     digit:          int          # Action digit for Arduino: 1/2/3
@@ -115,7 +115,7 @@ class SorterController:
         self._thread = threading.Thread(target=self._dispatch_loop, daemon=True)
         self._thread.start()
 
-        # Dedicated reader thread — logs every 'OK' the Arduino sends back
+        # Dedicated reader thread - logs every 'OK' the Arduino sends back
         # (Arduino fires 'OK\r\n' via Serial.println("OK") each time a solenoid fires)
         self._reader_thread = threading.Thread(target=self._read_arduino_loop, daemon=True)
         self._reader_thread.start()
@@ -147,13 +147,13 @@ class SorterController:
         Parameters
         ----------
         apple_id         : YOLO tracking ID
-        lane             : Physical conveyor lane (1–3)
+        lane             : Physical conveyor lane (1-3)
         grade            : "Fresh" | "Processing" | "Cull"
-        confidence       : Model confidence (0.0–1.0)
+        confidence       : Model confidence (0.0-1.0)
         conveyor_speed_m_s : Live speed override (m/s). Uses config default if None.
         """
         speed    = conveyor_speed_m_s or self._conveyor_speed
-        # camera_to_gate_m is 0.0 — Arduino handles timing via NIR sensor.
+        # camera_to_gate_m is 0.0 - Arduino handles timing via NIR sensor.
         # delay_ms kept for flexibility; with 0.0 it fires immediately.
         delay_ms = (self._camera_to_gate_m / speed) * 1000 if speed > 0 else 0.0
 
@@ -189,7 +189,7 @@ class SorterController:
         Switch between 'simulation' and 'serial' at runtime.
         Called by the GUI Sorter toggle button.
         Note: if serial connect fails, _connect_serial() falls back to
-        simulation internally — self._mode will reflect the actual state.
+        simulation internally - self._mode will reflect the actual state.
         """
         if mode == self._mode:
             return
@@ -200,7 +200,7 @@ class SorterController:
         elif mode == "simulation":
             if self._serial and self._serial.is_open:
                 self._serial.close()
-                log.info("Serial port closed — reverting to simulation mode.")
+                log.info("Serial port closed - reverting to simulation mode.")
             self._mode = "simulation"
         # Log the mode we actually ended up in (may differ from requested if connect failed)
         log.info(f"SorterController active mode → '{self._mode}'")
@@ -289,11 +289,11 @@ class SorterController:
         if grade_key in self._stats:
             self._stats[grade_key] += 1
 
-        # digit=0 path removed — Fresh now uses digit=1 to actively reset the paddle.
+        # digit=0 path removed - Fresh now uses digit=1 to actively reset the paddle.
         # A digit=0 here would mean an unknown grade defaulted to 0; log a warning.
         if cmd.digit == 0:
             log.warning(
-                f"grade={cmd.grade} produced digit=0 (no-op) — "
+                f"grade={cmd.grade} produced digit=0 (no-op) - "
                 f"apple={cmd.apple_id} lane={cmd.lane}. "
                 f"Check GRADE_TO_DIGIT mapping."
             )

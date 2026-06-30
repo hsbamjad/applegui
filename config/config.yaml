@@ -1,4 +1,4 @@
-# Apple Sorting GUI — Master Configuration
+# Apple Sorting GUI - Master Configuration
 # Michigan State University | ASABE AIM26 | 2026
 # ─────────────────────────────────────────────
 # Hardware: JAI FSFE-3200T-10GE camera + 3-lane screw conveyor
@@ -8,7 +8,7 @@
 # CAMERA
 # ══════════════════════════════════════════════════════════════
 camera:
-  mode: "mock"           # Options: "mock" | "jai"  — falls back to mock if camera not found
+  mode: "mock"           # Options: "mock" | "jai"  - falls back to mock if camera not found
 
 
   mock:
@@ -16,19 +16,19 @@ camera:
     resolution: [2048, 1536]   # Match JAI Sony IMX252 native res
     replay_folder: null         # Path to real captured frames, or null for synthetic
 
-  # Video simulation mode — replaces live camera with pre-recorded video files.
+  # Video simulation mode - replaces live camera with pre-recorded video files.
   # Set enabled: true and update the three video paths to run without hardware.
   simulation:
     enabled: true
     loop: true          # Loop videos when end is reached
     fps: 30             # Playback frame rate
     videos:
-      ch1: "D:/HA/apple_gui/videos/Source0/G1/G1.mp4"
-      ch2: "D:/HA/apple_gui/videos/Source1/G1/G1.avi"
-      ch3: "D:/HA/apple_gui/videos/Source2/G1/G1.avi"
+      ch1: "D:/HA/apple_gui/videos/Source0/G5/G5.mp4"
+      ch2: "D:/HA/apple_gui/videos/Source1/G5/G5.avi"
+      ch3: "D:/HA/apple_gui/videos/Source2/G5/G5.avi"
 
   jai:
-    # Confirmed hardware (Shuttle PC) — from camera_probe_jai.py output
+    # Confirmed hardware (Shuttle PC) - from camera_probe_jai.py output
     ip:          "169.254.101.209"   # Update if DHCP changes
     mac:         "00:0c:df:0a:f3:f8"
     serial:      "U320500"
@@ -37,14 +37,14 @@ camera:
     trigger_mode: "Off"             # Free-run (encoder trigger = future)
     num_channels: 3
     # Sources confirmed:
-    #   Source0 (ch_id=0): BayerRG8 2048×1536 — Color ~660nm
-    #   Source1 (ch_id=1): Mono8    2048×1536 — NIR1  ~800nm
-    #   Source2 (ch_id=2): Mono8    2048×1536 — NIR2  ~900nm
+    #   Source0 (ch_id=0): BayerRG8 2048×1536 - Color ~660nm
+    #   Source1 (ch_id=1): Mono8    2048×1536 - NIR1  ~800nm
+    #   Source2 (ch_id=2): Mono8    2048×1536 - NIR2  ~900nm
 
 
 # ══════════════════════════════════════════════════════════════
 # SPECTRAL CHANNELS
-# 5-band (RGB + NIR1 + NIR2) from JAI — 3 used for sorting
+# 5-band (RGB + NIR1 + NIR2) from JAI - 3 used for sorting
 # ══════════════════════════════════════════════════════════════
 channels:
   ch1:
@@ -56,14 +56,14 @@ channels:
 
   ch2:
     name: "NIR1"
-    description: "Near-infrared band 1 — bruising / internal structure"
+    description: "Near-infrared band 1 - bruising / internal structure"
     wavelength_nm: 800
     sensor_index: 1     # buffer.payload.components[1]
     color: "#34D399"
 
   ch3:
     name: "NIR2"
-    description: "Near-infrared band 2 — water content / firmness"
+    description: "Near-infrared band 2 - water content / firmness"
     wavelength_nm: 900
     sensor_index: 2     # buffer.payload.components[2]
     color: "#A78BFA"
@@ -79,13 +79,13 @@ conveyor:
   #   TB = top→bottom   BT = bottom→top  ← current camera setup
   orientation: "LR"   # LR=left→right (test video) | BT=bottom→top (real camera)
   speed_apples_per_sec: 1          # Nominal: 1 | 2 | 3 apples/s/lane
-  camera_to_gate_m: 0.0            # Arduino handles timing via NIR sensor — fire immediately on grade
+  camera_to_gate_m: 0.0            # Arduino handles timing via NIR sensor - fire immediately on grade
   # Timing delay (ms) = (camera_to_gate_m / conveyor_speed_m_s) * 1000
-  # Software computes this dynamically — set conveyor_speed_m_s at runtime
+  # Software computes this dynamically - set conveyor_speed_m_s at runtime
 
 # ══════════════════════════════════════════════════════════════
 # SORTER HARDWARE
-# 3 sorting units — one per lane — at end of conveyor
+# 3 sorting units - one per lane - at end of conveyor
 # Each unit: Submodule A (Fresh→Outlet A) + Submodule B (Processing→Outlet B)
 # Default (no signal): apple falls to Outlet C (Cull)
 # Control path: PC → USB/Serial → Arduino → Solenoid valve → Air cylinder → Paddle
@@ -114,9 +114,9 @@ sorter:
     lane_2_submodule_B: "2B"    # Lane 2 → Processing
     lane_3_submodule_A: "3A"    # Lane 3 → Fresh
     lane_3_submodule_B: "3B"    # Lane 3 → Processing
-    # Cull (C) requires NO command — apple falls to Outlet C by default
+    # Cull (C) requires NO command - apple falls to Outlet C by default
 
-  # NIR switch (arrival sensor at sorter gate — optional)
+  # NIR switch (arrival sensor at sorter gate - optional)
   nir_switch:
     enabled: false      # Set true if Arduino reports apple-arrival confirmation
     timeout_ms: 200     # If apple not detected within this window, log a miss
@@ -138,26 +138,26 @@ inference:
   iou_threshold: 0.45              # NMS IoU threshold
   input_mode: "RB-nir1"           # Band combo model was trained on
                                    # Options: RB-nir1 | RG-nir1 | R-nir1-nir2 | RGB | CH1
-  class_names:                     # Index order from model — confirmed with training YAML
+  class_names:                     # Index order from model - confirmed with training YAML
     - "Fresh"                      # 0  ← matches model output & tracker CLASS_NAMES
     - "Processing"                 # 1
     - "Cull"                       # 2
 
-  # Robust counting gate — mirrors chestnut pipeline logic
+  # Robust counting gate - mirrors chestnut pipeline logic
   tracking:
     enabled: true
     exit_frac: 0.85             # Exit band centre (fraction of TRAVEL axis)
-    band_half_frac: 0.025       # ± 2.5% of travel axis — narrow band
+    band_half_frac: 0.025       # ± 2.5% of travel axis - narrow band
     entry_frac: 0.35            # First detection must be in start zone (<35%)
-    min_frames: 15              # was 5 — wait longer before committing (reduces noise-driven Cull)
+    min_frames: 15              # was 5 - wait longer before committing (reduces noise-driven Cull)
     max_lost_frames: 10
     max_recover_dist: 80
     min_count_dist_frac: 0.12
     count_memory_frames: 40
     count_merge_frames: 5          # merge to existing seq_id only within N frames + same lane
-    cull_weight: 1.0            # was 1.5 — don't over-weight Cull votes vs Fresh/Processing
-    hit_threshold: 25           # was 20 — need more high-conf Cull hits to force override
-    cull_ratio_threshold: 0.65  # was 0.55 — need clear majority to force Cull
+    cull_weight: 1.0            # was 1.5 - don't over-weight Cull votes vs Fresh/Processing
+    hit_threshold: 25           # was 20 - need more high-conf Cull hits to force override
+    cull_ratio_threshold: 0.65  # was 0.55 - need clear majority to force Cull
     peak_conf_override: 0.50    # if any non-Cull class peaks here, Cull cannot be forced
     overwhelming_cull_threshold: 40   # hit_cull above this bypasses peak_conf_override
                                      # A genuine Fresh apple will not have 40+ high-conf Cull hits
@@ -168,19 +168,14 @@ inference:
 logging:
   enabled: false
   output_dir: "data/sessions"
-  save_frames: true          # save processed (YOLO-combined) crop under Apple{N}/processed/
-  save_raw_frames: true      # save raw source crops under Apple{N}/source0/, source1/, source2/
   image_format: "jpg"
   jpeg_quality: 92
-  crop_padding_frac: 0.20    # padding around bbox for saved crop
-  crop_max_dim: 512          # max dim for processed crop (px) — annotated frame, higher quality ok
-  raw_crop_max_dim: 256      # max dim for raw source crops (px) — 256 encodes ~4× faster than 512
-                             # raise to 512 for full-quality raw crops (costs more CPU/disk)
-  raw_frame_stride: 1        # save raw crops every Nth logged frame (1=every frame, 2=every other)
-                             # set to 2-3 to cut raw-crop CPU load in half without losing much coverage
-  max_pending_batches: 2     # logging backpressure — drops export frames, not counts
+  crop_padding_frac: 0.20    # padding around bbox for per-apple detected crops
+  save_max_dim: 0            # max px longest side for saved frames (0 = full resolution)
+  max_pending_batches: 2     # logging backpressure - drops export frames, not counts
   max_crops_per_batch: 8     # cap encode jobs per frame when belt is full
   heavy_threshold: 12        # above this apple count, log every 2nd frame only
+  # Raw save interval and resolution are set in the Data Logging panel (left sidebar).
 
 # ══════════════════════════════════════════════════════════════
 # DISPLAY
@@ -197,14 +192,14 @@ display:
 # APPLE SIZING
 # Ridge regression model trained on per-track mask features.
 # Only active when a segmentation YOLO model is loaded (has masks).
-# Shows "—" in results table when disabled or model missing.
+# Shows "-" in results table when disabled or model missing.
 # ══════════════════════════════════════════════════════════════
 sizing:
   enabled: true
   model_path: "models/size_model.pkl"
   min_frames: 4       # Discard tracks shorter than this (too few frames for reliable estimate)
 
-  # Diameter computation angle resolution (background thread — zero FPS impact).
+  # Diameter computation angle resolution (background thread - zero FPS impact).
   # Controls max_width() rotation count = 180 / bg_angle_step.
   #
   # Tradeoff:

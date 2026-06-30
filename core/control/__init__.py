@@ -1,7 +1,7 @@
 """
 core/control/__init__.py
 ========================
-Sorter Control Module — Public API
+Sorter Control Module - Public API
 
 Hardware Architecture (from ASABE AIM26 poster):
 ─────────────────────────────────────────────────

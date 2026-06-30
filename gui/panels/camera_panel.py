@@ -1,13 +1,10 @@
-"""
+﻿"""
 gui/panels/camera_panel.py
 ==========================
-Left control sidebar — hardware-aware layout.
+Left control sidebar - dual-column hardware-aware layout.
 
-Sections:
-  CAMERA   — connect/disconnect, exposure, FPS
-  AI MODEL — model selector, load
-  SORTER   — enable, mode, outlet legend
-  LOGGING  — enable, output path
+Column 1: Camera · Mode · Data Logging (inline, scrolls if window is short)
+Column 2: ROI · AI Model · Sorter (scrolls if window is short)
 """
 
 from __future__ import annotations
@@ -28,9 +25,12 @@ from gui.styles import (
     TEXT_1, TEXT_2, TEXT_3, BORDER, BORDER_LT,
 )
 
-PANEL_WIDTH  = 290    # Wide enough for label + widget without clipping
-LABEL_W      = 105    # Fixed label width in field rows
-WIDGET_MIN_W = 120    # Minimum widget width in field rows
+PANEL_COL_WIDTH = 268   # Width of each column in the dual-column left sidebar
+PANEL_WIDTH     = PANEL_COL_WIDTH * 2 + 13   # two columns + center divider/gap
+_COL_PAD_TOP    = 8     # shared top inset - keeps both column headers aligned
+_SECTION_GAP    = 16    # vertical space between sidebar modules
+LABEL_W         = 92      # Slightly narrower labels so fields fit in each column
+WIDGET_MIN_W    = 100     # Minimum widget width in field rows
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ class _SectionHeader(QWidget):
     def __init__(self, text: str, parent=None) -> None:
         super().__init__(parent)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(2, 10, 2, 4)
+        layout.setContentsMargins(2, 0, 2, 6)
         layout.setSpacing(8)
         lbl = QLabel(text.upper())
         lbl.setStyleSheet(
@@ -52,6 +52,13 @@ class _SectionHeader(QWidget):
         line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         layout.addWidget(lbl)
         layout.addWidget(line)
+
+
+def _begin_module(col_v: QVBoxLayout, title: str, *, first: bool = False) -> None:
+    """Section header with consistent gap from the previous module."""
+    if not first:
+        col_v.addSpacing(_SECTION_GAP)
+    col_v.addWidget(_SectionHeader(title))
 
 
 class _Card(QWidget):
@@ -118,8 +125,8 @@ def _field(label_text: str, widget: QWidget) -> QWidget:
 
 def _btn_primary(text: str) -> QPushButton:
     btn = QPushButton(text)
-    btn.setFixedHeight(38)          # Must set in Python — CSS min-height alone doesn't constrain VBoxLayout
-    # Single permanent stylesheet — danger state is toggled via the 'danger' dynamic property.
+    btn.setFixedHeight(38)          # Must set in Python - CSS min-height alone doesn't constrain VBoxLayout
+    # Single permanent stylesheet - danger state is toggled via the 'danger' dynamic property.
     # Base QPushButton rule = leaf-green (normal); [danger="true"] overrides to autumn red.
     # Avoids calling setStyleSheet() again on state change (which resets Qt size constraints).
     btn.setStyleSheet(f"""
@@ -197,6 +204,29 @@ def _sep(card_layout) -> None:
     card_layout._layout.addWidget(sep)
 
 
+def _column_scroll(inner: QWidget) -> QScrollArea:
+    """Per-column scroll - only appears when the window is shorter than content."""
+    scroll = QScrollArea()
+    scroll.setWidget(inner)
+    scroll.setWidgetResizable(True)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+    scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+    scroll.setStyleSheet(f"""
+        QScrollArea {{ border: none; background: transparent; }}
+        QScrollBar:vertical {{
+            background: transparent; width: 4px; margin: 0;
+        }}
+        QScrollBar::handle:vertical {{
+            background: {BORDER_LT}; border-radius: 2px; min-height: 20px;
+        }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+    """)
+    return scroll
+
+
 def _sub_header(card: "_Card", text: str, icon: str = "", color: str = TEXT_2) -> None:
     """
     Adds a compact section heading inside a _Card, e.g. '⏱  Exposure Time'.
@@ -229,7 +259,7 @@ def _sub_header(card: "_Card", text: str, icon: str = "", color: str = TEXT_2) -
 
 class CameraControlsWindow(QWidget):
     """
-    Frameless floating sub-window — 2-column, no scroll.
+    Frameless floating sub-window - 2-column, no scroll.
     Left column: Exposure · FPS · Gain
     Right column: White Balance · Black Level
     Drag by title bar. Close button syncs sidebar toggle.
@@ -260,7 +290,7 @@ class CameraControlsWindow(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Outer container — the visible rounded panel
+        # Outer container - the visible rounded panel
         outer = QWidget()
         outer.setObjectName("cam_outer")
         outer.setStyleSheet(f"""
@@ -431,122 +461,48 @@ class CameraControlsWindow(QWidget):
         self.sig_hidden.emit()
 
 
-# ── Data Logging Floating Window ──────────────────────────────────────────────
+# ── Data Logging inline panel (column 1) ─────────────────────────────────────
 
-class DataLoggingWindow(QWidget):
+class DataLoggingPanel(QWidget):
     """
-    Frameless floating popup for data-logging options.
-    Mirrors CameraControlsWindow pattern with an amber accent.
-
-    Two independent save options:
-      ☑ Raw Frames       — full-res camera frames, all 3 channels
-      ☐ Detected Frames  — full-res YOLO composite + detection boxes
+    Inline data-logging options - embedded in the left sidebar column 1.
     """
 
-    sig_hidden          = pyqtSignal()
-    sig_options_changed = pyqtSignal(bool, bool)   # raw, detected
-    sig_path_changed    = pyqtSignal(str)           # custom save path ("" = use default)
-    sig_interval_changed = pyqtSignal(int)          # save every N frames
+    sig_options_changed    = pyqtSignal(bool, bool)   # raw, detected
+    sig_path_changed       = pyqtSignal(str)          # custom save path ("" = default)
+    sig_interval_changed   = pyqtSignal(int)          # save every N frames
+    sig_resolution_changed = pyqtSignal(int)          # 0 = full res, else max px dim
 
-    POPUP_WIDTH = 314
-    _DL_ACCENT  = WARNING   # harvest amber — distinct from Camera Controls green
+    _DL_ACCENT = WARNING   # harvest amber
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(
-            parent,
-            Qt.WindowType.Tool
-            | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint,
-        )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedWidth(self.POPUP_WIDTH)
-        self._drag_pos: QPoint | None = None
-        self._custom_path: str = ""   # "" means use default from config
-        self._build_shell()
+        super().__init__(parent)
+        self._custom_path: str = ""
+        self.setStyleSheet("background: transparent; border: none;")
+        self._build()
 
-    def _build_shell(self) -> None:
+    def _build(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        outer = QWidget()
-        outer.setObjectName("dl_outer")
-        outer.setStyleSheet(f"""
-            QWidget#dl_outer {{
-                background-color: {BG_SURFACE};
-                border: 1px solid {self._DL_ACCENT}55;
-                border-radius: 12px;
+        card = QWidget()
+        card.setObjectName("dl_card")
+        card.setStyleSheet(f"""
+            QWidget#dl_card {{
+                background-color: {BG_CARD};
+                border: 1px solid {BORDER};
+                border-radius: 8px;
             }}
         """)
-        outer_vl = QVBoxLayout(outer)
-        outer_vl.setContentsMargins(0, 0, 0, 0)
-        outer_vl.setSpacing(0)
+        card_vl = QVBoxLayout(card)
+        card_vl.setContentsMargins(0, 0, 0, 0)
+        card_vl.setSpacing(0)
 
-        # ── Title bar ───────────────────────────────────────────────────
-        title_bar = QWidget()
-        title_bar.setObjectName("dl_titlebar")
-        title_bar.setFixedHeight(44)
-        title_bar.setCursor(Qt.CursorShape.SizeAllCursor)
-        title_bar.setStyleSheet(f"""
-            QWidget#dl_titlebar {{
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {self._DL_ACCENT}55, stop:1 {self._DL_ACCENT}22
-                );
-                border-radius: 12px 12px 0 0;
-                border-bottom: 1px solid {self._DL_ACCENT}66;
-            }}
-        """)
-        tb_hl = QHBoxLayout(title_bar)
-        tb_hl.setContentsMargins(16, 0, 12, 0)
-        tb_hl.setSpacing(12)
-
-        ttl = QLabel("Data Logging")
-        ttl.setStyleSheet(
-            f"color: {TEXT_1}; font-size: 14px; font-weight: 700; "
-            "background: transparent; border: none; letter-spacing: 0.2px;"
-        )
-        tb_hl.addWidget(ttl)
-        tb_hl.addStretch()
-
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(28, 28)
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_ELEVATED}; color: {TEXT_2};
-                border: 1px solid {BORDER}; border-radius: 14px;
-                font-size: 12px; font-weight: 700; padding: 0;
-            }}
-            QPushButton:hover {{
-                background-color: {DANGER}; color: white; border-color: {DANGER};
-            }}
-            QPushButton:pressed {{ background-color: #A0473A; }}
-        """)
-        close_btn.clicked.connect(self.hide)
-        tb_hl.addWidget(close_btn)
-
-        title_bar.mousePressEvent   = self._tb_mouse_press
-        title_bar.mouseMoveEvent    = self._tb_mouse_move
-        title_bar.mouseReleaseEvent = self._tb_mouse_release
-        outer_vl.addWidget(title_bar)
-
-        # ── Accent divider ──────────────────────────────────────────────
-        div = QFrame()
-        div.setFixedHeight(2)
-        div.setStyleSheet(
-            f"background: qlineargradient("
-            f"x1:0,y1:0,x2:1,y2:0,"
-            f"stop:0 {self._DL_ACCENT},stop:0.6 {self._DL_ACCENT}88,stop:1 transparent);"
-            f" border: none;"
-        )
-        outer_vl.addWidget(div)
-
-        # ── Content ────────────────────────────────────────────────────
         content = QWidget()
         content.setStyleSheet("background: transparent; border: none;")
         cv = QVBoxLayout(content)
-        cv.setContentsMargins(16, 12, 16, 16)
+        cv.setContentsMargins(10, 10, 10, 10)
         cv.setSpacing(5)
 
         desc = QLabel("Select data types to save during this session:")
@@ -555,125 +511,121 @@ class DataLoggingWindow(QWidget):
         cv.addWidget(desc)
 
         _s = QFrame(); _s.setFixedHeight(1)
-        _s.setStyleSheet(f"background-color: {BORDER}66; border: none; margin: 4px 0;")
+        _s.setStyleSheet(f"background-color: {BORDER}66; border: none;")
+        cv.addSpacing(4)
         cv.addWidget(_s)
+        cv.addSpacing(4)
 
-        # ── Raw Frames ─────────────────────────────────────────────────
         self._chk_raw = QCheckBox("Raw Frames")
         self._chk_raw.setToolTip(
-            "Save full-resolution raw frames from all 3 camera channels.\n"
+            "Save the full belt image from all 3 camera channels.\n"
             "ch1 (Color)  ·  ch2 (NIR1)  ·  ch3 (NIR2)\n"
-            "Output:  {session}/raw_frames/ch1/,  ch2/,  ch3/"
+            "Output:  {session}/raw_frames/ch1/,  ch2/,  ch3/\n"
+            "Default resolution: native sensor size (e.g. 2048×1536)."
         )
         self._chk_raw.setStyleSheet(self._chk_style(self._DL_ACCENT))
         self._chk_raw.toggled.connect(self._emit_changed)
         cv.addWidget(self._chk_raw)
-        raw_sub = QLabel("  All 3 channels  ·  full resolution  ·  no annotation")
+        raw_sub = QLabel("  Full belt  ·  all 3 channels  ·  no boxes")
         raw_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
+        raw_sub.setWordWrap(True)
         cv.addWidget(raw_sub)
 
         _s2 = QFrame(); _s2.setFixedHeight(1)
-        _s2.setStyleSheet(f"background-color: {BORDER}44; border: none; margin: 3px 0;")
+        _s2.setStyleSheet(f"background-color: {BORDER}44; border: none;")
+        cv.addSpacing(3)
         cv.addWidget(_s2)
+        cv.addSpacing(3)
 
-
-        # ── Detected Frames ───────────────────────────────────────────
         self._chk_detected = QCheckBox("Detected Frames")
         self._chk_detected.setToolTip(
-            "Save annotated crops of each detected apple.\n"
+            "Save a small annotated crop per tracked apple (bbox + padding).\n"
+            "Size follows each detection (often a few hundred px), not full sensor.\n"
             "Output:  {session}/Lane{L}/Apple{N}/\n"
-            "Requires Detect mode to be active."
+            "Requires Detect mode or inference for grading."
         )
         self._chk_detected.setStyleSheet(self._chk_style(INFO))
         self._chk_detected.toggled.connect(self._emit_changed)
         cv.addWidget(self._chk_detected)
-        det_sub = QLabel("  Annotated frames  ·  cropped per apple ID")
+        det_sub = QLabel(
+            "  Apple patch + boxes  ·  size varies per fruit (not 2048×1536)"
+        )
         det_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
+        det_sub.setWordWrap(True)
         cv.addWidget(det_sub)
 
-        # ── Save Path ─────────────────────────────────────────────────
         _sp = QFrame(); _sp.setFixedHeight(1)
-        _sp.setStyleSheet(f"background-color: {BORDER}66; border: none; margin: 4px 0;")
+        _sp.setStyleSheet(f"background-color: {BORDER}66; border: none;")
+        cv.addSpacing(4)
         cv.addWidget(_sp)
+        cv.addSpacing(4)
 
-        _path_header = QLabel("Save Path")
+        _path_header = QLabel("SAVE PATH")
         _path_header.setStyleSheet(
             f"color: {self._DL_ACCENT}; font-size: 10px; font-weight: 700; "
             "letter-spacing: 1.5px; background: transparent;"
         )
         cv.addWidget(_path_header)
 
-        # Radio buttons — Default / Custom
-        self._radio_default = QRadioButton("Default  (from config)")
+        self._radio_default = QRadioButton("Default (config)")
         self._radio_custom  = QRadioButton("Custom path")
         self._radio_default.setChecked(True)
         for rb in (self._radio_default, self._radio_custom):
-            rb.setStyleSheet(f"""
-                QRadioButton {{
-                    color: {TEXT_1}; font-size: 11px;
-                    background: transparent; spacing: 6px;
-                }}
-                QRadioButton::indicator {{
-                    width: 14px; height: 14px;
-                    border: 2px solid {BORDER_LT}; border-radius: 7px;
-                    background-color: {BG_ELEVATED};
-                }}
-                QRadioButton::indicator:checked {{
-                    background-color: {self._DL_ACCENT}; border-color: {self._DL_ACCENT};
-                }}
-                QRadioButton::indicator:hover {{ border-color: {self._DL_ACCENT}; }}
-            """)
+            rb.setStyleSheet(self._radio_style())
         _rb_grp = QButtonGroup(self)
         _rb_grp.addButton(self._radio_default)
         _rb_grp.addButton(self._radio_custom)
         cv.addWidget(self._radio_default)
         cv.addWidget(self._radio_custom)
 
-        # Path display + browse row
         _browse_row = QWidget()
         _browse_row.setStyleSheet("background: transparent; border: none;")
+        _browse_row.setMinimumHeight(38)
         _br_hl = QHBoxLayout(_browse_row)
-        _br_hl.setContentsMargins(0, 4, 0, 0)
+        _br_hl.setContentsMargins(0, 4, 0, 6)
         _br_hl.setSpacing(6)
 
         self._path_edit = QLineEdit()
-        self._path_edit.setPlaceholderText("Select a folder…")
+        self._path_edit.setPlaceholderText("Select folder…")
         self._path_edit.setReadOnly(True)
         self._path_edit.setEnabled(False)
-        self._path_edit.setFixedHeight(34)
+        self._path_edit.setFixedHeight(36)
         self._path_edit_style_off = f"""
             QLineEdit {{
                 background-color: {BG_ELEVATED}; color: {TEXT_3};
                 border: 1px solid {BORDER}; border-radius: 7px;
-                padding: 0 10px; font-size: 11px;
+                padding: 0 8px; font-size: 10px;
+                min-height: 34px; max-height: 34px;
             }}
         """
         self._path_edit_style_on = f"""
             QLineEdit {{
                 background-color: {BG_ELEVATED}; color: {TEXT_1};
                 border: 1px solid {BORDER_LT}; border-radius: 7px;
-                padding: 0 10px; font-size: 11px;
+                padding: 0 8px; font-size: 10px;
+                min-height: 34px; max-height: 34px;
             }}
         """
         self._path_edit.setStyleSheet(self._path_edit_style_off)
 
         self._btn_browse = QPushButton("Browse")
-        self._btn_browse.setFixedHeight(34)
+        self._btn_browse.setFixedSize(68, 36)
         self._btn_browse.setEnabled(False)
         self._btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
-        # Matches _btn_secondary exactly (Load, Apply FPS, etc.)
         self._btn_browse_style_off = f"""
             QPushButton {{
                 background-color: {BG_ELEVATED}; color: {TEXT_3};
-                border: 1px solid {BORDER}; font-weight: 600; font-size: 12px;
-                border-radius: 7px; padding: 0 12px;
+                border: 1px solid {BORDER}; font-weight: 600; font-size: 11px;
+                border-radius: 7px; padding: 0 6px;
+                min-height: 34px; max-height: 34px;
             }}
         """
         self._btn_browse_style_on = f"""
             QPushButton {{
                 background-color: {BG_ELEVATED}; color: {TEXT_1};
-                border: 1px solid {ACCENT}55; font-weight: 600; font-size: 12px;
-                border-radius: 7px; padding: 0 12px;
+                border: 1px solid {ACCENT}55; font-weight: 600; font-size: 11px;
+                border-radius: 7px; padding: 0 6px;
+                min-height: 34px; max-height: 34px;
             }}
             QPushButton:hover   {{ background-color: {ACCENT}; color: white; border-color: {ACCENT}; }}
             QPushButton:pressed {{ background-color: {ACCENT_DK}; color: white; }}
@@ -684,87 +636,173 @@ class DataLoggingWindow(QWidget):
         _br_hl.addWidget(self._path_edit, stretch=1)
         _br_hl.addWidget(self._btn_browse)
         cv.addWidget(_browse_row)
-
-
-        # Wire radio toggles
+        cv.addSpacing(4)
         self._radio_custom.toggled.connect(self._on_path_mode_toggled)
 
-        # ── Save Interval ──────────────────────────────────────────────
         _si_sep = QFrame(); _si_sep.setFixedHeight(1)
-        _si_sep.setStyleSheet(f"background-color: {BORDER}66; border: none; margin: 4px 0;")
+        _si_sep.setStyleSheet(f"background-color: {BORDER}66; border: none;")
         cv.addWidget(_si_sep)
+        cv.addSpacing(4)
 
-        _si_header = QLabel("Save Interval")
+        _si_header = QLabel("SAVE INTERVAL")
         _si_header.setStyleSheet(
             f"color: {self._DL_ACCENT}; font-size: 10px; font-weight: 700; "
             "letter-spacing: 1.5px; background: transparent;"
         )
         cv.addWidget(_si_header)
 
-        # Row: label + spinbox
-        _si_row = QWidget()
-        _si_row.setStyleSheet("background: transparent; border: none;")
-        _si_hl = QHBoxLayout(_si_row)
-        _si_hl.setContentsMargins(0, 4, 0, 0)
-        _si_hl.setSpacing(8)
-
         _si_lbl = QLabel("Save every")
         _si_lbl.setStyleSheet(f"color: {TEXT_2}; font-size: 11px; background: transparent;")
+        cv.addWidget(_si_lbl)
 
         self._spn_interval = QSpinBox()
         self._spn_interval.setRange(1, 10)
         self._spn_interval.setValue(1)
         self._spn_interval.setSuffix(" frame(s)")
-        self._spn_interval.setFixedHeight(34)
-        self._spn_interval.setMinimumWidth(110)
+        self._spn_interval.setFixedHeight(36)
         self._spn_interval.setToolTip(
             "Save one raw frame out of every N captured frames.\n"
-            "1 = save every frame  (maximum data, largest disk use)\n"
-            "2 = save every 2nd frame\n"
-            "5 = save every 5th frame  (typical for long runs)\n"
-            "10 = save every 10th frame  (minimum footprint)\n\n"
+            "1 = every frame  ·  10 = every 10th frame\n"
             "Takes effect on next session start."
         )
-        self._spn_interval.setStyleSheet(f"""
+        self._spn_interval.setStyleSheet(self._spin_style())
+        self._spn_interval.valueChanged.connect(
+            lambda v: self.sig_interval_changed.emit(v)
+        )
+        cv.addWidget(self._spn_interval)
+
+        _si_sub = QLabel("Raw Frames only. 1 = every frame.")
+        _si_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
+        _si_sub.setWordWrap(True)
+        cv.addWidget(_si_sub)
+
+        _sr_sep = QFrame(); _sr_sep.setFixedHeight(1)
+        _sr_sep.setStyleSheet(f"background-color: {BORDER}66; border: none;")
+        cv.addSpacing(4)
+        cv.addWidget(_sr_sep)
+        cv.addSpacing(4)
+
+        _sr_header = QLabel("SAVE RESOLUTION")
+        _sr_header.setStyleSheet(
+            f"color: {self._DL_ACCENT}; font-size: 10px; font-weight: 700; "
+            "letter-spacing: 1.5px; background: transparent;"
+        )
+        cv.addWidget(_sr_header)
+
+        self._radio_res_default = QRadioButton("Default (full resolution)")
+        self._radio_res_custom  = QRadioButton("Custom max size")
+        self._radio_res_default.setChecked(True)
+        self._radio_res_default.setToolTip(
+            "Raw: save at native sensor resolution.\n"
+            "Detected: save each apple crop at its natural size (no upscale)."
+        )
+        self._radio_res_custom.setToolTip(
+            "Cap the longest side in pixels. Images are only shrunk, never enlarged.\n"
+            "Detected crops smaller than this limit stay unchanged."
+        )
+        for rb in (self._radio_res_default, self._radio_res_custom):
+            rb.setStyleSheet(self._radio_style())
+        _sr_rb_grp = QButtonGroup(self)
+        _sr_rb_grp.addButton(self._radio_res_default)
+        _sr_rb_grp.addButton(self._radio_res_custom)
+        cv.addWidget(self._radio_res_default)
+        cv.addWidget(self._radio_res_custom)
+
+        _sr_lbl = QLabel("Longest side cap (downscale only)")
+        _sr_lbl.setStyleSheet(f"color: {TEXT_2}; font-size: 11px; background: transparent;")
+        _sr_lbl.setToolTip(
+            "Only reduces large images. Setting 512 px will not enlarge a 246×237 apple crop."
+        )
+        cv.addWidget(_sr_lbl)
+
+        self._spn_resolution = QSpinBox()
+        self._spn_resolution.setRange(128, 2048)
+        self._spn_resolution.setSingleStep(64)
+        self._spn_resolution.setValue(512)
+        self._spn_resolution.setSuffix(" px")
+        self._spn_resolution.setFixedHeight(36)
+        self._spn_resolution.setEnabled(False)
+        self._spn_resolution.setToolTip(
+            "Maximum longest edge in pixels.\n"
+            "Raw: full frame is shrunk if larger than this.\n"
+            "Detected: apple crop is shrunk only if it exceeds this; never upscaled.\n"
+            "Takes effect on next session start."
+        )
+        self._spn_resolution.setStyleSheet(self._spin_style(disabled_ok=True))
+        self._spn_resolution.valueChanged.connect(self._emit_resolution_changed)
+        cv.addWidget(self._spn_resolution)
+
+        _sr_sub = QLabel(
+            "Raw = full sensor frame. Detected = per-apple crop (smaller)."
+        )
+        _sr_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
+        _sr_sub.setWordWrap(True)
+        cv.addWidget(_sr_sub)
+
+        self._radio_res_default.toggled.connect(self._on_resolution_mode_toggled)
+        self._radio_res_custom.toggled.connect(self._on_resolution_mode_toggled)
+
+        self._lbl_output = QLabel("Output: (default)")
+        self._lbl_output.setStyleSheet(
+            f"color: {TEXT_3}; font-size: 9px; background: transparent; padding-top: 4px;"
+        )
+        self._lbl_output.setWordWrap(True)
+        cv.addWidget(self._lbl_output)
+
+        card_vl.addWidget(content)
+        root.addWidget(card)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+
+    @staticmethod
+    def _radio_style() -> str:
+        return f"""
+            QRadioButton {{
+                color: {TEXT_1}; font-size: 11px;
+                background: transparent; spacing: 6px;
+            }}
+            QRadioButton::indicator {{
+                width: 14px; height: 14px;
+                border: 2px solid {BORDER_LT}; border-radius: 7px;
+                background-color: {BG_ELEVATED};
+            }}
+            QRadioButton::indicator:checked {{
+                background-color: {WARNING}; border-color: {WARNING};
+            }}
+            QRadioButton::indicator:hover {{ border-color: {WARNING}; }}
+            QRadioButton:disabled {{ color: {TEXT_3}; }}
+        """
+
+    @classmethod
+    def _spin_style(cls, *, disabled_ok: bool = False) -> str:
+        disabled_block = ""
+        if disabled_ok:
+            disabled_block = f"""
+            QSpinBox:disabled {{
+                background-color: {BG_ELEVATED}; color: {TEXT_3};
+                border: 1px solid {BORDER};
+            }}
+            """
+        return f"""
             QSpinBox {{
                 background-color: {BG_ELEVATED}; color: {TEXT_1};
                 border: 1px solid {BORDER}; border-radius: 7px;
                 padding: 0 8px; font-size: 12px;
+                min-height: 34px; max-height: 34px;
                 selection-background-color: {ACCENT};
             }}
-            QSpinBox:hover {{ border-color: {BORDER_LT}; }}
+            {disabled_block}
+            QSpinBox:hover:enabled {{ border-color: {BORDER_LT}; }}
             QSpinBox:focus {{ border-color: {ACCENT}; }}
             QSpinBox::up-button, QSpinBox::down-button {{
                 background-color: {BG_HOVER}; border: none;
-                border-left: 1px solid {BORDER}; width: 22px;
+                border-left: 1px solid {BORDER}; width: 20px;
             }}
             QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
                 background-color: {ACCENT};
             }}
             QSpinBox::up-button   {{ border-radius: 0 7px 0 0; }}
             QSpinBox::down-button {{ border-radius: 0 0 7px 0; }}
-        """)
-        self._spn_interval.valueChanged.connect(
-            lambda v: self.sig_interval_changed.emit(v)
-        )
-
-        _si_hl.addWidget(_si_lbl)
-        _si_hl.addStretch()
-        _si_hl.addWidget(self._spn_interval)
-        cv.addWidget(_si_row)
-
-        _si_sub = QLabel("  Applies to Raw Frames only. 1 = every frame (default).")
-        _si_sub.setStyleSheet(f"color: {TEXT_3}; font-size: 9px; background: transparent;")
-        _si_sub.setWordWrap(True)
-        cv.addWidget(_si_sub)
-
-        cv.addStretch()
-        outer_vl.addWidget(content)
-        root.addWidget(outer)
-        self.adjustSize()
-        self.setFixedWidth(self.POPUP_WIDTH)
-
-    # ── Style helper ───────────────────────────────────────────────────────────
+        """
 
     @staticmethod
     def _chk_style(color: str) -> str:
@@ -788,81 +826,57 @@ class DataLoggingWindow(QWidget):
             }}
         """
 
-    # ── Public API ─────────────────────────────────────────────────────────────
-
     def set_options(self, raw: bool, detected: bool) -> None:
-        """Set checkbox states without emitting sig_options_changed."""
-        for chk, val in [
-            (self._chk_raw, raw),
-            (self._chk_detected, detected),
-        ]:
+        for chk, val in [(self._chk_raw, raw), (self._chk_detected, detected)]:
             chk.blockSignals(True)
             chk.setChecked(val)
             chk.blockSignals(False)
 
     def get_options(self) -> tuple:
-        """Return (raw_frames, detected_frames) booleans."""
-        return (
-            self._chk_raw.isChecked(),
-            self._chk_detected.isChecked(),
-        )
+        return (self._chk_raw.isChecked(), self._chk_detected.isChecked())
 
     def set_enabled_options(self, raw: bool, detected: bool) -> None:
-        """Enable or disable individual checkboxes based on active modes."""
         self._chk_raw.setEnabled(raw)
         self._chk_detected.setEnabled(detected)
 
     def get_custom_path(self) -> str:
-        """Return the custom save path, or '' if Default is selected."""
         return self._custom_path
 
     def get_save_interval(self) -> int:
-        """Return the raw-frame save interval (every N frames; 1 = every frame)."""
         return self._spn_interval.value()
 
-    def show_beside(self, anchor: QWidget) -> None:
-        """Position beside `anchor` widget and show."""
-        from PyQt6.QtWidgets import QApplication
-        # Recompute size now that the layout is fully realised
-        self.adjustSize()
-        self.setFixedWidth(self.POPUP_WIDTH)
-        global_pos = anchor.mapToGlobal(QPoint(0, 0))
-        x = global_pos.x() + anchor.width() + 6
-        y = global_pos.y()
-        screen = QApplication.primaryScreen().availableGeometry()
-        if x + self.width() > screen.right():
-            x = global_pos.x() - self.width() - 6
-        y = max(screen.top(), min(y, screen.bottom() - self.height()))
-        self.move(x, y)
-        self.show()
-        self.raise_()
+    def get_save_max_dim(self) -> int:
+        if self._radio_res_default.isChecked():
+            return 0
+        return self._spn_resolution.value()
 
-    # ── Drag ───────────────────────────────────────────────────────────────────
+    def set_save_max_dim(self, max_dim: int) -> None:
+        self._radio_res_default.blockSignals(True)
+        self._radio_res_custom.blockSignals(True)
+        self._spn_resolution.blockSignals(True)
+        if max_dim <= 0:
+            self._radio_res_default.setChecked(True)
+            self._spn_resolution.setEnabled(False)
+        else:
+            self._radio_res_custom.setChecked(True)
+            self._spn_resolution.setValue(max_dim)
+            self._spn_resolution.setEnabled(True)
+        self._radio_res_default.blockSignals(False)
+        self._radio_res_custom.blockSignals(False)
+        self._spn_resolution.blockSignals(False)
 
-    def _tb_mouse_press(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-
-    def _tb_mouse_move(self, event) -> None:
-        if self._drag_pos is not None and event.buttons() == Qt.MouseButton.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
-
-    def _tb_mouse_release(self, event) -> None:
-        self._drag_pos = None
-
-    def hideEvent(self, event) -> None:  # type: ignore[override]
-        """Emit sig_hidden so sidebar toggle button can sync its state."""
-        super().hideEvent(event)
-        self.sig_hidden.emit()
-
-    # ── Internal ───────────────────────────────────────────────────────────────
+    def set_output_path(self, path: str) -> None:
+        if path:
+            display = path if len(path) <= 28 else "…" + path[-27:]
+            self._lbl_output.setText(f"Output: {display}")
+            self._lbl_output.setToolTip(path)
+        else:
+            self._lbl_output.setText("Output: (default)")
+            self._lbl_output.setToolTip("")
 
     def _on_path_mode_toggled(self, custom: bool) -> None:
-        """Enable/disable Browse row based on radio selection."""
         self._path_edit.setEnabled(custom)
         self._btn_browse.setEnabled(custom)
-        # Swap stylesheets explicitly — avoids Qt :enabled/:disabled pseudo-state
-        # bleeding system colors (purple selection highlight on Windows).
         self._path_edit.setStyleSheet(
             self._path_edit_style_on if custom else self._path_edit_style_off
         )
@@ -874,9 +888,7 @@ class DataLoggingWindow(QWidget):
             self._path_edit.clear()
             self.sig_path_changed.emit("")
 
-
     def _on_browse(self) -> None:
-        """Open folder picker and store the result."""
         folder = QFileDialog.getExistingDirectory(
             self,
             "Select Save Folder",
@@ -885,8 +897,7 @@ class DataLoggingWindow(QWidget):
         )
         if folder:
             self._custom_path = folder
-            # Show a shortened version in the edit field
-            _display = folder if len(folder) <= 36 else "…" + folder[-35:]
+            _display = folder if len(folder) <= 22 else "…" + folder[-21:]
             self._path_edit.setText(_display)
             self._path_edit.setToolTip(folder)
             self.sig_path_changed.emit(folder)
@@ -897,28 +908,39 @@ class DataLoggingWindow(QWidget):
             self._chk_detected.isChecked(),
         )
 
+    def _on_resolution_mode_toggled(self) -> None:
+        self._spn_resolution.setEnabled(self._radio_res_custom.isChecked())
+        self._emit_resolution_changed()
+
+    def _emit_resolution_changed(self) -> None:
+        self.sig_resolution_changed.emit(self.get_save_max_dim())
+
+
+# ── Legacy alias (tests / external refs) ──────────────────────────────────────
+DataLoggingWindow = DataLoggingPanel
 
 # ── Left Control Panel ────────────────────────────────────────────────────────
 
 class LeftControlPanel(QWidget):
-    """Left sidebar — all operator controls."""
+    """Left sidebar - dual-column operator controls (no scroll)."""
 
     sig_connect_camera        = pyqtSignal(bool)
     sig_load_model            = pyqtSignal(str)
     sig_unload_model          = pyqtSignal()
     sig_sorter_toggled        = pyqtSignal(bool)
-    sig_logging_toggled       = pyqtSignal(bool)             # kept for compat — prefer sig_save_mode_changed
+    sig_logging_toggled       = pyqtSignal(bool)             # kept for compat - prefer sig_save_mode_changed
     sig_save_mode_changed     = pyqtSignal(bool)             # Save mode toggled (enables data logging)
     sig_detect_mode_changed   = pyqtSignal(bool)             # Detect mode toggled (enables inference)
-    sig_logging_options       = pyqtSignal(bool, bool)       # (raw_frames, detected_frames)
+    sig_logging_options       = pyqtSignal(bool, bool)       # (raw_full_frames, detected_crops)
     sig_save_path_changed     = pyqtSignal(str)              # custom save path ("" = use default)
     sig_save_interval_changed = pyqtSignal(int)              # raw-frame save stride (every N frames)
-    sig_exposure_changed      = pyqtSignal(int, int, int)    # CH1/CH2/CH3 µs — emitted on Apply
-    sig_fps_changed           = pyqtSignal(float)            # FPS — emitted on Apply
-    sig_gains_changed         = pyqtSignal(float, float, float)   # CH1/CH2/CH3 dB — emitted on Apply
+    sig_save_resolution_changed = pyqtSignal(int)            # 0 = full res, else max px dim
+    sig_exposure_changed      = pyqtSignal(int, int, int)    # CH1/CH2/CH3 µs - emitted on Apply
+    sig_fps_changed           = pyqtSignal(float)            # FPS - emitted on Apply
+    sig_gains_changed         = pyqtSignal(float, float, float)   # CH1/CH2/CH3 dB - emitted on Apply
     sig_awb_triggered         = pyqtSignal()                 # One-Push AWB requested (Color CH1 / Source0)
     sig_wb_revert             = pyqtSignal()                 # Revert to pre-AWB ratios requested
-    sig_black_level_changed   = pyqtSignal(float, float, float)  # CH1/CH2/CH3 DN — emitted on Apply
+    sig_black_level_changed   = pyqtSignal(float, float, float)  # CH1/CH2/CH3 DN - emitted on Apply
     sig_roi_changed           = pyqtSignal(int, int, int, int)   # OffsetX, OffsetY, Width, Height
     sig_roi_reset             = pyqtSignal()                 # Reset ROI to full frame
     sig_roi_preview           = pyqtSignal(int, int, int, int)   # Live preview as spinboxes change
@@ -929,39 +951,54 @@ class LeftControlPanel(QWidget):
         self.setFixedWidth(PANEL_WIDTH)
         self.setStyleSheet(f"background-color: {BG_SURFACE};")
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
-        # Build floating popup windows first, then populate sidebar
+        # Build floating camera controls popup, then populate sidebar
         self._cam_win = CameraControlsWindow(self.window())
-        self._dl_win  = DataLoggingWindow(self.window())
         self._build()
         # Populate camera controls: left col = Exposure/FPS/Gain, right col = WB/Black Level
         cam_card, wb_bl_card = self._camera_cards_split()
         self._cam_win.add_widget(cam_card,   col=0)
         self._cam_win.add_widget(wb_bl_card, col=1)
         self._cam_win.finalize()
-        # Sync sidebar buttons when popups are closed via their X button
         self._cam_win.sig_hidden.connect(
             lambda: self._btn_cam_controls.setChecked(False)
         )
-        self._dl_win.sig_hidden.connect(
-            lambda: self._btn_data_logging.setChecked(False)
-        )
-        # Forward data-logging option changes from popup to panel signals
-        self._dl_win.sig_options_changed.connect(self.sig_logging_options.emit)
-        self._dl_win.sig_path_changed.connect(self.sig_save_path_changed.emit)
-        self._dl_win.sig_interval_changed.connect(self.sig_save_interval_changed.emit)
+        self._dl_panel.sig_options_changed.connect(self.sig_logging_options.emit)
+        self._dl_panel.sig_path_changed.connect(self.sig_save_path_changed.emit)
+        self._dl_panel.sig_interval_changed.connect(self.sig_save_interval_changed.emit)
+        self._dl_panel.sig_resolution_changed.connect(self.sig_save_resolution_changed.emit)
 
     def _build(self) -> None:
-        # ── Scrollable inner container ─────────────────────────────────────────
-        # Prevents items from being compressed when window height is small,
-        # which would cause VBoxLayout to collapse widgets on top of each other.
-        inner = QWidget()
-        inner.setStyleSheet(f"background-color: {BG_SURFACE};")
-        vlayout = QVBoxLayout(inner)
-        vlayout.setContentsMargins(12, 6, 12, 12)
-        vlayout.setSpacing(0)
+        """Two-column sidebar. Each column scrolls only when the window is too short."""
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # ── Camera section ─────────────────────────────────────────────────
-        vlayout.addWidget(_SectionHeader("Camera"))
+        col_style = f"background-color: {BG_SURFACE};"
+
+        col1_inner = QWidget()
+        col1_inner.setStyleSheet(col_style)
+        col1_inner.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        col1_v = QVBoxLayout(col1_inner)
+        col1_v.setContentsMargins(12, _COL_PAD_TOP, 6, 12)
+        col1_v.setSpacing(0)
+        col1_v.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        col2_inner = QWidget()
+        col2_inner.setStyleSheet(col_style)
+        col2_inner.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        col2_v = QVBoxLayout(col2_inner)
+        col2_v.setContentsMargins(6, _COL_PAD_TOP, 12, 12)
+        col2_v.setSpacing(0)
+        col2_v.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        divider = QFrame()
+        divider.setFixedWidth(1)
+        divider.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        divider.setStyleSheet(f"background-color: {BORDER}; border: none;")
+
+        # ── Column 1: Camera · Mode · Data Logging ─────────────────────────
+        _begin_module(col1_v, "Camera", first=True)
 
         # Status dot + connect button live directly in the sidebar
         cam_status_card = _Card()
@@ -971,10 +1008,10 @@ class LeftControlPanel(QWidget):
         self._btn_connect.setToolTip("Connect to JAI FSFE-3200T-10GE via 10 GigE")
         self._btn_connect.clicked.connect(self._on_connect)
         cam_status_card.add(self._btn_connect)
-        vlayout.addWidget(cam_status_card)
-        vlayout.addSpacing(6)
+        col1_v.addWidget(cam_status_card)
+        col1_v.addSpacing(6)
 
-        # Camera Controls popup toggle button — identical geometry to Connect Camera.
+        # Camera Controls popup toggle button - identical geometry to Connect Camera.
         # The Connect Camera button lives inside a _Card (10 px h-margins), so we
         # wrap this button in the same 10 px inset to make them visually identical.
         self._btn_cam_controls = QPushButton("Camera Controls")
@@ -1013,25 +1050,24 @@ class LeftControlPanel(QWidget):
         _cam_row = QHBoxLayout()
         _cam_row.setContentsMargins(10, 0, 10, 0)
         _cam_row.addWidget(self._btn_cam_controls)
-        vlayout.addLayout(_cam_row)
-        vlayout.addSpacing(6)
+        col1_v.addLayout(_cam_row)
 
         # ── Mode: Save / Detect toggle buttons ───────────────────────────────
-        vlayout.addWidget(_SectionHeader("Mode"))
+        _begin_module(col1_v, "Mode")
         _mode_card = _Card()
         _mode_desc = QLabel("Select camera operation mode:")
         _mode_desc.setStyleSheet(f"color: {TEXT_3}; font-size: 10px; background: transparent;")
         _mode_card.add(_mode_desc)
 
-        _SAVE_CLR = WARNING   # harvest amber — Save mode
+        _SAVE_CLR = WARNING   # harvest amber - Save mode
         self._btn_save_mode = QPushButton("Save")
         self._btn_save_mode.setFixedHeight(36)
         self._btn_save_mode.setCheckable(True)
         self._btn_save_mode.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_save_mode.setToolTip(
-            "Enable Save mode — record frames to disk.\n"
+            "Enable Save mode - record frames to disk.\n"
             "Raw Frames are saved by default.\n"
-            "Click 'Data Logging' below to configure save options."
+            "Configure options in Data Logging below."
         )
         self._btn_save_mode.setStyleSheet(f"""
             QPushButton {{
@@ -1057,7 +1093,7 @@ class LeftControlPanel(QWidget):
         self._btn_detect_mode.setCheckable(True)
         self._btn_detect_mode.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_detect_mode.setToolTip(
-            "Enable Detect mode — run AI model for apple grading.\n"
+            "Enable Detect mode - run AI model for apple grading.\n"
             "Load a model in the AI Model section to start detecting.\n"
             "Data Logging is disabled when only Detect is active."
         )
@@ -1087,80 +1123,27 @@ class LeftControlPanel(QWidget):
         _mode_btn_row.addWidget(self._btn_save_mode)
         _mode_btn_row.addWidget(self._btn_detect_mode)
         _mode_card.add_layout(_mode_btn_row)
-        vlayout.addWidget(_mode_card)
-        vlayout.addSpacing(4)
+        col1_v.addWidget(_mode_card)
 
-        # ── Data Logging popup button ────────────────────────────────────────
-        vlayout.addWidget(_SectionHeader("Data Logging"))
-        _DL_CLR = WARNING   # harvest amber — matches Save mode accent
-        self._btn_data_logging = QPushButton("Data Logging Options")
-        self._btn_data_logging.setFixedHeight(38)
-        self._btn_data_logging.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_data_logging.setCheckable(True)
-        self._btn_data_logging.setEnabled(False)   # enabled only when Save mode is ON
-        self._btn_data_logging.setToolTip(
-            "Open Data Logging options panel\n"
-            "Raw Frames  ·  Detected Frames\n"
-            "(Enable Save mode first)"
-        )
-        self._btn_data_logging.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {_DL_CLR}; color: white;
-                border: none; font-weight: 700; font-size: 12px;
-                border-radius: 8px;
-            }}
-            QPushButton:hover   {{ background-color: #C89435; }}
-            QPushButton:checked {{
-                background-color: #A07A28;
-                border: 2px solid {WARNING}; color: white;
-            }}
-            QPushButton:pressed  {{ background-color: #856320; }}
-            QPushButton:disabled {{
-                background-color: {BG_ELEVATED}; color: {TEXT_3};
-                border: 1px solid {BORDER};
-            }}
-        """)
-        self._btn_data_logging.clicked.connect(self._on_data_logging_toggle)
-        _dl_row = QHBoxLayout()
-        _dl_row.setContentsMargins(10, 0, 10, 0)
-        _dl_row.addWidget(self._btn_data_logging)
-        vlayout.addLayout(_dl_row)
-        vlayout.addSpacing(6)
+        # ── Data Logging (inline) ───────────────────────────────────────────
+        _begin_module(col1_v, "Data Logging")
+        self._dl_panel = DataLoggingPanel()
+        self._dl_panel.setEnabled(False)
+        col1_v.addWidget(self._dl_panel)
 
-        # ── ROI card — lives in sidebar so channel feeds are always visible ──
-        vlayout.addWidget(_SectionHeader("ROI"))
-        vlayout.addWidget(self._roi_card())
+        # ── Column 2: ROI · AI Model · Sorter ────────────────────────────────
+        _begin_module(col2_v, "ROI", first=True)
+        col2_v.addWidget(self._roi_card())
 
+        _begin_module(col2_v, "AI Model")
+        col2_v.addWidget(self._model_card())
 
-        vlayout.addWidget(_SectionHeader("AI Model"))
-        vlayout.addWidget(self._model_card())
+        _begin_module(col2_v, "Sorter")
+        col2_v.addWidget(self._sorter_card())
 
-        vlayout.addWidget(_SectionHeader("Sorter"))
-        vlayout.addWidget(self._sorter_card())
-
-        vlayout.addStretch()
-
-        # ── Scroll area wrapper ────────────────────────────────────────────────
-        scroll = QScrollArea(self)
-        scroll.setWidget(inner)
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setStyleSheet(f"""
-            QScrollArea {{ border: none; background: transparent; }}
-            QScrollBar:vertical {{
-                background: transparent; width: 4px; margin: 0;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {BORDER_LT}; border-radius: 2px; min-height: 20px;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
-        """)
-
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-        root.addWidget(scroll)
+        root.addWidget(_column_scroll(col1_inner), stretch=1)
+        root.addWidget(divider)
+        root.addWidget(_column_scroll(col2_inner), stretch=1)
 
     # ── Card builders ─────────────────────────────────────────────────────────
 
@@ -1174,7 +1157,7 @@ class LeftControlPanel(QWidget):
 
     @staticmethod
     def _double_sep(card: "_Card") -> None:
-        """Two hairlines — used after Apply buttons to mark section end.
+        """Two hairlines - used after Apply buttons to mark section end.
         A small gap is added first so the lines don't touch the button border."""
         card._layout.addSpacing(7)   # breathing room below the button
         for _ in range(2):
@@ -1192,31 +1175,16 @@ class LeftControlPanel(QWidget):
             self._cam_win.show_beside(self)
             self._btn_cam_controls.setChecked(True)
 
-    def _on_data_logging_toggle(self) -> None:
-        """Show or hide the floating Data Logging options window."""
-        if self._dl_win.isVisible():
-            self._dl_win.hide()
-            self._btn_data_logging.setChecked(False)
-        else:
-            self._dl_win.show_beside(self)
-            self._btn_data_logging.setChecked(True)
-
     def _on_save_mode_toggled(self, checked: bool) -> None:
         """User toggled the Save mode button."""
-        self._btn_data_logging.setEnabled(checked)
-        if not checked:
-            if self._dl_win.isVisible():
-                self._dl_win.hide()
-            self._btn_data_logging.setChecked(False)
-        else:
-            # Auto-check Raw Frames when Save mode is first enabled
-            raw, det = self._dl_win.get_options()
+        self._dl_panel.setEnabled(checked)
+        if checked:
+            raw, det = self._dl_panel.get_options()
             if not raw and not det:
-                self._dl_win.set_options(True, det)
-        # Options are independently available whenever Save mode is ON
-        self._dl_win.set_enabled_options(
-            raw       = checked,
-            detected  = checked,
+                self._dl_panel.set_options(True, det)
+        self._dl_panel.set_enabled_options(
+            raw      = checked,
+            detected = checked,
         )
         self.sig_save_mode_changed.emit(checked)
 
@@ -1242,9 +1210,9 @@ class LeftControlPanel(QWidget):
         # ── Per-channel Exposure (CH1 Color / CH2 NIR1 / CH3 NIR2) ───────────
         # Each source has independent exposure control.
         ch_meta = [
-            ("CH1 Color", WARNING),    # harvest amber — color channel
-            ("CH2 NIR1",  INFO),       # morning mist — NIR1 channel
-            ("CH3 NIR2",  INFO),      # morning mist — 3rd channel
+            ("CH1 Color", WARNING),    # harvest amber - color channel
+            ("CH2 NIR1",  INFO),       # morning mist - NIR1 channel
+            ("CH3 NIR2",  INFO),      # morning mist - 3rd channel
         ]
         self._spn_exposures: list[QSpinBox] = []
         for i, (ch_label, ch_color) in enumerate(ch_meta):
@@ -1252,8 +1220,8 @@ class LeftControlPanel(QWidget):
             spn.setSuffix(" µs")
             spn.setToolTip(
                 f"Exposure time for {ch_label} only.\n"
-                "Short (1000–5000 µs)   → dark but sharp on fast conveyor\n"
-                "Medium (5000–15000 µs) → balanced for 1 apple/s\n"
+                "Short (1000-5000 µs)   → dark but sharp on fast conveyor\n"
+                "Medium (5000-15000 µs) → balanced for 1 apple/s\n"
                 "Long  (>15000 µs)      → brighter but risk of motion blur\n\n"
                 "Maximum is capped by FPS:  max = 1,000,000 / FPS"
             )
@@ -1317,7 +1285,7 @@ class LeftControlPanel(QWidget):
         self._spn_fps = _spinbox(1, 107, 30, 1)
         self._spn_fps.setSuffix(" FPS")
         self._spn_fps.setToolTip(
-            "Camera acquisition frame rate (1–107 FPS).\n"
+            "Camera acquisition frame rate (1-107 FPS).\n"
             "Higher FPS → smoother video, shorter max exposure.\n"
             "Lower FPS  → more light per frame, better NIR signal.\n\n"
             "Changing FPS auto-updates the exposure maximum.\n"
@@ -1334,7 +1302,7 @@ class LeftControlPanel(QWidget):
         self._double_sep(left)
 
 
-        # Fix initial max — valueChanged fires before signal is connected so call manually
+        # Fix initial max - valueChanged fires before signal is connected so call manually
         self._on_fps_spinbox_changed(self._spn_fps.value())
 
 
@@ -1346,9 +1314,9 @@ class LeftControlPanel(QWidget):
         # Each source has independent gain control.
         # Color: hardcoded hex matching channel header colors in image_display.py
         ch_meta = [
-            ("CH1 Color", WARNING),    # harvest amber — color channel
-            ("CH2 NIR1",  INFO),       # morning mist — NIR1 channel
-            ("CH3 NIR2",  INFO),       # morning mist — NIR2 channel
+            ("CH1 Color", WARNING),    # harvest amber - color channel
+            ("CH2 NIR1",  INFO),       # morning mist - NIR1 channel
+            ("CH3 NIR2",  INFO),       # morning mist - NIR2 channel
         ]
         self._spn_gains: list[QDoubleSpinBox] = []
         for i, (ch_label, ch_color) in enumerate(ch_meta):
@@ -1414,7 +1382,7 @@ class LeftControlPanel(QWidget):
 
 
         # ══════════════════════════════════════════════════════════════
-        # RIGHT CARD — White Balance · Black Level
+        # RIGHT CARD - White Balance · Black Level
         # (ROI has been moved to the left sidebar for channel visibility)
         # ══════════════════════════════════════════════════════════════
 
@@ -1424,7 +1392,7 @@ class LeftControlPanel(QWidget):
         # ── White Balance (Source0 / Color CH1 only) ────────────────────────────
         # WB ratios live on GainSelector=Red/Green/Blue for Source0 (Color CH1) only.
         # NIR channels have no Bayer pattern and no WB concept.
-        self._lbl_wb_ratios = QLabel("R: —   G: —   B: —")
+        self._lbl_wb_ratios = QLabel("R: -   G: -   B: -")
         self._lbl_wb_ratios.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._lbl_wb_ratios.setStyleSheet(
             f"color: {TEXT_3}; font-size: 10px; background: {BG_ELEVATED}40; "
@@ -1456,7 +1424,7 @@ class LeftControlPanel(QWidget):
         """)
         self._btn_awb.clicked.connect(self.sig_awb_triggered.emit)
 
-        # Revert WB button (warning/reset style) — disabled until first AWB run
+        # Revert WB button (warning/reset style) - disabled until first AWB run
         self._btn_revert_wb = QPushButton("↺  Revert")
         self._btn_revert_wb.setFixedHeight(34)
         self._btn_revert_wb.setEnabled(False)
@@ -1495,7 +1463,7 @@ class LeftControlPanel(QWidget):
         # Removing ambient dark-pedestal and thermal noise at hardware level.
 
         # Channel colors match the rest of the panel (CH1=amber, CH2/CH3=cyan)
-        _BL_COLORS  = [WARNING, INFO, INFO]   # amber · mist · mist — matches Exposure / Gain
+        _BL_COLORS  = [WARNING, INFO, INFO]   # amber · mist · mist - matches Exposure / Gain
 
         _BL_LABELS  = ["CH1 Color", "CH2 NIR1", "CH3 NIR2"]
         _BL_TIPS    = [
@@ -1520,7 +1488,7 @@ class LeftControlPanel(QWidget):
             )
 
             spn = QDoubleSpinBox()
-            spn.setRange(0.0, 64.0)    # JAI FS-3200T: practical dark pedestal range 0–64 DN
+            spn.setRange(0.0, 64.0)    # JAI FS-3200T: practical dark pedestal range 0-64 DN
             spn.setDecimals(1)
             spn.setSingleStep(1.0)
             spn.setValue(0.0)
@@ -1542,7 +1510,7 @@ class LeftControlPanel(QWidget):
             if ch_idx < 2:
                 self._row_sep(right)
 
-        # Apply + Reset — use same _btn_secondary style as Exposure/FPS/Gain buttons
+        # Apply + Reset - use same _btn_secondary style as Exposure/FPS/Gain buttons
         self._btn_apply_bl = _btn_secondary("Apply Black Levels")
         self._btn_apply_bl.setToolTip(
             "Write Black Level values to firmware for all 3 sources."
@@ -1664,7 +1632,7 @@ class LeftControlPanel(QWidget):
             # Enable Revert after AWB; disable it after a Revert (snapshot consumed)
             self._btn_revert_wb.setEnabled(not revert_done)
         else:
-            self._lbl_wb_ratios.setText("R: —   G: —   B: — (failed)")
+            self._lbl_wb_ratios.setText("R: -   G: -   B: - (failed)")
             self._lbl_wb_ratios.setStyleSheet(
                 f"color: {DANGER}; font-size: 10px; background: transparent;"
             )
@@ -1702,7 +1670,7 @@ class LeftControlPanel(QWidget):
         """
         card = _Card()
 
-        # Readout label — shows current ROI as 'W × H  @ (X, Y)'
+        # Readout label - shows current ROI as 'W × H  @ (X, Y)'
         self._lbl_roi = QLabel("Full Frame 2048 × 1536 @ (0, 0)")
         self._lbl_roi.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._lbl_roi.setStyleSheet(
@@ -1717,10 +1685,10 @@ class LeftControlPanel(QWidget):
         #   OffsetX / Width  → multiples of 16 (200 → 192)
         #   OffsetY / Height → multiples of  8 ( 10 →   8)
         ROI_PARAMS = [
-            ("OffsetX", "px",  0, 2032, 16, "Left crop start. Must be multiple of 16 — arrow keys step by 16."),
-            ("OffsetY", "px",  0, 1528,  8, "Top crop start. Must be multiple of 8 — arrow keys step by 8."),
-            ("Width",   "px", 16, 2048, 16, "Capture width. Must be multiple of 16 — arrow keys step by 16."),
-            ("Height",  "px",  8, 1536,  8, "Capture height. Must be multiple of 8 — arrow keys step by 8."),
+            ("OffsetX", "px",  0, 2032, 16, "Left crop start. Must be multiple of 16 - arrow keys step by 16."),
+            ("OffsetY", "px",  0, 1528,  8, "Top crop start. Must be multiple of 8 - arrow keys step by 8."),
+            ("Width",   "px", 16, 2048, 16, "Capture width. Must be multiple of 16 - arrow keys step by 16."),
+            ("Height",  "px",  8, 1536,  8, "Capture height. Must be multiple of 8 - arrow keys step by 8."),
         ]
         self._spn_roi: dict[str, QSpinBox] = {}
 
@@ -1760,7 +1728,7 @@ class LeftControlPanel(QWidget):
             row_l.addWidget(spn, stretch=1)
             card.add(row_w)
 
-        # NOTE: No cross-constraint wiring — static ranges are clear.
+        # NOTE: No cross-constraint wiring - static ranges are clear.
         # Firmware clamps OffsetX+Width<=2048 etc. on Apply automatically.
 
         # ── Buttons: Apply + Full Frame ──────────────────────────────
@@ -1863,7 +1831,7 @@ class LeftControlPanel(QWidget):
 
         card.add_layout(btn_layout)
 
-        self._lbl_model_detail = QLabel("—")
+        self._lbl_model_detail = QLabel("-")
         self._lbl_model_detail.setStyleSheet(
             f"color: {TEXT_3}; font-size: 10px; background: transparent;"
         )
@@ -1891,9 +1859,9 @@ class LeftControlPanel(QWidget):
         self._spn_confidence.setMinimumWidth(80)
         self._spn_confidence.setToolTip(
             "Minimum YOLO detection confidence to keep a bounding box.\n"
-            "Lower  (0.10–0.30) → more detections, higher false-positive risk\n"
+            "Lower  (0.10-0.30) → more detections, higher false-positive risk\n"
             "Default (0.50)     → balanced precision / recall\n"
-            "Higher (0.70–0.90) → fewer detections, only high-certainty hits\n\n"
+            "Higher (0.70-0.90) → fewer detections, only high-certainty hits\n\n"
             "Takes effect on next model load."
         )
 
@@ -1936,7 +1904,7 @@ class LeftControlPanel(QWidget):
         self._combo_sorter.setMinimumWidth(WIDGET_MIN_W)
         card.add(self._combo_sorter)
 
-        # Outlet legend — one row per grade
+        # Outlet legend - one row per grade
         card.add(self._outlet_legend())
         return card
 
@@ -1971,7 +1939,7 @@ class LeftControlPanel(QWidget):
         return w
 
     def _logging_card(self) -> "QWidget":
-        # Retired — Data Logging is now a popup window (DataLoggingWindow).
+        # Retired - Data Logging is now inline in column 1 (DataLoggingPanel).
         # This stub prevents AttributeError if called by any external code.
         from PyQt6.QtWidgets import QWidget as _QW
         return _QW()
@@ -1992,7 +1960,7 @@ class LeftControlPanel(QWidget):
         """Toggle the connect button between primary and danger styles.
 
         Uses a dynamic Qt property ('danger') instead of calling setStyleSheet()
-        so that the stylesheet — and therefore the button's computed geometry —
+        so that the stylesheet - and therefore the button's computed geometry -
         never changes.  Only the paint color is updated.
         """
         if self._connected:
@@ -2027,23 +1995,18 @@ class LeftControlPanel(QWidget):
         self.set_save_mode(enabled)
 
     def set_logging_path(self, path: str) -> None:
-        """Update the session output path shown in the Data Logging button tooltip."""
-        self._btn_data_logging.setToolTip(
-            f"Data Logging Options\n"
-            f"Output: {path}\n"
-            f"Raw Frames  ·  Detected Frames"
-        )
+        """Update the session output path shown in the Data Logging panel."""
+        self._dl_panel.set_output_path(path)
 
     def set_save_mode(self, enabled: bool) -> None:
         """Programmatically set Save mode button state without emitting signals."""
         self._btn_save_mode.blockSignals(True)
         self._btn_save_mode.setChecked(enabled)
         self._btn_save_mode.blockSignals(False)
-        self._btn_data_logging.setEnabled(enabled)
-        # All checkboxes enabled whenever Save mode is ON
-        self._dl_win.set_enabled_options(
-            raw       = enabled,
-            detected  = enabled,
+        self._dl_panel.setEnabled(enabled)
+        self._dl_panel.set_enabled_options(
+            raw      = enabled,
+            detected = enabled,
         )
 
     def set_detect_mode(self, enabled: bool) -> None:
@@ -2051,23 +2014,31 @@ class LeftControlPanel(QWidget):
         self._btn_detect_mode.blockSignals(True)
         self._btn_detect_mode.setChecked(enabled)
         self._btn_detect_mode.blockSignals(False)
-        # Detect mode does not gate popup checkboxes — Save mode does
+        # Detect mode does not gate popup checkboxes - Save mode does
 
     def update_logging_options(self, raw: bool, detected: bool) -> None:
-        """Sync the Data Logging popup checkboxes without emitting signals."""
-        self._dl_win.set_options(raw, detected)
+        """Sync the Data Logging checkboxes without emitting signals."""
+        self._dl_panel.set_options(raw, detected)
 
     def get_logging_options(self) -> tuple:
         """Return current logging options as (raw, detected)."""
-        return self._dl_win.get_options()
+        return self._dl_panel.get_options()
 
     def get_custom_save_path(self) -> str:
-        """Return the custom save path selected in the Data Logging popup, or '' for default."""
-        return self._dl_win.get_custom_path()
+        """Return the custom save path selected in Data Logging, or '' for default."""
+        return self._dl_panel.get_custom_path()
 
     def get_save_interval(self) -> int:
         """Return the raw-frame save interval (save every N frames; 1 = every frame)."""
-        return self._dl_win.get_save_interval()
+        return self._dl_panel.get_save_interval()
+
+    def get_save_max_dim(self) -> int:
+        """Return 0 for full resolution, else the custom max px dimension."""
+        return self._dl_panel.get_save_max_dim()
+
+    def set_save_max_dim(self, max_dim: int) -> None:
+        """Sync the Save Resolution controls without emitting signals."""
+        self._dl_panel.set_save_max_dim(max_dim)
 
 
     def set_model_loaded(self, name: str) -> None:
@@ -2081,7 +2052,7 @@ class LeftControlPanel(QWidget):
             self._btn_unload.setEnabled(True)
         else:
             self._model_status.set_state("idle", "No model loaded")
-            self._lbl_model_detail.setText("—")
+            self._lbl_model_detail.setText("-")
             self._lbl_model_detail.setStyleSheet(
                 f"color: {TEXT_3}; font-size: 10px; background: transparent;"
             )

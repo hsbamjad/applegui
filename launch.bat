@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================
-:: launch.bat  —  Infield Apple Sorting System
+:: launch.bat  -  Infield Apple Sorting System
 :: Michigan State University | ASABE AIM26 | 2026
 :: ============================================================
 title Infield Apple Sorting System

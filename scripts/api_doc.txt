@@ -27,7 +27,7 @@ Table of Contents
 6 Troubleshooting............................................................................................................28
 6.1 Troubleshooting Tips ............................................................................................. 28
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 -  – 2
+Doc ID: QSG-0010 -  - 2
 Document Number and Revisions
 Document ID: QSG-0010
 Revisi
@@ -65,7 +65,7 @@ On Linux, these files are co-located with the standard eBUS SDK files:
 For troubleshooting information and technical support contact information Pleora Technologies, see 
 the last few chapters of this guide.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Related Documents – 3
+Doc ID: QSG-0010 - Related Documents - 3
 1 Related Documents
 The eBUS SDK Python API Quick Start Guide is complemented by the following Pleora Technologies
 documents, which are available on the Pleora Technologies Support Center (supportcenter.pleora.com):
@@ -77,7 +77,7 @@ documents, which are available on the Pleora Technologies Support Center (suppor
  eBUS SDK Licensing Overview Knowledge Base Article
  Configuring Your Computer and Network Adapters for Best Performance Knowledge Base Article
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Introducing the eBUS SDK Python API – 4
+Doc ID: QSG-0010 - Introducing the eBUS SDK Python API - 4
 2 Introducing the eBUS SDK Python API
 This chapter describes the eBUS SDK Python API, which is a feature of the eBUS SDK that allows you to 
 develop custom vision systems to acquire and transmit images and data using Python.
@@ -112,7 +112,7 @@ transmitter technology, an embossed Pleora watermark will appear on the images t
 addition, you will not be able to receive the GigE Vision or USB3 Vision raw data payload type from the 
 transmitting device.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Introducing the eBUS SDK Python API – 5
+Doc ID: QSG-0010 - Introducing the eBUS SDK Python API - 5
 2.2.2 GigE Vision Devices Created with the eBUS Edge API
 When an eBUS Edge license is not present on the eBUS Edge application side, the eBUS receiver 
 application will automatically disconnect from the eBUS Edge device after 15 minutes. In addition, the 
@@ -124,7 +124,7 @@ Licensing Overview Knowledge Base Article available on the Pleora Technologies S
 supportcenter.pleora.com.
 
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Installing the eBUS SDK – 6
+Doc ID: QSG-0010 - Installing the eBUS SDK - 6
 3 Installing the eBUS SDK
 eBUS SDK Python is packaged differently for Windows compared with Linux based systems. On Linux 
 systems, eBUS SDK Python is incorporated into the traditional eBUS SDK install package and is 
@@ -150,7 +150,7 @@ on the Pleora Support Center.
 each NIC, you may require multiple NICs. For example, even though Gigabit Ethernet is full duplex (that 
 is, it manage 1 Gbps incoming and 1 Gbps outgoing), the computer’s PCIe bus may not have enough 
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Installing the eBUS SDK – 7
+Doc ID: QSG-0010 - Installing the eBUS SDK - 7
 One of the following operating systems:
  eBUS SDK 7.0: 
  For Microsoft Windows:
@@ -177,13 +177,13 @@ One of the following operating systems:
  CentOS Stream 8, 64-bit: Qt 5.15.3
  For the Linux for ARM platform:
  eBUS SDK 7.0:  
-bandwidth to support this. This means that while your NIC can — in theory — accept four cameras at 
+bandwidth to support this. This means that while your NIC can - in theory - accept four cameras at 
 200 Mbps each incoming, and output a 750 Mbps stream on a single NIC, the NIC you choose may not 
 support this level of performance.
 For 7.0, QT 6.8.0 is included and deployed with eBUS packages for all 
 x86_64 Linux platforms.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Installing the eBUS SDK – 8
+Doc ID: QSG-0010 - Installing the eBUS SDK - 8
  NVIDIA Jetson AGX Xavier, Jetson Xavier NX, Jetson AGX Xavier Industrial, Jetson 
 AGX Orin, Jetson Orin NX running Jetpack 5.1.x which x is between 0 and 4. (Ubuntu 
 20.04) 
@@ -219,7 +219,7 @@ According to the Linux/ARM platform, we provide eBUS Python for the stock Python
  CentOS 8 Stream (64-bit), eBUS Python for Python 3.6 is installed with the SDK
  Raspberry Pi Desktop (64-bit), eBUS Python for Python 3.11 is installed with the SDK.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Installing the eBUS SDK – 9
+Doc ID: QSG-0010 - Installing the eBUS SDK - 9
 3.1.1 Python Releases for Windows
 For more information see https://www.python.org/downloads/windows/
 Only the latest of each minor version is officially supported. The following Windows versions are 
@@ -240,7 +240,7 @@ Pleora support representative.
  Ensure that you uninstall any previous versions of eBUS SDK from your machine before 
 installing eBUS SDK 7.x.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Installing the eBUS SDK – 10
+Doc ID: QSG-0010 - Installing the eBUS SDK - 10
 3.2 Installing the eBUS Python package on Windows
 Since the eBUS SDK Python API is not part of the eBUS SDK on Windows, we must first install the base 
 eBUS SDK using the Windows installation package, then install the appropriate eBUS Python package 
@@ -266,7 +266,7 @@ IMPORTANT: 
 If you use eBUS Runtime instead eBUS SDK on Windows to work with eBUS Python, you need to 
 select eBUS Edge when installing eBUS Runtime.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Installing the eBUS SDK – 11
+Doc ID: QSG-0010 - Installing the eBUS SDK - 11
 How to upgrade pip on Windows
 From a terminal, run the following command:
 python -m pip install --upgrade pip
@@ -283,7 +283,7 @@ From a terminal run the following command with the default Python path, if you u
 C:\Users\<username>\AppData\Local\Programs\Python\Python38>python -m pip install "numpy<2"
 
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Installing the eBUS SDK – 12
+Doc ID: QSG-0010 - Installing the eBUS SDK - 12
 (optional) How to install opencv-python on Windows
 From a terminal, run the following command:
 python -m pip install "opencv-python<4" --prefer-binary
@@ -307,7 +307,7 @@ C:\Users\<username>\AppData\Local\Programs\Python\Python38\Lib\site- packages\eb
 eBUS Python for Windows supports only numpy version 1.x.
 
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Using the Sample Code – 13
+Doc ID: QSG-0010 - Using the Sample Code - 13
 4 Using the Sample Code
 To illustrate how you can use the eBUS SDK Python API to acquire and transmit images, the SDK 
 includes sample code that you can use. This chapter provides a description of the sample code.
@@ -323,7 +323,7 @@ about the C++ samples that are also available, see the eBUS SDK C++ API Quick S
 information about the C# and VB.NET samples that are also available, see the eBUS SDK .NET 
 API Quick Start Guide.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Using the Sample Code – 14
+Doc ID: QSG-0010 - Using the Sample Code - 14
 Table 2: Sample Code
 Sample 
 code
@@ -388,7 +388,7 @@ build more robustness into your eBUS SDK application.
 Command line.
  All platforms
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Using the Sample Code – 15
+Doc ID: QSG-0010 - Using the Sample Code - 15
 Configuration and Event Monitoring
 DeviceSeri
 alPort
@@ -447,7 +447,7 @@ device sending data using a payload of type ChunkData.
 Command line.
  All platforms
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK – 16
+Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK - 16
 5 Code Walkthrough: Acquiring Images with the eBUS SDK
 This section walks you through the code contained in PvStreamSample. This sample illustrates how to 
 detect available devices, connect to a device, and start an image stream.
@@ -471,7 +471,7 @@ you open the sample code in your Visual Studio Code. On the Windows operating sy
 to these directories is restricted.
 
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK – 17
+Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK - 17
 5.1.2 Windows and Linux Support
 PvStreamSample can be used on the Windows and Linux operating systems. Platform-specific code is 
 abstracted by PvSampleUtils.py, which is installed on your computer as part of the eBUS SDK.
@@ -504,7 +504,7 @@ import numpy as np
 import eBUS as eb
 import lib.PvSampleUtils as psu
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK – 18
+Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK - 18
 5.4 PvStreamSample
 The PvStreamSample allows the user to select a device, connect to a device (connect_to_device), start the 
 image stream (open_stream, configure_stream, configure_stream_buffers), and process the image stream 
@@ -545,7 +545,7 @@ PvDeviceU3V) and they share a parent class (PvDevice) that abstracts most of the
 possible, you should use a PvDevice object instead of a protocol-specific object to reduce code 
 duplication. To create a PvDevice object from a PvDeviceInfo object without explicitly checking the 
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK – 19
+Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK - 19
 protocol of the device, use the CreateAndConnect static factory method from the PvDevice class, which 
 abstracts the device type.
 A PvDevice object is returned and can now be used to control the device and initiate streaming.
@@ -571,7 +571,7 @@ method of the PvDeviceInfo object (aDeviceInfo) to determine whether the device 
 or USB3 Vision. Then you could create a new PvDeviceGEV or PvDeviceU3V object and call the 
 Connect method directly.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK – 20
+Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK - 20
 5.6.1 Python
 def open_stream(connection_ID):
       # Open stream to the GigE Vision or USB3 Vision device
@@ -587,7 +587,7 @@ a destination IP address for the image stream. In this sample, the destination i
 the IP address of the network interface card on the PC used to interface with the device (which is the 
 most common configuration).
 Also, for optimal performance over Gigabit Ethernet, it is necessary to determine the largest possible 
-packet size for the connection (ideally the link would use jumbo frames — typically about 9000 bytes). 
+packet size for the connection (ideally the link would use jumbo frames - typically about 9000 bytes). 
 This is the only place in the application where we check the device type.
 First, we determine if the PvDevice object represents a GigE Vision device. If it is a GigE Vision device, we do 
 the required configuration. If it is a USB3 Vision device, no stream configuration is required for this sample.
@@ -598,7 +598,7 @@ Center at supportcenter.pleora.com.
 When developing your application, you may prefer to hard-code the packet size based on your 
 target system, instead of using PvDeviceGEV.NegotiatePacketSize
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK – 21
+Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK - 21
 5.7.1 Python
 def configure_stream(device, stream):
       # If this is a GigE Vision device, configure GigE Vision specific streaming parameters
@@ -624,7 +624,7 @@ performance dips when you cannot process buffers fast enough for a short period)
 the application to avoid a scenario where all buffers are in the output queue awaiting retrieval, 
 and none are available in the input queue to store newly-received images.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK – 22
+Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK - 22
 5.8.1 Python
 def configure_stream_buffers(device, stream):
       buffer_list = []
@@ -657,7 +657,7 @@ Next, it retrieves an array of GenICam features that represent the stream parame
 GenICam floating point values that represent stream statistics, which will later be used to display the 
 data rate and bandwidth during image acquisition.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK – 23
+Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK - 23
 5.9.1 Python
 def acquire_images(device, stream):
       # Get device parameters need to control streaming
@@ -693,7 +693,7 @@ changes to the streaming related parameters during image acquisition.
 For USB3 Vision devices, it sets the TLParamsLocked feature, configures the USB driver for 
 streaming, and sets the stream enable bit on the device.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK – 24
+Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK - 24
 retrieved, then it checks the value of the PvResult object (operational_result) to verify the acquisition 
 operation (for example, it checks if the operation timed out, had too many resends, or was aborted.)
 5.9.3 Python
@@ -721,7 +721,7 @@ enumeration to check that an image is included. For example, PvPayloadType can b
 PvPayloadTypeImage, PvPayloadTypeUndefined (an undefined or non-initialized payload type), or 
 PvPayloadTypeChunk, PvPayloadTypeRawData, or PvPayloadTypeMultiPart.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK – 25
+Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK - 25
 5.9.4 Python
 if payload_type == eb.PvPayloadTypeImage:
      image = pvbuffer.GetImage
@@ -757,7 +757,7 @@ valid (for example, only part of the image could be retrieved or a timeout occur
 message is presented and we also re-queue the PvBuffer object back to the PvStream object so it can 
 be used again.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK – 26
+Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK - 26
 5.9.5 Python
         else:
          # Non OK operational result
@@ -789,7 +789,7 @@ changes to the streaming related parameters to occur.
 For USB3 Vision devices, StreamDisable resets the TLParamsLocked feature and sets the 
 stream enable bit on the device.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK – 27
+Doc ID: QSG-0010 - Code Walkthrough: Acquiring Images with the eBUS SDK - 27
 Now that streaming has stopped, we mark all of the buffers in the input queue as aborted 
 (using PvStream.AbortQueuedBuffers), which moves the buffers to the output queue.
 5.9.8 Python
@@ -809,7 +809,7 @@ While our sample does not necessarily require that we abort and remove the buffe
 queue (because we do not restart PvStream in this sample), it is included in this sample to 
 illustrate the concept of clearing buffers.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Troubleshooting – 28
+Doc ID: QSG-0010 - Troubleshooting - 28
 6 Troubleshooting
 This chapter provides you with troubleshooting tips and recommended solutions for issues that can 
 occur when using the eBUS SDK Python API, GigE Vision, and USB3 Vision devices.
@@ -844,7 +844,7 @@ for known issues and other product features.
 If you perform the resolution for your issue and the issue is not corrected, we recommend you 
 review the other resolutions listed in this table. Some symptoms may be interrelated.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Troubleshooting – 29
+Doc ID: QSG-0010 - Troubleshooting - 29
 The GigE 
 Vision device 
 is not 
@@ -888,7 +888,7 @@ latest version
 Ensure you have installed the latest drivers from the manufacturer of 
 your NIC.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Troubleshooting – 30
+Doc ID: QSG-0010 - Troubleshooting - 30
 SDK is able to 
 connect, but no 
 images appear 
@@ -962,7 +962,7 @@ require high throughput. Should the application continue to drop
 packets even after the installation of the GigE Vision driver, a 
 computer with better performance may be required.
 eBUS SDK 6.x - eBUS SDK Python API Quick Start Guide
-Doc ID: QSG-0010 - Troubleshooting – 31
+Doc ID: QSG-0010 - Troubleshooting - 31
 Insufficient 
 NIC 
 performance

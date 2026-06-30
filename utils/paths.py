@@ -22,14 +22,14 @@ from pathlib import Path
 # This works whether you launch via:
 #   - python main.py            (from project root)
 #   - launch.bat                (sets CWD to project root before calling python)
-#   - double-click AppleSorter.exe  (PyInstaller bundle — uses sys._MEIPASS)
+#   - double-click AppleSorter.exe  (PyInstaller bundle - uses sys._MEIPASS)
 import sys
 
 if getattr(sys, "frozen", False):
     # Running inside a PyInstaller bundle
     APP_ROOT: Path = Path(sys._MEIPASS)  # type: ignore[attr-defined]
 else:
-    # Running from source — walk up from this file to the project root
+    # Running from source - walk up from this file to the project root
     APP_ROOT: Path = Path(__file__).resolve().parent.parent
 
 # ── Canonical paths ───────────────────────────────────────────────────────────

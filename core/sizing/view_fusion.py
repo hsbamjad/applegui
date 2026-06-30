@@ -1,5 +1,5 @@
 """
-core/sizing/view_fusion.py  —  Step 3: Cross-Frame Fusion
+core/sizing/view_fusion.py  -  Step 3: Cross-Frame Fusion
 ==========================================================
 Michigan State University | Apple GUI | feature/apple-size-ml branch
 
@@ -15,7 +15,7 @@ For each method m in {maxw, sym, ell, area}:
 
   1. Filter to "central" frames only:
        cx in [cx_min + 20%*cx_range,  cx_max - 20%*cx_range]
-     (same filter used in compute_consensus_ellipse — excludes partial-view
+     (same filter used in compute_consensus_ellipse - excludes partial-view
       entry/exit frames)
 
   2. Quality-weighted mean:
@@ -35,8 +35,8 @@ OUTPUT FEATURES (per apple)
   mean_Q        (mean quality of central frames)
   n_central     (number of central frames used)
   cx_range      (total traversal in pixels)
-  lane          (0/1/2 — systematic scale offset from lens geometry)
-  ell_a, ell_b  (consensus ellipse axes — from extract_frames.py)
+  lane          (0/1/2 - systematic scale offset from lens geometry)
+  ell_a, ell_b  (consensus ellipse axes - from extract_frames.py)
 
 These 15 features feed directly into the Step 4 ML regressor.
 """
@@ -186,10 +186,10 @@ def feature_matrix(fused_list: list[dict],
 
     Returns
     -------
-    X : np.ndarray shape (N, F)  — feature matrix
-    y : np.ndarray shape (N,)    — GT labels in mm (NaN where unavailable)
-    meta : list of dicts         — apple_idx, session, lane, pos per row
-    cols : list[str]             — column names matching X
+    X : np.ndarray shape (N, F)  - feature matrix
+    y : np.ndarray shape (N,)    - GT labels in mm (NaN where unavailable)
+    meta : list of dicts         - apple_idx, session, lane, pos per row
+    cols : list[str]             - column names matching X
     """
     if feature_cols is None:
         feature_cols = [
@@ -197,7 +197,7 @@ def feature_matrix(fused_list: list[dict],
             "d_maxw_wmean", "d_sym_wmean", "d_ell_wmean", "d_area_wmean",
             # Per-method peaks (upper bound; useful for ML)
             "d_maxw_peak",  "d_sym_peak",  "d_ell_peak",  "d_area_peak",
-            # Consensus ellipse (from central-60% median — already validated)
+            # Consensus ellipse (from central-60% median - already validated)
             "ell_a", "ell_b",
             # Quality and coverage
             "mean_Q", "n_central",

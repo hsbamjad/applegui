@@ -13,9 +13,9 @@ import numpy as np
 DRAW_W = 512
 
 CLASS_COLORS = [
-    (52, 211, 153),    # Fresh — emerald green
-    (251, 191, 36),    # Processing — amber
-    (248, 113, 113),   # Cull — red
+    (52, 211, 153),    # Fresh - emerald green
+    (251, 191, 36),    # Processing - amber
+    (248, 113, 113),   # Cull - red
 ]
 
 CLASS_NAMES = ["Fresh", "Processing", "Cull"]

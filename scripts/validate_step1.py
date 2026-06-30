@@ -1,5 +1,5 @@
 """
-scripts/validate_step1.py  —  Step 1 Quality Audit
+scripts/validate_step1.py  -  Step 1 Quality Audit
 ====================================================
 Loads all session pkls and validates:
   1. Apple count (must be exactly 18 per session)

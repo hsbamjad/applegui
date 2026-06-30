@@ -1,13 +1,13 @@
 """
 core/inference/__init__.py
 ===========================
-AI Inference Module — Public API
+AI Inference Module - Public API
 
 Model: YOLOv8m-seg (instance segmentation + tracking)
 Trained on: Gala apples (396 hand-picked, diverse defects)
 Classes: Fresh | Processing | Cull
 Input:  3-channel multispectral image (RG + NIR1 + NIR2 from JAI)
-Output: Per-apple instance — grade, confidence, bounding box, mask, diameter_px
+Output: Per-apple instance - grade, confidence, bounding box, mask, diameter_px
 
 Apple tracking across frames:
   - Each apple is assigned a YOLO tracking ID when it enters the frame

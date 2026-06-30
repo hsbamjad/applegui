@@ -12,13 +12,13 @@ try:
     import PyQt6.QtCore
     logger.info(f"PyQt6:       {PyQt6.QtCore.PYQT_VERSION_STR}")
 except ImportError as e:
-    logger.error(f"PyQt6:       FAILED — {e}")
+    logger.error(f"PyQt6:       FAILED - {e}")
 
 try:
     import pyqtgraph
     logger.info(f"PyQtGraph:   {pyqtgraph.__version__}")
 except ImportError as e:
-    logger.error(f"PyQtGraph:   FAILED — {e}")
+    logger.error(f"PyQtGraph:   FAILED - {e}")
 
 try:
     import torch
@@ -27,37 +27,37 @@ try:
     logger.info(f"PyTorch:     {torch.__version__}")
     logger.info(f"{'CUDA OK' if cuda_ok else 'CUDA FAILED'}:         {cuda_ok} ({gpu_name})")
 except ImportError as e:
-    logger.error(f"PyTorch:     FAILED — {e}")
+    logger.error(f"PyTorch:     FAILED - {e}")
 
 try:
     import cv2
     logger.info(f"OpenCV:      {cv2.__version__}")
 except ImportError as e:
-    logger.error(f"OpenCV:      FAILED — {e}")
+    logger.error(f"OpenCV:      FAILED - {e}")
 
 try:
     import numpy as np
     logger.info(f"NumPy:       {np.__version__}")
 except ImportError as e:
-    logger.error(f"NumPy:       FAILED — {e}")
+    logger.error(f"NumPy:       FAILED - {e}")
 
 try:
     import yaml
     logger.info(f"PyYAML:      {yaml.__version__}")
 except ImportError as e:
-    logger.error(f"PyYAML:      FAILED — {e}")
+    logger.error(f"PyYAML:      FAILED - {e}")
 
 try:
     import harvesters
     logger.info(f"Harvesters:  {harvesters.__version__}")
 except ImportError as e:
-    logger.error(f"Harvesters:  FAILED — {e}")
+    logger.error(f"Harvesters:  FAILED - {e}")
 
 try:
     import serial
     logger.info(f"PySerial:    {serial.__version__}")
 except ImportError as e:
-    logger.error(f"PySerial:    FAILED — {e}")
+    logger.error(f"PySerial:    FAILED - {e}")
 
 logger.info("=" * 45)
 logger.info(f"   Python: {sys.version.split()[0]}")

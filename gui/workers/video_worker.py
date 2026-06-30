@@ -1,7 +1,7 @@
 """
 gui/workers/video_worker.py
 ============================
-QThread video simulation worker — replaces the live CameraWorker
+QThread video simulation worker - replaces the live CameraWorker
 during development and testing (no physical camera required).
 
 Reads 3 pre-recorded video files (one per channel) and emits
@@ -117,7 +117,7 @@ class VideoWorker(QThread):
         reported_fps = float(self._fps)
 
         while self._running:
-            # Block here while paused — frame position is preserved
+            # Block here while paused - frame position is preserved
             self._pause_event.wait()
             if not self._running:
                 break

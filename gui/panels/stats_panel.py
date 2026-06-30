@@ -1,13 +1,13 @@
 """
 gui/panels/stats_panel.py
 =========================
-Right statistics panel — live grading dashboard.
+Right statistics panel - live grading dashboard.
 
 Cards:
-  System Status — 4 subsystem health pills
-  Grade Summary — Fresh / Processing / Cull live counts + mini bar
-  Recent Results — scrollable list: #ID  Lane  Grade → Outlet  Conf
-  Live Metrics  — conveyor speed, throughput, total, session time
+  System Status - 4 subsystem health pills
+  Grade Summary - Fresh / Processing / Cull live counts + mini bar
+  Recent Results - scrollable list: #ID  Lane  Grade → Outlet  Conf
+  Live Metrics  - conveyor speed, throughput, total, session time
 """
 
 from __future__ import annotations
@@ -200,7 +200,7 @@ class RecentResultsCard(QWidget):
         layout.setSpacing(0)
 
         self._list = QListWidget()
-        self._list.setFixedHeight(165)
+        self._list.setFixedHeight(180)
         self._list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
         self._list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._list.setStyleSheet(f"""
@@ -208,10 +208,10 @@ class RecentResultsCard(QWidget):
                 background: transparent;
                 border: none;
                 font-family: 'Consolas', 'Courier New', monospace;
-                font-size: 10px;
+                font-size: 11px;
             }}
             QListWidget::item {{
-                padding: 2px 6px;
+                padding: 4px 6px;
                 border-bottom: 1px solid {BORDER};
                 color: {TEXT_1};
                 background: transparent;
@@ -238,10 +238,10 @@ class RecentResultsCard(QWidget):
 
         g_color = GRADE_COLORS.get(grade, TEXT_2)
 
-        # Row format (fits 256px panel at 10px Consolas):
+        # Row format (fits 256px panel at 11px Consolas):
         #   #0011 L1 Cull  →C  94%  72mm
         grade_short = grade[:5]     # Fresh / Proc / Cull
-        size_str    = f"{size_mm:.0f}mm" if size_mm is not None else " — "
+        size_str    = f"{size_mm:.0f}mm" if size_mm is not None else " - "
         text = (
             f"#{apple_id:04d} L{lane} {grade_short:<5}"
             f" \u2192{outlet}  {confidence * 100:.0f}%  {size_str}"
@@ -335,7 +335,7 @@ class MetricsCard(QWidget):
         self._session.set_value("00:00:00")
 
     def record_grade(self) -> None:
-        """Called each time a new grade is recorded — only increments total count.
+        """Called each time a new grade is recorded - only increments total count.
         Throughput display is driven by set_throughput() from the real measurement."""
         self._total_n += 1
         self._total.set_value(str(self._total_n))
@@ -345,11 +345,11 @@ class MetricsCard(QWidget):
         self._speed.set_value(f"{apm:.0f} apple/min")
 
     def set_infer_fps(self, fps: float) -> None:
-        """YOLO pipeline throughput (1 s avg) — how fast AI processes frames."""
+        """YOLO pipeline throughput (1 s avg) - how fast AI processes frames."""
         self._infer_fps.set_value(f"{fps:.1f} FPS")
 
     def set_view_fps(self, fps: float) -> None:
-        """Model-input panel repaint rate — how smooth the AI video looks."""
+        """Model-input panel repaint rate - how smooth the AI video looks."""
         if fps > 0:
             self._view_fps.set_value(f"{fps:.1f} FPS")
 

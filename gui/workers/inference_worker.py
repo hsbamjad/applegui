@@ -3,8 +3,8 @@ gui/workers/inference_worker.py
 ================================
 Contains two workers:
 
-  MockInferenceWorker  — random grade generator for demo / UI development.
-  RealInferenceWorker  — live YOLO inference on camera/video frames (Phase 1+).
+  MockInferenceWorker  - random grade generator for demo / UI development.
+  RealInferenceWorker  - live YOLO inference on camera/video frames (Phase 1+).
 
 Phase 4: MockInferenceWorker will be retired once RealInferenceWorker + Grade
 Aggregator are fully wired.
@@ -96,12 +96,12 @@ class RealInferenceWorker(QThread):
     Live YOLO inference worker for Phase 1+.
 
     Runs on a dedicated QThread. Accepts frames from a thread-safe queue
-    (maxsize=2 — drops stale frames if GPU falls behind camera FPS).
+    (maxsize=2 - drops stale frames if GPU falls behind camera FPS).
     YOLO + conveyor tracker run here; GUI thread stays lightweight.
 
     Signals:
-      sig_preview(thumb_bgr, active)   — coalesced on GUI for model-input panel
-      sig_graded(list[GradeRecord])    — grade commits, never dropped
+      sig_preview(thumb_bgr, active)   - coalesced on GUI for model-input panel
+      sig_graded(list[GradeRecord])    - grade commits, never dropped
       sig_fps(float)
       sig_status(str, bool)
     """
@@ -141,13 +141,12 @@ class RealInferenceWorker(QThread):
         self._recorder    = None
         self._running     = False
         self._queue: queue.Queue = queue.Queue(maxsize=2)
-        self._raw_frames: tuple | None = None   # (ch1, ch2, ch3) for current frame — raw source crops
         self._tracker_cfg = str(
             Path(__file__).parent.parent.parent / "bytetrack.yaml"
         )
 
     def set_grading_recorder(self, recorder) -> None:
-        """Live session recorder — logging runs on this thread, not the GUI."""
+        """Live session recorder - logging runs on this thread, not the GUI."""
         self._recorder = recorder
 
     def set_tracker(self, tracker) -> None:
@@ -220,7 +219,7 @@ class RealInferenceWorker(QThread):
         )
 
     def _maybe_log_batch(self, frame: np.ndarray, active: list) -> None:
-        """Copy + enqueue only when a recorder slot is free — never blocks inference."""
+        """Copy + enqueue only when a recorder slot is free - never blocks inference."""
         rec = self._recorder
         if rec is None or not active:
             return
@@ -280,9 +279,6 @@ class RealInferenceWorker(QThread):
 
             ch1, ch2, ch3 = item
             frame = self._prepare_input(ch1, ch2, ch3)
-            # Hold raw frames so _maybe_log_batch can pass them to the recorder.
-            # Stored as a tuple of references — no copy on the hot path.
-            self._raw_frames = (ch1, ch2, ch3)
 
             try:
                 results = model.track(

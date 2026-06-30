@@ -1,13 +1,13 @@
 """
 gui/workers/tracker.py
 ======================
-Apple grading tracker — orientation-aware, robust against double counting.
+Apple grading tracker - orientation-aware, robust against double counting.
 
 Supported conveyor orientations (set in config.yaml → conveyor.orientation):
-  "LR"  left  → right   (X increasing)   — horizontal belt
-  "RL"  right → left    (X decreasing)   — horizontal belt, reversed
-  "TB"  top   → bottom  (Y increasing)   — vertical belt, top entry
-  "BT"  bottom→ top     (Y decreasing)   — vertical belt, bottom entry  ← default
+  "LR"  left  → right   (X increasing)   - horizontal belt
+  "RL"  right → left    (X decreasing)   - horizontal belt, reversed
+  "TB"  top   → bottom  (Y increasing)   - vertical belt, top entry
+  "BT"  bottom→ top     (Y decreasing)   - vertical belt, bottom entry  ← default
 
 For ANY orientation the algorithm reduces the 2-D detection to a single
 scalar `travel_pos` that monotonically INCREASES as the apple travels:
@@ -42,7 +42,7 @@ class GradeRecord:
     class_name:  str
     confidence:  float
     frames_seen: int
-    track_id:    int = -1   # ByteTrack ID — used by AppleSizeAccumulator
+    track_id:    int = -1   # ByteTrack ID - used by AppleSizeAccumulator
 
 
 class AppleTracker:
@@ -243,7 +243,7 @@ class AppleTracker:
             hist["last_frame"]  = self._frame_no
             hist["lane"]        = lane
 
-            # Weighted vote accumulation — ignore very-low-confidence frames
+            # Weighted vote accumulation - ignore very-low-confidence frames
             # (background noise classified as Cull at conf < min_vote_conf would
             # otherwise accumulate hundreds of votes and drown out real grades).
             if conf >= self._min_vote_conf:
@@ -259,15 +259,15 @@ class AppleTracker:
             seq_id = self._id_map.get(tid)
 
             # ── Counting gate ─────────────────────────────────────────────────
-            #  Guard 1: narrow band  — apple inside exit_pos ± band_half
-            #  Guard 2: entry zone   — first detection was in the START of travel
-            #  Guard 3: min frames   — not a phantom
+            #  Guard 1: narrow band  - apple inside exit_pos ± band_half
+            #  Guard 2: entry zone   - first detection was in the START of travel
+            #  Guard 3: min frames   - not a phantom
             in_band       = (exit_pos - band_half) <= travel <= (exit_pos + band_half)
             entered_start = 0 <= hist["first_travel"] < entry_pos
             enough_frames = hist["frames_seen"] >= self._min_frames
 
             if in_band and entered_start and enough_frames and seq_id is None:
-                # Proximity check — prevent double-fire on the SAME apple only.
+                # Proximity check - prevent double-fire on the SAME apple only.
                 # Require same lane, very recent count, and close position so that
                 # lag/bunching does not assign one seq_id to different apples.
                 matched_seq = None
@@ -324,7 +324,7 @@ class AppleTracker:
                     clearly_non_cull = max_non_cull_peak >= self._peak_conf_override
 
                     # Overwhelming cull: hit_cull so high it can only be a cull apple.
-                    # Lifts peak_conf_override protection — a genuine Fresh/Processing apple
+                    # Lifts peak_conf_override protection - a genuine Fresh/Processing apple
                     # will never accumulate this many high-conf Cull hits on a screw conveyor.
                     overwhelming_cull = hist["hit_cull"] >= self._overwhelming_cull
 
@@ -354,7 +354,7 @@ class AppleTracker:
                     else:
                         # Let all classes compete including Cull.
                         # Previously this code used max(non_cull) which stripped Cull out of
-                        # the race entirely — so if Cull had 40% of votes (live display showed
+                        # the race entirely - so if Cull had 40% of votes (live display showed
                         # Cull) but force_cull=False, Fresh at 35% would win the committed
                         # grade. That caused "tracked as Cull on screen → committed as Fresh."
                         best_cls = max(hist["votes"], key=hist["votes"].get)
@@ -380,7 +380,7 @@ class AppleTracker:
                     log.info("Grade #%d  lane=%d  %s  conf=%.2f  frames=%d",
                              seq_id, lane, cls_name, best_conf, hist["frames_seen"])
 
-            # Live display grade — mirrors commit force_cull logic so on-screen label
+            # Live display grade - mirrors commit force_cull logic so on-screen label
             # always matches what the committed grade will be.
             # Previously used raw max(votes) which showed "Fresh" even while Cull
             # evidence was accumulating, creating a confusing mismatch.
@@ -403,7 +403,7 @@ class AppleTracker:
                 )
 
                 if force_cull_v or overwhelming_v:
-                    # Cull evidence is strong enough that commit will override to Cull —
+                    # Cull evidence is strong enough that commit will override to Cull -
                     # show Cull on screen now so the label matches the final grade.
                     disp_cls  = 2
                     disp_conf = cull_ratio_v

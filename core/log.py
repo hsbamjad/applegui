@@ -32,7 +32,7 @@ def configure_root(level: int = logging.INFO,
                    log_file: str | None = None) -> None:
     """
     Configure the root logger.  Call this once at the top of each runnable
-    script.  Safe to call multiple times — subsequent calls are no-ops.
+    script.  Safe to call multiple times - subsequent calls are no-ops.
 
     Parameters
     ----------

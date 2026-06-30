@@ -1,5 +1,5 @@
 """
-core/sizing/mask_diameter.py  —  Step 2: Per-Frame Diameter Estimators
+core/sizing/mask_diameter.py  -  Step 2: Per-Frame Diameter Estimators
 =======================================================================
 Michigan State University | Apple GUI | feature/apple-size-ml branch
 
@@ -53,7 +53,7 @@ def _get_contour(mask_u8: np.ndarray) -> np.ndarray | None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# METHOD 1 — MAX WIDTH PROJECTION
+# METHOD 1 - MAX WIDTH PROJECTION
 # Rotate the mask through 180° in steps. For each angle, project the
 # mask onto the perpendicular axis and measure the span of the foreground
 # pixels.  The maximum span across all angles is the diameter estimate.
@@ -97,7 +97,7 @@ def max_width(mask: np.ndarray, angle_step: int = 2) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# METHOD 2 — CONTOUR SYMMETRY (Mizushima & Lu 2013)
+# METHOD 2 - CONTOUR SYMMETRY (Mizushima & Lu 2013)
 #
 # For each direction theta in [0, 180°):
 #   From the mask centroid, project contour points onto direction theta.
@@ -163,7 +163,7 @@ def symmetry_diameter(mask: np.ndarray, n_angles: int = 90) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# METHOD 3 — ELLIPSE MAJOR AXIS
+# METHOD 3 - ELLIPSE MAJOR AXIS
 # Fit an ellipse to the contour using OpenCV fitEllipse (least-squares).
 # Return the major axis length as the diameter estimate.
 # Simple, fast, and robust for near-circular apples.
@@ -189,7 +189,7 @@ def ellipse_diameter(mask: np.ndarray) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# METHOD 3b — ELLIPSE MINOR AXIS (bonus feature for ML, not a diameter)
+# METHOD 3b - ELLIPSE MINOR AXIS (bonus feature for ML, not a diameter)
 # The minor axis captures the apple's narrowest visible dimension.
 # Used as a feature alongside the major axis; the ratio gives aspect ratio.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -207,7 +207,7 @@ def ellipse_minor_axis(mask: np.ndarray) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# METHOD 4 — AREA-BASED SPHERE ESTIMATE
+# METHOD 4 - AREA-BASED SPHERE ESTIMATE
 # Assume the apple is a perfect sphere viewed equatorially.
 # A = pi * (D/2)^2  =>  D = sqrt(4A/pi)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -267,7 +267,7 @@ def quality_score(mask: np.ndarray) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CONVENIENCE — ALL DIAMETERS IN ONE CALL
+# CONVENIENCE - ALL DIAMETERS IN ONE CALL
 # ─────────────────────────────────────────────────────────────────────────────
 def all_diameters(mask: np.ndarray, angle_step: int = 2) -> dict:
     """
@@ -276,10 +276,10 @@ def all_diameters(mask: np.ndarray, angle_step: int = 2) -> dict:
     Returns
     -------
     dict with keys:
-        d_maxwidth   : float  Method 1 — max projection width
-        d_symmetry   : float  Method 2 — bilateral symmetry score (Mizushima & Lu 2013)
-        d_ellipse    : float  Method 3 — ellipse major axis
-        d_area       : float  Method 4 — area sphere estimate
+        d_maxwidth   : float  Method 1 - max projection width
+        d_symmetry   : float  Method 2 - bilateral symmetry score (Mizushima & Lu 2013)
+        d_ellipse    : float  Method 3 - ellipse major axis
+        d_area       : float  Method 4 - area sphere estimate
         d_minor      : float  ellipse minor axis (ML feature)
         quality      : float  Q in [0, 1]
     """
