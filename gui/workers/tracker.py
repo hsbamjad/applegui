@@ -81,7 +81,9 @@ class AppleTracker:
         min_vote_conf:              float = 0.20,
         min_det_conf:               float = 0.35,
         peak_conf_override:         float = 0.75,  # raised from 0.50 → genuine Fresh peaks >0.75; stray Cull misclassifications don't
-        overwhelming_cull_threshold: int  = 20,   # lowered from 40 → still unreachable at high speed but reachable at low speed
+        overwhelming_cull_threshold: int  = 12,   # lowered from 20 → hit_cull=12 at high speed is clearly cull
+        combined_cull_ratio:        float = 0.20,  # combined evidence: ratio ≥ this AND hits ≥ hit_threshold → force cull even if clearly_non_cull
+        combined_cull_hits:         int   = 10,   # combined evidence: needs both conditions; harder to trigger than either alone
     ) -> None:
         assert orientation in ORIENTATIONS, \
             f"orientation must be one of {ORIENTATIONS}, got '{orientation}'"
@@ -104,6 +106,8 @@ class AppleTracker:
         self._min_det_conf             = min_det_conf
         self._peak_conf_override       = peak_conf_override
         self._overwhelming_cull        = overwhelming_cull_threshold
+        self._combined_cull_ratio      = combined_cull_ratio
+        self._combined_cull_hits       = combined_cull_hits
 
         self._history:     dict[int, dict] = defaultdict(self._new_history)
         self._lost:        dict[int, dict] = {}
@@ -337,10 +341,20 @@ class AppleTracker:
                     # will never accumulate this many high-conf Cull hits on a screw conveyor.
                     overwhelming_cull = hist["hit_cull"] >= self._overwhelming_cull
 
+                    # Combined evidence bypass: if BOTH cull vote ratio AND high-conf hit count
+                    # are elevated together, override clearly_non_cull even without overwhelming.
+                    # Handles cases where the model gives a stray high-conf Fresh detection on a
+                    # cull apple (peak_non_cull > peak_conf_override) but consistent cull evidence
+                    # across the track still points to Cull.
+                    combined_cull = (
+                        cull_ratio >= self._combined_cull_ratio
+                        and hist["hit_cull"] >= self._combined_cull_hits
+                    )
+
                     force_cull = (
                         cull_ratio >= self._cull_ratio_thresh
                         or hist["hit_cull"] >= self._hit_threshold
-                    ) and (not clearly_non_cull or overwhelming_cull)
+                    ) and (not clearly_non_cull or overwhelming_cull or combined_cull)
 
                     # Non-cull vote split for diagnostics
                     non_cull = {k: v for k, v in hist["votes"].items() if k != 2}
@@ -351,10 +365,10 @@ class AppleTracker:
 
                     log.info(
                         "Vote commit: apple=%s lane=%d  cull_ratio=%.2f  hit_cull=%d  "
-                        "overwhelming=%s  peak_non_cull=%.2f  clearly_non_cull=%s  "
-                        "force_cull=%s  | non_cull split: %s",
+                        "overwhelming=%s  combined_cull=%s  peak_non_cull=%.2f  "
+                        "clearly_non_cull=%s  force_cull=%s  | non_cull split: %s",
                         seq_id, lane, cull_ratio, hist["hit_cull"],
-                        overwhelming_cull, max_non_cull_peak,
+                        overwhelming_cull, combined_cull, max_non_cull_peak,
                         clearly_non_cull, force_cull, non_cull_str,
                     )
 
@@ -405,13 +419,17 @@ class AppleTracker:
                     (hist["peak_conf"].get(k, 0.0) for k in [0, 1]), default=0.0
                 )
                 clearly_non_cull_v = non_cull_peak_v >= self._peak_conf_override
+                combined_cull_v = (
+                    cull_ratio_v >= self._combined_cull_ratio
+                    and hit_cull_v >= self._combined_cull_hits
+                )
                 force_cull_v = (
                     (cull_ratio_v >= self._cull_ratio_thresh
                      or hit_cull_v >= self._hit_threshold)
-                    and (not clearly_non_cull_v or overwhelming_v)
+                    and (not clearly_non_cull_v or overwhelming_v or combined_cull_v)
                 )
 
-                if force_cull_v or overwhelming_v:
+                if force_cull_v or overwhelming_v or combined_cull_v:
                     # Cull evidence is strong enough that commit will override to Cull -
                     # show Cull on screen now so the label matches the final grade.
                     disp_cls  = 2
