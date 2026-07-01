@@ -218,10 +218,11 @@ inference:
                                   # 12 < 14 → triggers for real Cull. Fresh=1, Proc=0-3 safely below.
                                   # (was 7 - based on budget=10; actual frames=62-67 same as 1 apples/s!)
       cull_ratio_threshold: 0.55  # 55% weighted Cull votes = force Cull
-      proc_ratio_threshold: 0.30  # DATA gap: Fresh=0.23, Cull=0.33, Proc=0.65-0.68
-                                  # 0.30 sits between Fresh(0.23) and Cull(0.33)
-                                  # force_cull takes priority so Cull apples (proc_ratio=0.33-0.42)
-                                  # are still correctly called Cull even though proc_ratio>0.30
+      proc_ratio_threshold: 999    # DISABLED - Fresh apples at 2 apples/s can reach proc_ratio=0.47
+                                  # DATA: Fresh proc_ratio=0.47, Processing proc_ratio=0.66-0.70
+                                  # processing_weight=1.6 already makes Processing win via max(votes)
+                                  # force_proc was overriding correct Fresh votes (Fresh=0.53 won but
+                                  # proc_ratio=0.47>=0.30 forced it to Processing anyway)
       hit_proc_threshold: 999     # DISABLED - unreliable at any frame count
       fresh_peak_protect: 1.0     # DISABLED - ALL apples peak 0.97-0.98 Fresh
       peak_conf_override: 0.70    # Needs STRONG Fresh/Processing to block Cull
