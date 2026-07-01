@@ -178,6 +178,10 @@ inference:
                                   # (was 25 - UNREACHABLE at 21 frames! force_cull was disabled)
       cull_ratio_threshold: 0.58  # 58% weighted Cull votes forces Cull
                                   # (was 0.65 - too hard to reach with model's Fresh bias)
+      proc_ratio_threshold: 0.38  # If 38%+ of all votes are Processing, force Processing
+                                  # (at 21 frames: ~8 frames voting Proc = force Proc)
+      hit_proc_threshold: 10      # 10+ high-conf (>0.50) Processing hits forces Processing
+                                  # (at 21 frames: 10/21 = 48% of frames high-conf Proc)
       peak_conf_override: 0.55    # Fresh/Processing needs conf>=0.55 to block Cull override
       overwhelming_cull_threshold: 14  # Max possible=21; 14/21=67% frames high-conf = indisputable
                                        # (was 40 - UNREACHABLE at 21 frames!)
@@ -201,6 +205,9 @@ inference:
                                   # briefly on rotation; 1.3x helps it win vs Fresh bias
       hit_threshold: 7            # 7 high-conf hits out of 10 frames = Cull
       cull_ratio_threshold: 0.55  # 55% Cull votes = force Cull (65% too hard at 10 frames)
+      proc_ratio_threshold: 0.35  # If 35%+ of all votes are Processing, force Processing
+                                  # (at 10 frames: ~3-4 frames voting Proc = force Proc)
+      hit_proc_threshold: 5       # 5+ high-conf Processing hits out of 10 = force Processing
       peak_conf_override: 0.70    # Needs STRONG Fresh/Processing to block Cull
                                   # (rotating Cull apple can flash Fresh at low conf)
       overwhelming_cull_threshold: 5   # 5 high-conf hits out of 10 = overwhelming

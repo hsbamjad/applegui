@@ -70,6 +70,8 @@ class AppleTracker:
         processing_weight:          float = 1.0,  # multiplier on Processing class votes
         hit_threshold:              int   = 20,
         cull_ratio_threshold:       float = 0.65,
+        proc_ratio_threshold:       float = 0.45, # if Processing votes >= this fraction, force Processing
+        hit_proc_threshold:         int   = 99,   # high-conf Processing hits needed to force Processing
         min_vote_conf:              float = 0.20,
         min_det_conf:               float = 0.35,
         peak_conf_override:         float = 0.50,
@@ -94,6 +96,8 @@ class AppleTracker:
         self._processing_weight        = processing_weight
         self._hit_threshold            = hit_threshold
         self._cull_ratio_thresh        = cull_ratio_threshold
+        self._proc_ratio_thresh        = proc_ratio_threshold
+        self._hit_proc_threshold       = hit_proc_threshold
         self._min_vote_conf            = min_vote_conf
         self._min_det_conf             = min_det_conf
         self._peak_conf_override       = peak_conf_override
@@ -169,6 +173,7 @@ class AppleTracker:
             "votes":        defaultdict(float),
             "peak_conf":    defaultdict(float),  # highest conf seen per class_id
             "hit_cull":     0,
+            "hit_proc":     0,   # high-conf Processing detections (conf > 0.50)
             "frames_seen":  0,
             "first_travel": -1,
             "last_pos":     (0, 0),
@@ -289,6 +294,8 @@ class AppleTracker:
                 hist["peak_conf"][cls_id] = conf
             if cls_id == 2 and conf > 0.6:
                 hist["hit_cull"] += 1
+            if cls_id == 1 and conf > 0.50:   # Processing hit counter
+                hist["hit_proc"] += 1
 
             seen_ids.add(tid)
             seq_id = self._id_map.get(tid)
@@ -378,6 +385,19 @@ class AppleTracker:
                         or hist["hit_cull"] >= self._hit_threshold
                     ) and (not clearly_non_cull or overwhelming_cull)
 
+                    # ── Force Processing ──────────────────────────────────────
+                    # Symmetric to force_cull: if Processing has a strong enough
+                    # presence in the vote, force Processing over Fresh.
+                    # Only triggers when force_cull is False (Cull takes priority).
+                    proc_ratio = hist["votes"].get(1, 0.0) / total
+                    force_processing = (
+                        not force_cull
+                        and (
+                            proc_ratio >= self._proc_ratio_thresh
+                            or hist["hit_proc"] >= self._hit_proc_threshold
+                        )
+                    )
+
                     # Non-cull vote split for diagnostics
                     non_cull = {k: v for k, v in hist["votes"].items() if k != 2}
                     non_cull_str = "  ".join(
@@ -386,26 +406,26 @@ class AppleTracker:
                     ) if non_cull else "(none)"
 
                     log.info(
-                        "Vote commit: apple=%s lane=%d  cull_ratio=%.2f  hit_cull=%d  "
-                        "overwhelming=%s  peak_non_cull=%.2f  clearly_non_cull=%s  "
-                        "force_cull=%s  | non_cull split: %s",
-                        seq_id, lane, cull_ratio, hist["hit_cull"],
+                        "Vote commit: apple=%s lane=%d  cull_ratio=%.2f  proc_ratio=%.2f  "
+                        "hit_cull=%d  hit_proc=%d  overwhelming=%s  peak_non_cull=%.2f  "
+                        "clearly_non_cull=%s  force_cull=%s  force_proc=%s  | non_cull: %s",
+                        seq_id, lane, cull_ratio, proc_ratio,
+                        hist["hit_cull"], hist["hit_proc"],
                         overwhelming_cull, max_non_cull_peak,
-                        clearly_non_cull, force_cull, non_cull_str,
+                        clearly_non_cull, force_cull, force_processing, non_cull_str,
                     )
 
                     if force_cull:
                         best_cls, best_conf = 2, cull_ratio
+                    elif force_processing:
+                        best_cls, best_conf = 1, proc_ratio
                     else:
-                        # Let all classes compete including Cull.
-                        # Previously this code used max(non_cull) which stripped Cull out of
-                        # the race entirely - so if Cull had 40% of votes (live display showed
-                        # Cull) but force_cull=False, Fresh at 35% would win the committed
-                        # grade. That caused "tracked as Cull on screen → committed as Fresh."
+                        # Let all classes compete on raw weighted vote totals.
                         best_cls = max(hist["votes"], key=hist["votes"].get)
                         if best_cls == 2:
-                            # Cull won the vote count even without hitting force_cull threshold
                             best_conf = cull_ratio
+                        elif best_cls == 1:
+                            best_conf = proc_ratio
                         else:
                             best_conf = hist["votes"][best_cls] / total
 
@@ -448,13 +468,22 @@ class AppleTracker:
                 )
 
                 if force_cull_v or overwhelming_v:
-                    # Cull evidence is strong enough that commit will override to Cull -
-                    # show Cull on screen now so the label matches the final grade.
                     disp_cls  = 2
                     disp_conf = cull_ratio_v
                 else:
-                    disp_cls  = max(hist["votes"], key=hist["votes"].get)
-                    disp_conf = hist["votes"][disp_cls] / total_v
+                    # Mirror force_processing for live display
+                    proc_v       = hist["votes"].get(1, 0)
+                    proc_ratio_v = proc_v / total_v if total_v > 0 else 0.0
+                    force_proc_v = (
+                        proc_ratio_v >= self._proc_ratio_thresh
+                        or hist["hit_proc"] >= self._hit_proc_threshold
+                    )
+                    if force_proc_v:
+                        disp_cls  = 1
+                        disp_conf = proc_ratio_v
+                    else:
+                        disp_cls  = max(hist["votes"], key=hist["votes"].get)
+                        disp_conf = hist["votes"][disp_cls] / total_v
             else:
                 disp_cls, disp_conf = cls_id, conf
 
