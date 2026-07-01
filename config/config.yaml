@@ -175,7 +175,10 @@ inference:
       cull_weight: 1.3            # Boost Cull - model biased toward Fresh/Processing
                                   # cull_weight(1.3) > processing_weight(1.25) so Cull beats
                                   # Processing even when model votes are roughly equal
-      processing_weight: 1.25     # Boost Processing - model over-predicts Fresh
+      processing_weight: 1.6       # KEY: flips borderline 60/40 Proc/Fresh via max(weighted votes)
+                                  # Data: Fresh=0.63/Proc=0.37 → stays Fresh (0.63 vs 0.592)
+                                  #       Fresh=0.61/Proc=0.39 → flips Proc (0.61 vs 0.624) ✓
+                                  # (was 1.25 - not enough to flip 60/40 borderline cases)
       hit_threshold: 50           # DATA: ~110 frames/apple; 50 = 45% frames high-conf Cull
                                   # (was 16 - calibrated for budget=21, real=110 frames)
       cull_ratio_threshold: 0.58  # 58% weighted Cull votes forces Cull
@@ -183,8 +186,9 @@ inference:
       proc_ratio_threshold: 0.48  # Processing must be ~half of all votes to force
                                   # Fresh apples rarely sustain 48%+ Processing ratio
                                   # (was 0.38 - too low, Fresh apples triggered it)
-      hit_proc_threshold: 33      # DATA: Fresh=23 hits, Processing=39-59 hits at 110 frames
-                                  # 33 cleanly splits the two distributions (was 10 - too low)
+      hit_proc_threshold: 999     # DISABLED - even Fresh apples get 35+ Processing hits
+                                  # at conf>0.50 in 100+ frames. Use proc_ratio + weight instead.
+                                  # (was 33 - fired on every apple including Fresh)
       fresh_peak_protect: 1.0     # DISABLED - ALL apples peak 0.97-0.98 Fresh (model behaviour)
                                   # Guard was always True for every apple including Processing/Cull
       peak_conf_override: 0.55    # Fresh/Processing needs conf>=0.55 to block Cull override
