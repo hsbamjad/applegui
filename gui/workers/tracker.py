@@ -330,7 +330,10 @@ class AppleTracker:
                 if matched_seq is not None:
                     self._id_map[tid] = matched_seq
                     seq_id = matched_seq
-                    log.debug("Track %d linked to existing #%d (lane=%d age=%d)",
+                    hist["committed"] = True   # suppress ghost: this track is a duplicate of
+                                               # an already-committed apple (same lane, close
+                                               # position) — do not fire a second grade commit
+                    log.debug("Track %d linked to existing #%d (lane=%d age=%d) – ghost suppressed",
                               tid, matched_seq, lane, age)
                 else:
                     lane_cnt = self._lane_counts.get(lane, 0) + 1
