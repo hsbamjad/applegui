@@ -351,10 +351,11 @@ class AppleTracker:
                         and hist["hit_cull"] >= self._combined_cull_hits
                     )
 
-                    force_cull = (
-                        cull_ratio >= self._cull_ratio_thresh
-                        or hist["hit_cull"] >= self._hit_threshold
-                    ) and (not clearly_non_cull or overwhelming_cull or combined_cull)
+                    force_cull = combined_cull or (
+                        (cull_ratio >= self._cull_ratio_thresh
+                         or hist["hit_cull"] >= self._hit_threshold)
+                        and (not clearly_non_cull or overwhelming_cull)
+                    )
 
                     # Non-cull vote split for diagnostics
                     non_cull = {k: v for k, v in hist["votes"].items() if k != 2}
@@ -423,10 +424,10 @@ class AppleTracker:
                     cull_ratio_v >= self._combined_cull_ratio
                     and hit_cull_v >= self._combined_cull_hits
                 )
-                force_cull_v = (
+                force_cull_v = combined_cull_v or (
                     (cull_ratio_v >= self._cull_ratio_thresh
                      or hit_cull_v >= self._hit_threshold)
-                    and (not clearly_non_cull_v or overwhelming_v or combined_cull_v)
+                    and (not clearly_non_cull_v or overwhelming_v)
                 )
 
                 if force_cull_v or overwhelming_v or combined_cull_v:
