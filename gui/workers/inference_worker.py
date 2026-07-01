@@ -140,7 +140,7 @@ class RealInferenceWorker(QThread):
         self._log_tick    = 0
         self._recorder    = None
         self._running     = False
-        self._queue: queue.Queue = queue.Queue(maxsize=2)
+        self._queue: queue.Queue = queue.Queue(maxsize=4)  # increased from 2 → fewer frame drops at 2 apples/s
         self._tracker_cfg = str(
             Path(__file__).parent.parent.parent / "bytetrack.yaml"
         )

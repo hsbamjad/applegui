@@ -1,20 +1,25 @@
 # bytetrack.yaml - Custom ByteTrack config for Apple Sorting System
 #
 # Key changes from defaults:
-#   track_low_thresh  : 0.1 → 0.35  (stop accepting background noise at low confidence)
-#   track_buffer      : 30  → 15    (tracks die faster when apple leaves frame)
-#   new_track_thresh  : 0.6 → 0.55  (slightly easier to start a new track)
+#   track_low_thresh  : 0.1  → 0.35  (stop accepting background noise at low confidence)
+#   track_buffer      : 30   → 20    (was 15; more recovery time for fast apples at 2/s)
+#   new_track_thresh  : 0.6  → 0.45  (easier to start new tracks at high throughput)
+#   track_high_thresh : 0.5  → 0.45  (matches lowered new_track_thresh)
 #
 # Why: The conveyor belt texture generates continuous low-confidence (~0.1-0.2)
 # Cull detections. With the default 0.1 low threshold, ByteTrack keeps these tracks
 # alive indefinitely (400+ frames), polluting the grade vote with Cull noise.
 # Raising to 0.35 eliminates background noise while keeping real apple detections.
+#
+# High-speed tuning (2 apples/s): apples spend fewer frames in FOV so track
+# initialization must be more aggressive and buffer must cover occlusions.
 
 tracker_type: bytetrack
 
 # Detection threshold for "high confidence" bucket - used for new track creation
-# and primary association. Matches our YOLO inference conf threshold.
-track_high_thresh: 0.50
+# and primary association. Lowered from 0.50 to 0.45 to match new_track_thresh
+# and improve detection rate at high conveyor speeds.
+track_high_thresh: 0.45
 
 # Detection threshold for "low confidence" bucket - used only for secondary
 # association with already-active tracks. Raised from default 0.1 to 0.35 to
@@ -22,12 +27,13 @@ track_high_thresh: 0.50
 track_low_thresh: 0.35
 
 # Minimum confidence required to start a brand-new track.
-new_track_thresh: 0.55
+# Lowered from 0.55 to 0.45 for faster apple throughput.
+new_track_thresh: 0.45
 
 # Number of frames a track survives without any detection before being deleted.
-# Reduced from 30 to 15: at ~15 FPS this is 1 second - enough to bridge
-# momentary occlusions but not keep phantom tracks alive across the whole FOV.
-track_buffer: 15
+# Raised from 15 to 20: gives more recovery time for occlusions at 2 apples/s
+# while still clearing phantom tracks within ~1.3s at ~15 FPS.
+track_buffer: 20
 
 # IOU threshold for track-detection association matching.
 match_thresh: 0.80

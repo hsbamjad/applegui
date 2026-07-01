@@ -19,6 +19,11 @@ scalar `travel_pos` that monotonically INCREASES as the apple travels:
 
 All gate logic (entry zone, counting band, proximity) operates on travel_pos.
 Lane assignment uses the orthogonal axis (Y for LR/RL, X for TB/BT).
+
+High-speed tuning (2 apples/s, ~8-10 frames/apple at ~15 FPS):
+  min_frames     = 10   (was 25) - commit with fewer frames
+  band_half_frac = 0.05 (was 0.025) - wider counting gate
+  entry_frac     = 0.50 (was 0.35) - larger valid entry zone
 """
 
 from __future__ import annotations
@@ -58,9 +63,9 @@ class AppleTracker:
         n_lanes:                    int   = 3,
         orientation:                str   = "BT",
         exit_frac:                  float = 0.85,
-        band_half_frac:             float = 0.025,
-        entry_frac:                 float = 0.35,
-        min_frames:                 int   = 25,
+        band_half_frac:             float = 0.05,   # widened from 0.025 → catches fast apples
+        entry_frac:                 float = 0.50,   # expanded from 0.35 → larger valid entry zone
+        min_frames:                 int   = 10,     # lowered from 25 → ~8-10 frames at 2 apple/s
         max_lost_frames:            int   = 10,
         max_recover_dist:           int   = 80,
         min_count_dist_frac:        float = 0.12,
