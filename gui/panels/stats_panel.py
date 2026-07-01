@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QSizePolicy, QFrame,
 )
-from PyQt6.QtCore import Qt, pyqtSlot, QTimer
+from PyQt6.QtCore import Qt, pyqtSlot, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor
 
 from gui.styles import (
@@ -261,7 +261,100 @@ class RecentResultsCard(QWidget):
         self._list.addItem(placeholder)
 
 
-# ── Metric Item ───────────────────────────────────────────────────────────────
+# ── GT ID Mode Toggle ─────────────────────────────────────────────────────────
+
+class GtIdModeToggle(QWidget):
+    """
+    Small pill toggle placed above Recent Results.
+
+    OFF (default) → global sequential IDs  (apple #1 is always the 1st apple seen)
+    ON            → GT interleaved IDs      (lane-based formula for ground-truth labeling)
+    """
+    sig_gt_id_mode_changed = pyqtSignal(bool)   # True = GT mode ON
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._active = False
+        self._build()
+
+    def _build(self) -> None:
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(2, 4, 2, 2)
+        layout.setSpacing(6)
+
+        # Label
+        self._lbl = QLabel("GT ID Mode")
+        self._lbl.setStyleSheet(
+            f"color: {TEXT_3}; font-size: 10px; font-weight: 600; "
+            f"letter-spacing: 0.5px; background: transparent;"
+        )
+
+        # Pill toggle button
+        self._btn = QLabel()
+        self._btn.setFixedSize(34, 18)
+        self._btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn.setToolTip(
+            "OFF → Global sequential IDs (1, 2, 3…)\n"
+            "ON  → GT interleaved IDs (lane-based)"
+        )
+        self._refresh_pill()
+
+        layout.addWidget(self._lbl)
+        layout.addStretch()
+        layout.addWidget(self._btn)
+
+    def _refresh_pill(self) -> None:
+        if self._active:
+            bg    = ACCENT
+            knob  = "right: 2px;"
+            bdr   = ACCENT
+            self._lbl.setStyleSheet(
+                f"color: {ACCENT}; font-size: 10px; font-weight: 700; "
+                f"letter-spacing: 0.5px; background: transparent;"
+            )
+        else:
+            bg   = "#2A3030"
+            knob = "left: 2px;"
+            bdr  = BORDER
+            self._lbl.setStyleSheet(
+                f"color: {TEXT_3}; font-size: 10px; font-weight: 600; "
+                f"letter-spacing: 0.5px; background: transparent;"
+            )
+        self._btn.setStyleSheet(f"""
+            QLabel {{
+                background-color: {bg};
+                border: 1px solid {bdr};
+                border-radius: 9px;
+            }}
+            QLabel::after {{
+                content: '';
+                position: absolute;
+                width: 12px; height: 12px;
+                background: white;
+                border-radius: 6px;
+                top: 2px; {knob}
+            }}
+        """)
+        # Fallback knob via text trick
+        self._btn.setText("●" if self._active else "○")
+        self._btn.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._btn.setStyleSheet(
+            f"background-color: {bg}; border: 1px solid {bdr}; "
+            f"border-radius: 9px; "
+            f"color: {'white' if self._active else TEXT_3}; "
+            f"font-size: 11px; padding-right: 3px; padding-left: 3px;"
+        )
+
+    def mousePressEvent(self, event) -> None:  # type: ignore[override]
+        self._active = not self._active
+        self._refresh_pill()
+        self.sig_gt_id_mode_changed.emit(self._active)
+
+    @property
+    def is_active(self) -> bool:
+        return self._active
+
+
 
 class MetricItem(QWidget):
     def __init__(self, label: str, default: str, color: str = ACCENT, parent=None) -> None:
@@ -379,6 +472,8 @@ class RightStatsPanel(QWidget):
         layout.addWidget(self.grade_summary)
 
         layout.addWidget(_section_header("Recent Results"))
+        self.gt_id_toggle = GtIdModeToggle(self)
+        layout.addWidget(self.gt_id_toggle)
         self.results_group = RecentResultsCard(self)
         layout.addWidget(self.results_group)
 

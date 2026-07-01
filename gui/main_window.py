@@ -524,6 +524,9 @@ class MainWindow(QMainWindow):
         self._center.analytics_panel.throughput_chart.sig_throughput_updated.connect(
             self._on_throughput_updated
         )
+        # GT ID Mode toggle → tracker
+        self._right.gt_id_toggle.sig_gt_id_mode_changed.connect(self._on_gt_id_mode_changed)
+
 
     def _post_init(self) -> None:
         from utils.paths import APP_ROOT, MODELS_DIR
@@ -898,7 +901,22 @@ class MainWindow(QMainWindow):
             f"{confidence * 100:.1f}%"
         )
 
+
+    # ── GT ID Mode ────────────────────────────────────────────────────────────
+
+    @pyqtSlot(bool)
+    def _on_gt_id_mode_changed(self, enabled: bool) -> None:
+        """Forward GT ID mode toggle to the live tracker."""
+        if self._tracker is not None:
+            self._tracker.set_gt_id_mode(enabled)
+        mode_str = "GT interleaved" if enabled else "Normal (global sequential)"
+        log.info("Apple ID mode switched to: %s", mode_str)
+        self.statusBar().showMessage(
+            f"ID mode: {'GT interleaved lane IDs' if enabled else 'Global sequential (#1, #2, #3…)'}"
+        )
+
     # ── Other controls ────────────────────────────────────────────────────────
+
 
     @pyqtSlot()
     def _on_unload_model(self) -> None:

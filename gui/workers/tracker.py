@@ -73,6 +73,7 @@ class AppleTracker:
         min_det_conf:               float = 0.35,
         peak_conf_override:         float = 0.50,
         overwhelming_cull_threshold: int  = 40,   # hit_cull above this bypasses peak protection
+        gt_id_mode:                 bool  = False, # True → lane-interleaved GT IDs; False → global seq
     ) -> None:
         assert orientation in ORIENTATIONS, \
             f"orientation must be one of {ORIENTATIONS}, got '{orientation}'"
@@ -96,6 +97,7 @@ class AppleTracker:
         self._peak_conf_override       = peak_conf_override
         self._overwhelming_cull        = overwhelming_cull_threshold
 
+        self._gt_id_mode: bool              = gt_id_mode
         self._history:     dict[int, dict] = defaultdict(self._new_history)
         self._lost:        dict[int, dict] = {}
         self._id_map:      dict[int, int]  = {}
@@ -103,6 +105,7 @@ class AppleTracker:
         # Per-lane counters so that seq_id = (lane_count - 1) * n_lanes + lane,
         # matching the GT interleaving: Lane1→1,4,7…  Lane2→2,5,8…  Lane3→3,6,9…
         self._lane_counts: dict[int, int]  = {}   # lane (1-indexed) → apples counted so far
+        self._global_count: int            = 0    # simple global counter used in normal mode
         self._frame_no:    int = 0
 
     # ── Geometry helpers ──────────────────────────────────────────────────────
@@ -289,9 +292,15 @@ class AppleTracker:
                 else:
                     lane_cnt = self._lane_counts.get(lane, 0) + 1
                     self._lane_counts[lane] = lane_cnt
-                    # Interleaved GT formula: Apple #1 on Lane1→1, Lane2→2, Lane3→3,
-                    # Apple #2 on Lane1→4, Lane2→5, Lane3→6, etc.
-                    seq_id = (lane_cnt - 1) * self._n_lanes + lane
+                    if self._gt_id_mode:
+                        # GT mode: Interleaved formula — Apple #1 on Lane1→1, Lane2→2, Lane3→3,
+                        # Apple #2 on Lane1→4, Lane2→5, Lane3→6, etc.
+                        seq_id = (lane_cnt - 1) * self._n_lanes + lane
+                    else:
+                        # Normal mode: simple global counter — first apple ever = #1,
+                        # second apple = #2, regardless of which lane it's on.
+                        self._global_count += 1
+                        seq_id = self._global_count
                     self._id_map[tid] = seq_id
                     self._recent.append({
                         "pos":    (cx, cy),
@@ -299,8 +308,12 @@ class AppleTracker:
                         "seq_id": seq_id,
                         "lane":   lane,
                     })
-                    log.debug("NEW apple #%d  lane=%d  lane_cnt=%d  ori=%s  travel=%d  first=%d  frames=%d",
-                              seq_id, lane, lane_cnt, self._ori, travel, hist["first_travel"], hist["frames_seen"])
+                    log.debug(
+                        "NEW apple #%d  lane=%d  lane_cnt=%d  gt_mode=%s  "
+                        "ori=%s  travel=%d  first=%d  frames=%d",
+                        seq_id, lane, lane_cnt, self._gt_id_mode,
+                        self._ori, travel, hist["first_travel"], hist["frames_seen"]
+                    )
 
             # ── Grade commit ──────────────────────────────────────────────────
             if (
@@ -437,13 +450,23 @@ class AppleTracker:
 
     # ── Session management ────────────────────────────────────────────────────
 
+    def set_gt_id_mode(self, enabled: bool) -> None:
+        """Switch ID numbering mode at runtime without restarting the tracker."""
+        self._gt_id_mode = enabled
+        log.info("Tracker ID mode → %s", "GT (interleaved)" if enabled else "Normal (global seq)")
+
     def reset(self) -> None:
         self._history.clear()
         self._lost.clear()
         self._id_map.clear()
         self._recent.clear()
         self._lane_counts.clear()
+        self._global_count = 0
         self._frame_no = 0
+
+    @property
+    def gt_id_mode(self) -> bool:
+        return self._gt_id_mode
 
     @property
     def total_counted(self) -> int:
