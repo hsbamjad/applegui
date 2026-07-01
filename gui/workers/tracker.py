@@ -72,6 +72,7 @@ class AppleTracker:
         cull_ratio_threshold:       float = 0.65,
         proc_ratio_threshold:       float = 0.45, # if Processing votes >= this fraction, force Processing
         hit_proc_threshold:         int   = 99,   # high-conf Processing hits needed to force Processing
+        fresh_peak_protect:         float = 0.65, # if Fresh peak conf >= this, block force_processing
         min_vote_conf:              float = 0.20,
         min_det_conf:               float = 0.35,
         peak_conf_override:         float = 0.50,
@@ -98,6 +99,7 @@ class AppleTracker:
         self._cull_ratio_thresh        = cull_ratio_threshold
         self._proc_ratio_thresh        = proc_ratio_threshold
         self._hit_proc_threshold       = hit_proc_threshold
+        self._fresh_peak_protect       = fresh_peak_protect
         self._min_vote_conf            = min_vote_conf
         self._min_det_conf             = min_det_conf
         self._peak_conf_override       = peak_conf_override
@@ -389,9 +391,17 @@ class AppleTracker:
                     # Symmetric to force_cull: if Processing has a strong enough
                     # presence in the vote, force Processing over Fresh.
                     # Only triggers when force_cull is False (Cull takes priority).
-                    proc_ratio = hist["votes"].get(1, 0.0) / total
+                    #
+                    # Guard: clearly_fresh - if Fresh ever peaked at >= fresh_peak_protect,
+                    # the apple is clearly Fresh and force_processing is blocked.
+                    # A genuine Processing apple will rarely show a strong Fresh peak;
+                    # a genuine Fresh apple almost always will.
+                    proc_ratio  = hist["votes"].get(1, 0.0) / total
+                    fresh_peak  = hist["peak_conf"].get(0, 0.0)
+                    clearly_fresh = fresh_peak >= self._fresh_peak_protect
                     force_processing = (
                         not force_cull
+                        and not clearly_fresh
                         and (
                             proc_ratio >= self._proc_ratio_thresh
                             or hist["hit_proc"] >= self._hit_proc_threshold
@@ -408,10 +418,12 @@ class AppleTracker:
                     log.info(
                         "Vote commit: apple=%s lane=%d  cull_ratio=%.2f  proc_ratio=%.2f  "
                         "hit_cull=%d  hit_proc=%d  overwhelming=%s  peak_non_cull=%.2f  "
+                        "fresh_peak=%.2f  clearly_fresh=%s  "
                         "clearly_non_cull=%s  force_cull=%s  force_proc=%s  | non_cull: %s",
                         seq_id, lane, cull_ratio, proc_ratio,
                         hist["hit_cull"], hist["hit_proc"],
                         overwhelming_cull, max_non_cull_peak,
+                        fresh_peak, clearly_fresh,
                         clearly_non_cull, force_cull, force_processing, non_cull_str,
                     )
 
@@ -471,12 +483,17 @@ class AppleTracker:
                     disp_cls  = 2
                     disp_conf = cull_ratio_v
                 else:
-                    # Mirror force_processing for live display
-                    proc_v       = hist["votes"].get(1, 0)
-                    proc_ratio_v = proc_v / total_v if total_v > 0 else 0.0
-                    force_proc_v = (
-                        proc_ratio_v >= self._proc_ratio_thresh
-                        or hist["hit_proc"] >= self._hit_proc_threshold
+                    # Mirror force_processing + clearly_fresh guard for live display
+                    proc_v        = hist["votes"].get(1, 0)
+                    proc_ratio_v  = proc_v / total_v if total_v > 0 else 0.0
+                    fresh_peak_v  = hist["peak_conf"].get(0, 0.0)
+                    clearly_fresh_v = fresh_peak_v >= self._fresh_peak_protect
+                    force_proc_v  = (
+                        not clearly_fresh_v
+                        and (
+                            proc_ratio_v >= self._proc_ratio_thresh
+                            or hist["hit_proc"] >= self._hit_proc_threshold
+                        )
                     )
                     if force_proc_v:
                         disp_cls  = 1

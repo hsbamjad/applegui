@@ -660,6 +660,7 @@ class MainWindow(QMainWindow):
             cull_ratio_threshold        = inf_tracking.get("cull_ratio_threshold",         0.65),
             proc_ratio_threshold        = inf_tracking.get("proc_ratio_threshold",         0.45),
             hit_proc_threshold          = inf_tracking.get("hit_proc_threshold",           99),
+            fresh_peak_protect          = inf_tracking.get("fresh_peak_protect",           0.65),
             peak_conf_override          = inf_tracking.get("peak_conf_override",           0.50),
             overwhelming_cull_threshold = inf_tracking.get("overwhelming_cull_threshold",  60),
             camera_fps                  = float(_eff_fps),

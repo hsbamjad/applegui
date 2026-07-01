@@ -182,6 +182,9 @@ inference:
                                   # (at 21 frames: ~8 frames voting Proc = force Proc)
       hit_proc_threshold: 10      # 10+ high-conf (>0.50) Processing hits forces Processing
                                   # (at 21 frames: 10/21 = 48% of frames high-conf Proc)
+      fresh_peak_protect: 0.65    # If Fresh ever peaks >= 0.65 conf, block force_processing
+                                  # (genuine Fresh apple almost always shows 0.65+ Fresh conf)
+                                  # (genuine Processing apple rarely shows 0.65+ Fresh conf)
       peak_conf_override: 0.55    # Fresh/Processing needs conf>=0.55 to block Cull override
       overwhelming_cull_threshold: 14  # Max possible=21; 14/21=67% frames high-conf = indisputable
                                        # (was 40 - UNREACHABLE at 21 frames!)
@@ -208,6 +211,8 @@ inference:
       proc_ratio_threshold: 0.35  # If 35%+ of all votes are Processing, force Processing
                                   # (at 10 frames: ~3-4 frames voting Proc = force Proc)
       hit_proc_threshold: 5       # 5+ high-conf Processing hits out of 10 = force Processing
+      fresh_peak_protect: 0.70    # Higher bar at 2 apples/s - fewer frames means peak is
+                                  # less reliable; need stronger Fresh signal to block
       peak_conf_override: 0.70    # Needs STRONG Fresh/Processing to block Cull
                                   # (rotating Cull apple can flash Fresh at low conf)
       overwhelming_cull_threshold: 5   # 5 high-conf hits out of 10 = overwhelming
