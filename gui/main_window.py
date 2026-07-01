@@ -736,17 +736,22 @@ class MainWindow(QMainWindow):
             self._sorter = None
         self._sorting_enabled = False
         self._left.set_sorter_enabled(False)   # uncheck toggle on disconnect
+
+        # ── Auto-unload AI model on disconnect ────────────────────────
         if self._infer_w:
             self._infer_w.stop()
             self._infer_w = None
+        if self._inf_w:
+            self._inf_w.stop()
+            self._inf_w = None
+        # Notify left panel so the Load button resets to its idle state
+        self._left.set_model_loaded("")
+
         if self._size_acc is not None:
             self._size_acc.clear()
             self._size_acc = None
         if self._tracker:
             self._tracker.reset()
-        if self._inf_w:
-            self._inf_w.stop()
-            self._inf_w = None
         if self._cam_w:
             self._cam_w.stop()
             self._cam_w = None
@@ -757,14 +762,21 @@ class MainWindow(QMainWindow):
         self._last_input_frame = None
         self._total_graded = 0
 
+        # ── Clear right panel results and logs on disconnect ──────────
+        self._right.results_group.clear_results()
+        self._right.grade_summary.reset()
+        self._right.metrics_group.reset()
+        self._center.analytics_panel.reset()
+        self._center.logs_panel.clear()
+
         sg = self._right.status_group
         sg.set_status("Camera",   "offline", "Disconnected")
-        sg.set_status("AI Model", "idle",    "Stopped")
+        sg.set_status("AI Model", "idle",    "No model")
         sg.set_status("Sorter",   "idle",    "Simulation")
 
-        self._right.metrics_group.stop_session()
         self._center.analytics_panel.stop()
         self.statusBar().showMessage("Pipeline stopped.")
+        log.info("Pipeline stopped - panel data cleared, model unloaded.")
 
     # ── Worker signals ────────────────────────────────────────────────────────
 

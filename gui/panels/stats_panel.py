@@ -256,6 +256,9 @@ class RecentResultsCard(QWidget):
 
     def clear_results(self) -> None:
         self._list.clear()
+        placeholder = QListWidgetItem("  Waiting for grades…")
+        placeholder.setForeground(QColor(TEXT_3))
+        self._list.addItem(placeholder)
 
 
 # ── Metric Item ───────────────────────────────────────────────────────────────
