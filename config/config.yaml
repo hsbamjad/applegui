@@ -78,7 +78,7 @@ conveyor:
   #   LR = left→right   RL = right→left
   #   TB = top→bottom   BT = bottom→top  ← current camera setup
   orientation: "LR"   # LR=left→right (test video) | BT=bottom→top (real camera)
-  speed_apples_per_sec: 1          # Nominal: 1 | 2 | 3 apples/s/lane  ← SET TO MATCH CONVEYOR
+  speed_apples_per_sec: 2          # Nominal: 1 | 2 | 3 apples/s/lane  ← SET TO MATCH CONVEYOR
   camera_to_gate_m: 0.0            # Arduino handles timing via NIR sensor - fire immediately on grade
   # Timing delay (ms) = (camera_to_gate_m / conveyor_speed_m_s) * 1000
   # Software computes this dynamically - set conveyor_speed_m_s at runtime
@@ -214,19 +214,20 @@ inference:
       processing_weight: 1.6      # Same model Fresh-bias applies at all speeds
                                   # (was 1.3 - raised to match profile 1 finding: 1.6 needed
                                   #  to flip borderline 60/40 Fresh/Proc via max(weighted votes))
-      hit_threshold: 7            # Placeholder - calibrate from actual frames_seen at 2 apples/s
-                                  # (profile 1: budget=30 but actual=110 frames - same may apply here)
+      hit_threshold: 12           # DATA: Cull hit_cull=14-15 at 62-67 frames (22% of frames)
+                                  # 12 < 14 → triggers for real Cull. Fresh=1, Proc=0-3 safely below.
+                                  # (was 7 - based on budget=10; actual frames=62-67 same as 1 apples/s!)
       cull_ratio_threshold: 0.55  # 55% weighted Cull votes = force Cull
-      proc_ratio_threshold: 0.30  # Start with same gap found at 1 apple/s (Fresh<0.19, Proc>0.32)
-                                  # Calibrate from first logs - distribution may differ at 2 apples/s
-      hit_proc_threshold: 999     # DISABLED - same finding as profile 1: hit counts unreliable
-                                  # even Fresh apples accumulate many Processing hits in available frames
-      fresh_peak_protect: 1.0     # DISABLED - ALL apples peak 0.97-0.98 Fresh (model behaviour)
-                                  # Guard is always True regardless of speed, blocks force_processing
+      proc_ratio_threshold: 0.30  # DATA gap: Fresh=0.23, Cull=0.33, Proc=0.65-0.68
+                                  # 0.30 sits between Fresh(0.23) and Cull(0.33)
+                                  # force_cull takes priority so Cull apples (proc_ratio=0.33-0.42)
+                                  # are still correctly called Cull even though proc_ratio>0.30
+      hit_proc_threshold: 999     # DISABLED - unreliable at any frame count
+      fresh_peak_protect: 1.0     # DISABLED - ALL apples peak 0.97-0.98 Fresh
       peak_conf_override: 0.70    # Needs STRONG Fresh/Processing to block Cull
-                                  # (rotating Cull apple can flash Fresh at low conf)
-      overwhelming_cull_threshold: 5   # Placeholder - calibrate from actual frames_seen at 2 apples/s
-                                       # (was set for budget=10 frames; check real frames_seen in logs)
+      overwhelming_cull_threshold: 12  # DATA: hit_cull=14-15 ≥ 12 → overwhelming=True
+                                       # overrides clearly_non_cull=True so force_cull fires
+                                       # (was 5 - based on budget=10 frames; too low for 62-67 frames)
 
     # ── 3 apples / second ────────────────────────────────────────────────
     # Budget: ~7 frames per apple. Very aggressive settings.
