@@ -609,7 +609,19 @@ class MainWindow(QMainWindow):
         inf_cfg      = self._cfg.get("inference", {})
         inf_tracking = inf_cfg.get("tracking", {})
         conv_cfg     = self._cfg.get("conveyor", {})
+        cam_cfg      = self._cfg.get("camera", {})
         self._exit_x_frac = inf_tracking.get("exit_frac", 0.85)
+
+        # Determine the effective camera/inference FPS for speed-adaptive clamping.
+        # Use JAI hardware FPS when in real mode, simulation fps otherwise.
+        # The tracker uses this to compute frames-per-apple budget and clamp min_frames.
+        _jai_fps  = cam_cfg.get("jai", {}).get("fps", 30)
+        _sim_fps  = cam_cfg.get("mock", {}).get("fps", 30)
+        _sim_fps2 = cam_cfg.get("simulation", {}).get("fps", _sim_fps)
+        _cam_mode = cam_cfg.get("mode", "mock")
+        _eff_fps  = _jai_fps if _cam_mode == "jai" else _sim_fps2
+        _apple_speed = float(conv_cfg.get("speed_apples_per_sec", 1))
+
         self._tracker = ConveyorTracker(
             n_lanes                     = conv_cfg.get("lanes", 3),
             orientation                 = conv_cfg.get("orientation", "BT"),
@@ -627,6 +639,8 @@ class MainWindow(QMainWindow):
             cull_ratio_threshold        = inf_tracking.get("cull_ratio_threshold",         0.65),
             peak_conf_override          = inf_tracking.get("peak_conf_override",           0.50),
             overwhelming_cull_threshold = inf_tracking.get("overwhelming_cull_threshold",  60),
+            camera_fps                  = float(_eff_fps),
+            apple_speed                 = _apple_speed,
         )
 
         # ── Apple size accumulator ─────────────────────────────────

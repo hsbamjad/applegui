@@ -1,37 +1,52 @@
 # bytetrack.yaml - Custom ByteTrack config for Apple Sorting System
 #
-# Key changes from defaults:
-#   track_low_thresh  : 0.1 → 0.35  (stop accepting background noise at low confidence)
-#   track_buffer      : 30  → 15    (tracks die faster when apple leaves frame)
-#   new_track_thresh  : 0.6 → 0.55  (slightly easier to start a new track)
+# TUNED FOR: 21 FPS camera, 2 apples/sec conveyor speed
+# Math: 21 FPS / 2 apples/s = ~10.5 frames per apple in FOV
 #
-# Why: The conveyor belt texture generates continuous low-confidence (~0.1-0.2)
-# Cull detections. With the default 0.1 low threshold, ByteTrack keeps these tracks
-# alive indefinitely (400+ frames), polluting the grade vote with Cull noise.
-# Raising to 0.35 eliminates background noise while keeping real apple detections.
+# Key changes vs. previous config:
+#   track_buffer      : 15  → 30  (tracks survive 1-2 missed detection frames at high speed)
+#   match_thresh      : 0.80→ 0.60 (fast apple moves more pixels → IoU drops → less strict needed)
+#   track_high_thresh : 0.50→ 0.45 (accept slightly lower conf; motion blur reduces peak conf)
+#   new_track_thresh  : 0.55→ 0.50 (easier to start track on fast-moving apple)
+#   track_low_thresh  : 0.35→ 0.30 (secondary association still works for motion-blurred frames)
+#
+# Why track_buffer matters at 2 apples/s:
+#   At 21 FPS a 2-frame gap (detector miss) = 2/21 = 95ms of no detection.
+#   With buffer=15, track dies after 15/21 = 710ms. Even fast apples stay < 500ms in FOV.
+#   buffer=30 gives 1.43s survival, well beyond any single apple's FOV time, preventing
+#   premature track death from 1-2 consecutive missed detections.
+#
+# Why match_thresh matters at 2 apples/s:
+#   At 1 apple/s the apple moves ~X pixels/frame. At 2 apples/s it moves ~2X pixels/frame.
+#   A larger displacement between frames means the predicted vs. detected box IoU is lower.
+#   Reducing from 0.80 → 0.60 keeps the association working for fast movement.
 
 tracker_type: bytetrack
 
 # Detection threshold for "high confidence" bucket - used for new track creation
-# and primary association. Matches our YOLO inference conf threshold.
-track_high_thresh: 0.50
+# and primary association. Lowered slightly to tolerate motion blur on fast apples.
+track_high_thresh: 0.45
 
 # Detection threshold for "low confidence" bucket - used only for secondary
-# association with already-active tracks. Raised from default 0.1 to 0.35 to
-# eliminate conveyor belt background false positives.
-track_low_thresh: 0.35
+# association with already-active tracks. Raised from default 0.1 to 0.30 to
+# eliminate conveyor belt background false positives while allowing motion-blurred frames.
+track_low_thresh: 0.30
 
 # Minimum confidence required to start a brand-new track.
-new_track_thresh: 0.55
+new_track_thresh: 0.50
 
 # Number of frames a track survives without any detection before being deleted.
-# Reduced from 30 to 15: at ~15 FPS this is 1 second - enough to bridge
-# momentary occlusions but not keep phantom tracks alive across the whole FOV.
-track_buffer: 15
+# Doubled from 15 to 30: at 21 FPS this is 1.43 seconds.
+# Fast apples may miss 1-2 consecutive detector frames due to motion blur or lighting change.
+# buffer=30 bridges those gaps without killing the accumulated vote history.
+track_buffer: 30
 
 # IOU threshold for track-detection association matching.
-match_thresh: 0.80
+# Reduced from 0.80 to 0.60: at 2x speed the apple moves ~2x pixels per frame,
+# so predicted vs. detected box overlap is naturally lower. 0.60 keeps association
+# working without accepting clearly wrong matches.
+match_thresh: 0.60
 
 # Fuse detection score with track IoU score during association.
-# False = use IoU only (more stable for slow-moving objects on conveyor).
+# False = use IoU only (more stable for fast-moving objects on conveyor).
 fuse_score: False

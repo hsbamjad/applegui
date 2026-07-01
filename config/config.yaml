@@ -78,7 +78,7 @@ conveyor:
   #   LR = left→right   RL = right→left
   #   TB = top→bottom   BT = bottom→top  ← current camera setup
   orientation: "LR"   # LR=left→right (test video) | BT=bottom→top (real camera)
-  speed_apples_per_sec: 1          # Nominal: 1 | 2 | 3 apples/s/lane
+  speed_apples_per_sec: 2          # Nominal: 1 | 2 | 3 apples/s/lane  ← SET TO MATCH CONVEYOR
   camera_to_gate_m: 0.0            # Arduino handles timing via NIR sensor - fire immediately on grade
   # Timing delay (ms) = (camera_to_gate_m / conveyor_speed_m_s) * 1000
   # Software computes this dynamically - set conveyor_speed_m_s at runtime
@@ -143,24 +143,25 @@ inference:
     - "Processing"                 # 1
     - "Cull"                       # 2
 
-  # Robust counting gate - mirrors chestnut pipeline logic
+  # Robust counting gate - tuned for 21 FPS, 2 apples/sec
+  # Math: 21 FPS / 2 apples/s = ~10.5 frames per apple maximum in FOV
   tracking:
     enabled: true
     exit_frac: 0.85             # Exit band centre (fraction of TRAVEL axis)
-    band_half_frac: 0.025       # ± 2.5% of travel axis - narrow band
-    entry_frac: 0.35            # First detection must be in start zone (<35%)
-    min_frames: 15              # was 5 - wait longer before committing (reduces noise-driven Cull)
-    max_lost_frames: 10
-    max_recover_dist: 80
+    band_half_frac: 0.05        # ± 5% of travel axis - wider band for fast apples (was 0.025)
+    entry_frac: 0.50            # First detection must be in start zone (<50%) - wider for speed (was 0.35)
+    min_frames: 6               # @ 21 FPS + 2 apples/s = 10.5 frames max; was 15 (IMPOSSIBLE at speed!)
+    max_lost_frames: 20         # was 10 - keep lost tracks longer; fast apple may skip 1-2 frames
+    max_recover_dist: 160       # was 80 - apple moves more pixels/frame at higher speed
     min_count_dist_frac: 0.12
     count_memory_frames: 40
-    count_merge_frames: 5          # merge to existing seq_id only within N frames + same lane
-    cull_weight: 1.0            # was 1.5 - don't over-weight Cull votes vs Fresh/Processing
-    hit_threshold: 25           # was 20 - need more high-conf Cull hits to force override
-    cull_ratio_threshold: 0.65  # was 0.55 - need clear majority to force Cull
-    peak_conf_override: 0.50    # if any non-Cull class peaks here, Cull cannot be forced
-    overwhelming_cull_threshold: 40   # hit_cull above this bypasses peak_conf_override
-                                     # A genuine Fresh apple will not have 40+ high-conf Cull hits
+    count_merge_frames: 12      # was 5 - longer merge window prevents double-count on ID switch
+    cull_weight: 1.0            # don't over-weight Cull votes vs Fresh/Processing
+    hit_threshold: 15           # was 25 - fewer frames available so lower hit bar for Cull
+    cull_ratio_threshold: 0.65  # need clear majority to force Cull
+    peak_conf_override: 0.45    # was 0.50 - slightly easier to protect non-cull at fewer frames
+    overwhelming_cull_threshold: 20   # was 40 - scaled down proportionally for fewer frames
+                                     # A genuine Fresh apple will not have 20+ high-conf Cull hits
 
 # ══════════════════════════════════════════════════════════════
 # DATA LOGGING

@@ -73,6 +73,8 @@ class AppleTracker:
         min_det_conf:               float = 0.35,
         peak_conf_override:         float = 0.50,
         overwhelming_cull_threshold: int  = 40,   # hit_cull above this bypasses peak protection
+        camera_fps:                 float = 30.0, # actual inference/camera FPS
+        apple_speed:                float = 1.0,  # apples per second on conveyor
     ) -> None:
         assert orientation in ORIENTATIONS, \
             f"orientation must be one of {ORIENTATIONS}, got '{orientation}'"
@@ -82,7 +84,6 @@ class AppleTracker:
         self._exit_frac                = exit_frac
         self._band_half_frac           = band_half_frac
         self._entry_frac               = entry_frac
-        self._min_frames               = min_frames
         self._max_lost                 = max_lost_frames
         self._max_recover              = max_recover_dist
         self._min_count_dist_frac      = min_count_dist_frac
@@ -95,6 +96,33 @@ class AppleTracker:
         self._min_det_conf             = min_det_conf
         self._peak_conf_override       = peak_conf_override
         self._overwhelming_cull        = overwhelming_cull_threshold
+        self._camera_fps               = max(camera_fps, 1.0)
+        self._apple_speed              = max(apple_speed, 0.1)
+
+        # ── Speed-adaptive min_frames ──────────────────────────────────────────
+        # Budget: frames_per_apple = camera_fps / apple_speed
+        # Gate must fire BEFORE the apple exits, so min_frames must be strictly
+        # less than the budget.  We cap at the configured value (don't relax
+        # below what the user asked for at slow speed) but ALWAYS clamp so we
+        # can physically reach the threshold within the observation window.
+        frames_budget = self._camera_fps / self._apple_speed
+        # Use at most 60% of the budget to leave room for entry detection lag
+        safe_max = max(3, int(frames_budget * 0.60))
+        self._min_frames = min(min_frames, safe_max)
+        if self._min_frames < min_frames:
+            log.warning(
+                "AppleTracker: min_frames clamped %d → %d  "
+                "(camera_fps=%.1f  apple_speed=%.1f  budget=%.1f frames)",
+                min_frames, self._min_frames,
+                self._camera_fps, self._apple_speed, frames_budget,
+            )
+        else:
+            log.info(
+                "AppleTracker: min_frames=%d  camera_fps=%.1f  "
+                "apple_speed=%.1f  budget=%.1f frames",
+                self._min_frames, self._camera_fps,
+                self._apple_speed, frames_budget,
+            )
 
         self._history:     dict[int, dict] = defaultdict(self._new_history)
         self._lost:        dict[int, dict] = {}
@@ -259,10 +287,12 @@ class AppleTracker:
             seq_id = self._id_map.get(tid)
 
             # ── Counting gate ─────────────────────────────────────────────────
-            #  Guard 1: narrow band  - apple inside exit_pos ± band_half
+            #  Guard 1: in/past exit band  - apple at or beyond exit_pos - band_half
+            #           (we use >= instead of exact band so a fast apple that skips
+            #           through the narrow band in one frame still fires the gate)
             #  Guard 2: entry zone   - first detection was in the START of travel
-            #  Guard 3: min frames   - not a phantom
-            in_band       = (exit_pos - band_half) <= travel <= (exit_pos + band_half)
+            #  Guard 3: min frames   - not a phantom (adaptive, clamped to budget)
+            in_band       = travel >= (exit_pos - band_half)   # fire once past the gate line
             entered_start = 0 <= hist["first_travel"] < entry_pos
             enough_frames = hist["frames_seen"] >= self._min_frames
 
@@ -303,10 +333,18 @@ class AppleTracker:
                               seq_id, lane, lane_cnt, self._ori, travel, hist["first_travel"], hist["frames_seen"])
 
             # ── Grade commit ──────────────────────────────────────────────────
+            # Normal path: apple has a seq_id, min frames seen, not yet committed.
+            # Early-exit path: apple has passed 90% of travel axis (definitely
+            # leaving FOV soon) - commit now with whatever votes we have, provided
+            # we have at least half the min_frames budget (avoids phantom commits).
+            past_exit      = travel >= int(axis_size * 0.90)
+            half_min       = max(3, self._min_frames // 2)
+            early_eligible = past_exit and hist["frames_seen"] >= half_min
+
             if (
                 seq_id is not None
                 and not hist["committed"]
-                and hist["frames_seen"] >= self._min_frames
+                and (hist["frames_seen"] >= self._min_frames or early_eligible)
             ):
                 total = sum(hist["votes"].values())
                 if total > 0:
