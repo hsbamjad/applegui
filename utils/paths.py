@@ -1,7 +1,7 @@
 """
 utils/paths.py
 ==============
-Central path resolver for the Infield Apple Sorting System.
+Central path resolver for the Infield Multispectral Apple Sorting GUI.
 
 All application code should import paths from here instead of using
 hardcoded relative strings like "models/best.pt" or "config/config.yaml".

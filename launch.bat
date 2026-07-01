@@ -1,9 +1,9 @@
 @echo off
 :: ============================================================
-:: launch.bat  -  Infield Apple Sorting System
+:: launch.bat  -  Infield Multispectral Apple Sorting GUI
 :: Michigan State University | ASABE AIM26 | 2026
 :: ============================================================
-title Infield Apple Sorting System
+title Infield Multispectral Apple Sorting GUI
 cd /d "%~dp0"
 
 :: ── Find conda installation ───────────────────────────────────
@@ -53,7 +53,7 @@ if errorlevel 1 (
 )
 
 :: ── Launch the app ────────────────────────────────────────────
-echo   Starting Infield Apple Sorting System...
+echo   Starting Infield Multispectral Apple Sorting GUI...
 echo.
 python main.py
 

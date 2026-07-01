@@ -91,7 +91,7 @@ class HeaderBar(QWidget):
         logo.setStyleSheet(f"color: {ACCENT}; background: transparent; border: none;")
         logo.setFixedWidth(30)
 
-        title = QLabel("Multispectral Vision System")
+        title = QLabel("Infield Multispectral Apple Sorting GUI")
         title.setFont(QFont("Segoe UI Variable", 14, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {TEXT_1}; background: transparent; border: none;")
 
@@ -442,7 +442,7 @@ class MainWindow(QMainWindow):
     # ── Setup ─────────────────────────────────────────────────────────────────
 
     def _setup_window(self) -> None:
-        self.setWindowTitle("Infield Apple Sorting System")
+        self.setWindowTitle("Infield Multispectral Apple Sorting GUI")
         self.setMinimumSize(1640, 760)
         self.resize(1720, 920)
         self.setStyleSheet(APP_STYLESHEET)

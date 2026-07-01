@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================
-:: install.bat  --  Infield Apple Sorting System
+:: install.bat  --  Infield Multispectral Apple Sorting GUI
 ::
 :: Run this ONCE on a new machine, then use launch.bat every time.
 :: ============================================================
@@ -9,7 +9,7 @@ cd /d "%~dp0"
 
 echo.
 echo ============================================================
-echo   Infield Apple Sorting System - Setup
+echo   Infield Multispectral Apple Sorting GUI - Setup
 echo ============================================================
 echo.
 
