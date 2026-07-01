@@ -225,9 +225,10 @@ inference:
       hit_proc_threshold: 999     # DISABLED - unreliable at any frame count
       fresh_peak_protect: 1.0     # DISABLED - ALL apples peak 0.97-0.98 Fresh
       peak_conf_override: 0.70    # Needs STRONG Fresh/Processing to block Cull
-      overwhelming_cull_threshold: 12  # DATA: hit_cull=14-15 ≥ 12 → overwhelming=True
-                                       # overrides clearly_non_cull=True so force_cull fires
-                                       # (was 5 - based on budget=10 frames; too low for 62-67 frames)
+      overwhelming_cull_threshold: 14  # DATA gap: Processing hit_cull=9-12, Cull hit_cull=14-15
+                                       # 14 splits them cleanly: Proc(12)<14≤Cull(14,15)
+                                       # (was 12 - too low: Proc apples with Cull patches triggered it
+                                       # even while having 55-74% Processing votes)
 
     # ── 3 apples / second ────────────────────────────────────────────────
     # Budget: ~7 frames per apple. Very aggressive settings.
