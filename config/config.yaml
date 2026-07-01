@@ -207,15 +207,15 @@ inference:
       min_frames: 6               # Low gate - 10 frame budget leaves no room for 12+
       max_lost_frames: 20         # Keep lost tracks longer; detector may skip 1-2 frames
       max_recover_dist: 160       # Fast apple moves more pixels between frames
-      min_count_dist_frac: 0.22   # Ghost defence: 0.22 * 2048 = 450px exclusion zone
-                                  # At 2 apples/s: apple moves ~34px/frame
-                                  # ID-switch ghost: 12 frames → 408px < 450px → caught ✓
-                                  # Consecutive apple: 15 frames → 510px > 450px → safe ✓
-                                  # (was 0.12 - 245px, ghost tracks 12+ frames apart slipped through)
+      min_count_dist_frac: 0.12   # Exit-zone proximity for ghost detection
+                                  # Ghost track switches happen within 1-5 frames (small distance)
+                                  # 0.22 was TOO LARGE: consecutive apples (15 frames, same exit pos)
+                                  # were being merged and suppressed as ghosts
       count_memory_frames: 40
-      count_merge_frames: 25      # Look back 25 frames for same-apple duplicates (was 12)
-                                  # Primary fix is code (hist["committed"]=True on link),
-                                  # this ensures more ghost tracks are IDENTIFIED as duplicates
+      count_merge_frames: 12      # Must be < inter-apple spacing (15 frames at 2 apples/s)
+                                  # Consecutive apple: age=15 > 12 → NOT merged → own seq_id ✓
+                                  # Ghost ID-switch:   age=1-5 ≤ 12 → merged → code fix suppresses ✓
+                                  # (was 25 - too high: 15-frame consecutive apples were merged+suppressed)
       cull_weight: 1.5            # Boost Cull votes - fewer frames means less vote data
       processing_weight: 1.6      # Same model Fresh-bias applies at all speeds
                                   # (was 1.3 - raised to match profile 1 finding: 1.6 needed
