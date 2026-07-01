@@ -178,13 +178,14 @@ inference:
                                   # (was 25 - UNREACHABLE at 21 frames! force_cull was disabled)
       cull_ratio_threshold: 0.58  # 58% weighted Cull votes forces Cull
                                   # (was 0.65 - too hard to reach with model's Fresh bias)
-      proc_ratio_threshold: 0.38  # If 38%+ of all votes are Processing, force Processing
-                                  # (at 21 frames: ~8 frames voting Proc = force Proc)
+      proc_ratio_threshold: 0.48  # Processing must be ~half of all votes to force
+                                  # Fresh apples rarely sustain 48%+ Processing ratio
+                                  # (was 0.38 - too low, Fresh apples triggered it)
       hit_proc_threshold: 10      # 10+ high-conf (>0.50) Processing hits forces Processing
-                                  # (at 21 frames: 10/21 = 48% of frames high-conf Proc)
-      fresh_peak_protect: 0.65    # If Fresh ever peaks >= 0.65 conf, block force_processing
-                                  # (genuine Fresh apple almost always shows 0.65+ Fresh conf)
-                                  # (genuine Processing apple rarely shows 0.65+ Fresh conf)
+      fresh_peak_protect: 0.92    # Only block force_processing if Fresh peaks extremely high
+                                  # (was 0.65 - too low, Processing apples also peak >0.65 Fresh
+                                  # when rotating and showing good side, disabling force_processing)
+                                  # At 0.92, only near-certain Fresh detections block the guard
       peak_conf_override: 0.55    # Fresh/Processing needs conf>=0.55 to block Cull override
       overwhelming_cull_threshold: 14  # Max possible=21; 14/21=67% frames high-conf = indisputable
                                        # (was 40 - UNREACHABLE at 21 frames!)
