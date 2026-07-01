@@ -607,20 +607,40 @@ class MainWindow(QMainWindow):
 
         # ── Conveyor tracker ───────────────────────────────────────
         inf_cfg      = self._cfg.get("inference", {})
-        inf_tracking = inf_cfg.get("tracking", {})
         conv_cfg     = self._cfg.get("conveyor", {})
         cam_cfg      = self._cfg.get("camera", {})
+        _apple_speed = float(conv_cfg.get("speed_apples_per_sec", 1))
+
+        # Select per-speed tracking profile from config.
+        # Looks up inference.tracking_profiles[speed_int] first.
+        # Falls back to inference.tracking for backward compatibility.
+        _profiles    = inf_cfg.get("tracking_profiles", {})
+        _speed_key   = int(_apple_speed)        # 1, 2, 3 ...
+        _profile     = _profiles.get(_speed_key)
+        if _profile is not None:
+            inf_tracking = _profile
+            log.info(
+                "_start_pipeline: loaded tracking profile for %d apple/s  "
+                "(profiles available: %s)",
+                _speed_key, sorted(_profiles.keys()),
+            )
+        else:
+            # Fallback: old flat 'tracking' block (backward compat)
+            inf_tracking = inf_cfg.get("tracking", {})
+            log.warning(
+                "_start_pipeline: no tracking profile found for speed=%d  "
+                "available=%s  falling back to flat 'tracking' block",
+                _speed_key, sorted(_profiles.keys()),
+            )
+
         self._exit_x_frac = inf_tracking.get("exit_frac", 0.85)
 
         # Determine the effective camera/inference FPS for speed-adaptive clamping.
-        # Use JAI hardware FPS when in real mode, simulation fps otherwise.
-        # The tracker uses this to compute frames-per-apple budget and clamp min_frames.
         _jai_fps  = cam_cfg.get("jai", {}).get("fps", 30)
         _sim_fps  = cam_cfg.get("mock", {}).get("fps", 30)
         _sim_fps2 = cam_cfg.get("simulation", {}).get("fps", _sim_fps)
         _cam_mode = cam_cfg.get("mode", "mock")
         _eff_fps  = _jai_fps if _cam_mode == "jai" else _sim_fps2
-        _apple_speed = float(conv_cfg.get("speed_apples_per_sec", 1))
 
         self._tracker = ConveyorTracker(
             n_lanes                     = conv_cfg.get("lanes", 3),
@@ -642,6 +662,7 @@ class MainWindow(QMainWindow):
             camera_fps                  = float(_eff_fps),
             apple_speed                 = _apple_speed,
         )
+
 
         # ── Apple size accumulator ─────────────────────────────────
         size_cfg = self._cfg.get("sizing", {})

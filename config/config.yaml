@@ -143,31 +143,79 @@ inference:
     - "Processing"                 # 1
     - "Cull"                       # 2
 
-  # Robust counting gate - tuned for 21 FPS, 2 apples/sec
-  # Math: 21 FPS / 2 apples/s = ~10.5 frames per apple maximum in FOV
-  # --- Cull sensitivity tuning for high speed ---
-  # Problem: Cull -> Fresh/Processing misclassification at 2 apples/s
-  # Root cause at 10 frames: hit_threshold unreachable, single Fresh flash blocks Cull
-  tracking:
-    enabled: true
-    exit_frac: 0.85             # Exit band centre (fraction of TRAVEL axis)
-    band_half_frac: 0.05        # ± 5% of travel axis - wider band for fast apples
-    entry_frac: 0.50            # First detection must be in start zone (<50%)
-    min_frames: 6               # @ 21 FPS + 2 apples/s = 10.5 frames max
-    max_lost_frames: 20         # keep lost tracks longer; fast apple may skip 1-2 frames
-    max_recover_dist: 160       # apple moves more pixels/frame at higher speed
-    min_count_dist_frac: 0.12
-    count_memory_frames: 40
-    count_merge_frames: 12      # longer merge window prevents double-count on ID switch
-    cull_weight: 1.5            # was 1.0 - boost Cull votes to compensate for fewer frames at 2 apples/s
-                                # (at 10 frames, Cull needs extra weight to beat Fresh/Processing)
-    hit_threshold: 7            # was 15 (impossible at 10 frames!) - 7 high-conf hits in 10 frames = Cull
-    cull_ratio_threshold: 0.55  # was 0.65 - lower bar: at 10 frames, 55% voting Cull is clear signal
-    peak_conf_override: 0.70    # was 0.45 - raise: need STRONG Fresh/Processing conf to block Cull
-                                # prevents a single acc. Fresh flash (common on rotating Cull apple)
-                                # from wiping out accumulated Cull evidence
-    overwhelming_cull_threshold: 5    # was 20 - at 10 frames, 5 high-conf Cull hits IS overwhelming
-                                      # lifts peak_conf_override protection when Cull is unambiguous
+  # ── Per-speed tracking profiles ──────────────────────────────────────────
+  # Active profile is selected automatically from conveyor.speed_apples_per_sec.
+  # Each profile is fully independent - tune each one separately.
+  # Camera: JAI FSFE-3200T  |  Inference: ~21 FPS sustained
+  #
+  # Frames per apple budget:
+  #   1 apple/s  →  ~21 frames   (comfortable, more vote data)
+  #   2 apples/s →  ~10 frames   (tight, needs relaxed thresholds)
+  #   3 apples/s →  ~7 frames    (very tight, most aggressive settings)
+  # ─────────────────────────────────────────────────────────────────────────
+  tracking_profiles:
+
+    # ── 1 apple / second ─────────────────────────────────────────────────
+    # Budget: ~21 frames per apple. Comfortable vote window.
+    # Priority: high classification accuracy, tighter Cull control.
+    1:
+      enabled: true
+      exit_frac: 0.85             # Exit band centre (85% of travel axis)
+      band_half_frac: 0.03        # ± 3% - moderately wide
+      entry_frac: 0.40            # First detection must be in start zone (<40%)
+      min_frames: 12              # Require solid observation before counting
+      max_lost_frames: 12         # Shorter - apple is slow, occlusions are brief
+      max_recover_dist: 80        # Slow apple → small displacement per frame
+      min_count_dist_frac: 0.12
+      count_memory_frames: 40
+      count_merge_frames: 8       # Moderate merge window
+      cull_weight: 1.0            # No boost needed - plenty of vote frames
+      hit_threshold: 12           # 12 high-conf Cull hits out of 21 frames = Cull
+      cull_ratio_threshold: 0.60  # 60% of votes Cull = force Cull
+      peak_conf_override: 0.55    # Fresh/Processing peak ≥ 0.55 protects from Cull
+      overwhelming_cull_threshold: 14  # 14 high-conf hits out of 21 = indisputable
+
+    # ── 2 apples / second ────────────────────────────────────────────────
+    # Budget: ~10 frames per apple. Tight window, needs relaxed thresholds.
+    # Priority: catch Culls before they exit (fewer chances to observe).
+    2:
+      enabled: true
+      exit_frac: 0.85             # Exit band centre
+      band_half_frac: 0.05        # ± 5% - wider for fast apple
+      entry_frac: 0.50            # Wider entry zone - fast apples miss the first 35%
+      min_frames: 6               # Low gate - 10 frame budget leaves no room for 12+
+      max_lost_frames: 20         # Keep lost tracks longer; detector may skip 1-2 frames
+      max_recover_dist: 160       # Fast apple moves more pixels between frames
+      min_count_dist_frac: 0.12
+      count_memory_frames: 40
+      count_merge_frames: 12      # Longer merge window prevents double-count on ID switch
+      cull_weight: 1.5            # Boost Cull votes - fewer frames means less vote data
+      hit_threshold: 7            # 7 high-conf hits out of 10 frames = Cull
+      cull_ratio_threshold: 0.55  # 55% Cull votes = force Cull (65% too hard at 10 frames)
+      peak_conf_override: 0.70    # Needs STRONG Fresh/Processing to block Cull
+                                  # (rotating Cull apple can flash Fresh at low conf)
+      overwhelming_cull_threshold: 5   # 5 high-conf hits out of 10 = overwhelming
+
+    # ── 3 apples / second ────────────────────────────────────────────────
+    # Budget: ~7 frames per apple. Very aggressive settings.
+    # NOTE: Untested - tune after real hardware trials at this speed.
+    3:
+      enabled: true
+      exit_frac: 0.85
+      band_half_frac: 0.07        # Even wider exit band for very fast apple
+      entry_frac: 0.60            # Apple may not appear until 60% of travel
+      min_frames: 4               # Minimum viable observation at 7 frame budget
+      max_lost_frames: 25
+      max_recover_dist: 220       # Very fast movement per frame
+      min_count_dist_frac: 0.12
+      count_memory_frames: 40
+      count_merge_frames: 15
+      cull_weight: 2.0            # Strong boost needed with only 4-7 frames
+      hit_threshold: 4            # 4 high-conf hits out of 7 = Cull
+      cull_ratio_threshold: 0.50  # Even split Cull → force Cull (sparse data)
+      peak_conf_override: 0.80    # Very high bar to block Cull at this speed
+      overwhelming_cull_threshold: 3   # 3 high-conf hits in 7 = overwhelming
+
 
 # ══════════════════════════════════════════════════════════════
 # DATA LOGGING
