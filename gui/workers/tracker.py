@@ -21,9 +21,13 @@ All gate logic (entry zone, counting band, proximity) operates on travel_pos.
 Lane assignment uses the orthogonal axis (Y for LR/RL, X for TB/BT).
 
 High-speed tuning (2 apples/s, ~8-10 frames/apple at ~15 FPS):
-  min_frames     = 10   (was 25) - commit with fewer frames
-  band_half_frac = 0.05 (was 0.025) - wider counting gate
-  entry_frac     = 0.50 (was 0.35) - larger valid entry zone
+  min_frames          = 10   (was 25) - commit with fewer frames
+  band_half_frac      = 0.05 (was 0.025) - wider counting gate
+  entry_frac          = 0.50 (was 0.35) - larger valid entry zone
+  hit_threshold       = 6    (was 20) - cull hit count reachable in 8-10 frames
+  cull_ratio_threshold= 0.50 (was 0.65) - 5/10 cull frames is sufficient evidence
+  peak_conf_override  = 0.75 (was 0.50) - genuine Fresh peaks >0.75; cull stray misclassifications don't
+  overwhelming_cull   = 20   (was 40)  - proportionally scaled down
 """
 
 from __future__ import annotations
@@ -72,12 +76,12 @@ class AppleTracker:
         count_memory_frames:        int   = 40,
         count_merge_frames:         int   = 5,    # only merge to existing seq within N frames
         cull_weight:                float = 1.0,
-        hit_threshold:              int   = 20,
-        cull_ratio_threshold:       float = 0.65,
+        hit_threshold:              int   = 6,     # lowered from 20 → reachable in 8-10 frames at 2 apple/s
+        cull_ratio_threshold:       float = 0.50,  # lowered from 0.65 → 5/10 cull frames is sufficient evidence
         min_vote_conf:              float = 0.20,
         min_det_conf:               float = 0.35,
-        peak_conf_override:         float = 0.50,
-        overwhelming_cull_threshold: int  = 40,   # hit_cull above this bypasses peak protection
+        peak_conf_override:         float = 0.75,  # raised from 0.50 → genuine Fresh peaks >0.75; stray Cull misclassifications don't
+        overwhelming_cull_threshold: int  = 20,   # lowered from 40 → still unreachable at high speed but reachable at low speed
     ) -> None:
         assert orientation in ORIENTATIONS, \
             f"orientation must be one of {ORIENTATIONS}, got '{orientation}'"
