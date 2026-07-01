@@ -145,23 +145,29 @@ inference:
 
   # Robust counting gate - tuned for 21 FPS, 2 apples/sec
   # Math: 21 FPS / 2 apples/s = ~10.5 frames per apple maximum in FOV
+  # --- Cull sensitivity tuning for high speed ---
+  # Problem: Cull -> Fresh/Processing misclassification at 2 apples/s
+  # Root cause at 10 frames: hit_threshold unreachable, single Fresh flash blocks Cull
   tracking:
     enabled: true
     exit_frac: 0.85             # Exit band centre (fraction of TRAVEL axis)
-    band_half_frac: 0.05        # ± 5% of travel axis - wider band for fast apples (was 0.025)
-    entry_frac: 0.50            # First detection must be in start zone (<50%) - wider for speed (was 0.35)
-    min_frames: 6               # @ 21 FPS + 2 apples/s = 10.5 frames max; was 15 (IMPOSSIBLE at speed!)
-    max_lost_frames: 20         # was 10 - keep lost tracks longer; fast apple may skip 1-2 frames
-    max_recover_dist: 160       # was 80 - apple moves more pixels/frame at higher speed
+    band_half_frac: 0.05        # ± 5% of travel axis - wider band for fast apples
+    entry_frac: 0.50            # First detection must be in start zone (<50%)
+    min_frames: 6               # @ 21 FPS + 2 apples/s = 10.5 frames max
+    max_lost_frames: 20         # keep lost tracks longer; fast apple may skip 1-2 frames
+    max_recover_dist: 160       # apple moves more pixels/frame at higher speed
     min_count_dist_frac: 0.12
     count_memory_frames: 40
-    count_merge_frames: 12      # was 5 - longer merge window prevents double-count on ID switch
-    cull_weight: 1.0            # don't over-weight Cull votes vs Fresh/Processing
-    hit_threshold: 15           # was 25 - fewer frames available so lower hit bar for Cull
-    cull_ratio_threshold: 0.65  # need clear majority to force Cull
-    peak_conf_override: 0.45    # was 0.50 - slightly easier to protect non-cull at fewer frames
-    overwhelming_cull_threshold: 20   # was 40 - scaled down proportionally for fewer frames
-                                     # A genuine Fresh apple will not have 20+ high-conf Cull hits
+    count_merge_frames: 12      # longer merge window prevents double-count on ID switch
+    cull_weight: 1.5            # was 1.0 - boost Cull votes to compensate for fewer frames at 2 apples/s
+                                # (at 10 frames, Cull needs extra weight to beat Fresh/Processing)
+    hit_threshold: 7            # was 15 (impossible at 10 frames!) - 7 high-conf hits in 10 frames = Cull
+    cull_ratio_threshold: 0.55  # was 0.65 - lower bar: at 10 frames, 55% voting Cull is clear signal
+    peak_conf_override: 0.70    # was 0.45 - raise: need STRONG Fresh/Processing conf to block Cull
+                                # prevents a single acc. Fresh flash (common on rotating Cull apple)
+                                # from wiping out accumulated Cull evidence
+    overwhelming_cull_threshold: 5    # was 20 - at 10 frames, 5 high-conf Cull hits IS overwhelming
+                                      # lifts peak_conf_override protection when Cull is unambiguous
 
 # ══════════════════════════════════════════════════════════════
 # DATA LOGGING
