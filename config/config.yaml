@@ -78,7 +78,7 @@ conveyor:
   #   LR = left→right   RL = right→left
   #   TB = top→bottom   BT = bottom→top  ← current camera setup
   orientation: "LR"   # LR=left→right (test video) | BT=bottom→top (real camera)
-  speed_apples_per_sec: 2          # Nominal: 1 | 2 | 3 apples/s/lane  ← SET TO MATCH CONVEYOR
+  speed_apples_per_sec: 1          # Nominal: 1 | 2 | 3 apples/s/lane  ← SET TO MATCH CONVEYOR
   camera_to_gate_m: 0.0            # Arduino handles timing via NIR sensor - fire immediately on grade
   # Timing delay (ms) = (camera_to_gate_m / conveyor_speed_m_s) * 1000
   # Software computes this dynamically - set conveyor_speed_m_s at runtime
@@ -157,24 +157,26 @@ inference:
 
     # ── 1 apple / second ─────────────────────────────────────────────────
     # Budget: ~21 frames per apple. Comfortable vote window.
-    # Priority: high classification accuracy, tighter Cull control.
+    # These are the ORIGINAL values that were proven to work correctly.
+    # Only processing_weight added (mild 1.1x boost for Proc vs Fresh).
     1:
       enabled: true
-      exit_frac: 0.85             # Exit band centre (85% of travel axis)
-      band_half_frac: 0.03        # ± 3% - moderately wide
-      entry_frac: 0.40            # First detection must be in start zone (<40%)
-      min_frames: 12              # Require solid observation before counting
-      max_lost_frames: 12         # Shorter - apple is slow, occlusions are brief
-      max_recover_dist: 80        # Slow apple → small displacement per frame
+      exit_frac: 0.85             # Exit band centre
+      band_half_frac: 0.025       # ± 2.5% - original narrow band (fine at slow speed)
+      entry_frac: 0.35            # Original - slow apple always enters before 35%
+      min_frames: 15              # Original - 15 out of 21 frame budget is comfortable
+      max_lost_frames: 10         # Original
+      max_recover_dist: 80        # Original - slow apple, small displacement per frame
       min_count_dist_frac: 0.12
       count_memory_frames: 40
-      count_merge_frames: 8       # Moderate merge window
-      cull_weight: 1.0            # No boost needed - plenty of vote frames
-      processing_weight: 1.0      # No boost needed at this speed
-      hit_threshold: 12           # 12 high-conf Cull hits out of 21 frames = Cull
-      cull_ratio_threshold: 0.60  # 60% of votes Cull = force Cull
-      peak_conf_override: 0.55    # Fresh/Processing peak ≥ 0.55 protects from Cull
-      overwhelming_cull_threshold: 14  # 14 high-conf hits out of 21 = indisputable
+      count_merge_frames: 5       # Original
+      cull_weight: 1.0            # Original - no boost needed at this speed
+      processing_weight: 1.1      # Very mild boost - helps Proc win vs occasional Fresh flash
+      hit_threshold: 25           # Original - proven: 25 high-conf hits out of 21 frames rarely triggers
+                                  # (only a genuine Cull with nearly every frame being high-conf Cull)
+      cull_ratio_threshold: 0.65  # Original - 65% Cull votes = clear Cull signal
+      peak_conf_override: 0.50    # Original - Fresh/Processing peak ≥ 0.50 protects from Cull
+      overwhelming_cull_threshold: 40  # Original - rarely reached, only genuine Cull
 
     # ── 2 apples / second ────────────────────────────────────────────────
     # Budget: ~10 frames per apple. Tight window, needs relaxed thresholds.
