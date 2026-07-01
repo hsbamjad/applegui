@@ -655,6 +655,7 @@ class MainWindow(QMainWindow):
             count_memory_frames         = inf_tracking.get("count_memory_frames",          40),
             count_merge_frames          = inf_tracking.get("count_merge_frames",            5),
             cull_weight                 = inf_tracking.get("cull_weight",                  1.0),
+            processing_weight           = inf_tracking.get("processing_weight",            1.0),
             hit_threshold               = inf_tracking.get("hit_threshold",                25),
             cull_ratio_threshold        = inf_tracking.get("cull_ratio_threshold",         0.65),
             peak_conf_override          = inf_tracking.get("peak_conf_override",           0.50),

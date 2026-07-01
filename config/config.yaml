@@ -170,6 +170,7 @@ inference:
       count_memory_frames: 40
       count_merge_frames: 8       # Moderate merge window
       cull_weight: 1.0            # No boost needed - plenty of vote frames
+      processing_weight: 1.0      # No boost needed at this speed
       hit_threshold: 12           # 12 high-conf Cull hits out of 21 frames = Cull
       cull_ratio_threshold: 0.60  # 60% of votes Cull = force Cull
       peak_conf_override: 0.55    # Fresh/Processing peak ≥ 0.55 protects from Cull
@@ -190,6 +191,8 @@ inference:
       count_memory_frames: 40
       count_merge_frames: 12      # Longer merge window prevents double-count on ID switch
       cull_weight: 1.5            # Boost Cull votes - fewer frames means less vote data
+      processing_weight: 1.3      # Boost Processing votes - Processing apple can flash Fresh
+                                  # briefly on rotation; 1.3x helps it win vs Fresh bias
       hit_threshold: 7            # 7 high-conf hits out of 10 frames = Cull
       cull_ratio_threshold: 0.55  # 55% Cull votes = force Cull (65% too hard at 10 frames)
       peak_conf_override: 0.70    # Needs STRONG Fresh/Processing to block Cull
@@ -211,6 +214,7 @@ inference:
       count_memory_frames: 40
       count_merge_frames: 15
       cull_weight: 2.0            # Strong boost needed with only 4-7 frames
+      processing_weight: 1.5      # Processing also needs boost vs Fresh at this speed
       hit_threshold: 4            # 4 high-conf hits out of 7 = Cull
       cull_ratio_threshold: 0.50  # Even split Cull → force Cull (sparse data)
       peak_conf_override: 0.80    # Very high bar to block Cull at this speed

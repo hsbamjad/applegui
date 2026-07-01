@@ -67,6 +67,7 @@ class AppleTracker:
         count_memory_frames:        int   = 40,
         count_merge_frames:         int   = 5,    # only merge to existing seq within N frames
         cull_weight:                float = 1.0,
+        processing_weight:          float = 1.0,  # multiplier on Processing class votes
         hit_threshold:              int   = 20,
         cull_ratio_threshold:       float = 0.65,
         min_vote_conf:              float = 0.20,
@@ -90,6 +91,7 @@ class AppleTracker:
         self._count_mem                = count_memory_frames
         self._count_merge_frames       = count_merge_frames
         self._cull_weight              = cull_weight
+        self._processing_weight        = processing_weight
         self._hit_threshold            = hit_threshold
         self._cull_ratio_thresh        = cull_ratio_threshold
         self._min_vote_conf            = min_vote_conf
@@ -275,7 +277,12 @@ class AppleTracker:
             # (background noise classified as Cull at conf < min_vote_conf would
             # otherwise accumulate hundreds of votes and drown out real grades).
             if conf >= self._min_vote_conf:
-                weight = self._cull_weight if cls_id == 2 else 1.0
+                if cls_id == 2:
+                    weight = self._cull_weight
+                elif cls_id == 1:
+                    weight = self._processing_weight
+                else:
+                    weight = 1.0   # Fresh - no boost
                 hist["votes"][cls_id] += conf * weight
             # Always track peak confidence per class (even below min_vote_conf)
             if conf > hist["peak_conf"][cls_id]:
