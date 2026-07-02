@@ -83,7 +83,7 @@ conveyor:
   #   LR = left→right   RL = right→left
   #   TB = top→bottom   BT = bottom→top  ← current camera setup
   orientation: "LR"   # LR=left→right (test video) | BT=bottom→top (real camera)
-  speed_apples_per_sec: 1          # Nominal: 1 | 2 | 3 apples/s/lane  ← SET TO MATCH CONVEYOR
+  speed_apples_per_sec: 2          # Nominal: 1 | 2 | 3 apples/s/lane  ← SET TO MATCH CONVEYOR
   camera_to_gate_m: 0.0            # Arduino handles timing via NIR sensor - fire immediately on grade
   # Timing delay (ms) = (camera_to_gate_m / conveyor_speed_m_s) * 1000
   # Software computes this dynamically - set conveyor_speed_m_s at runtime
@@ -212,8 +212,12 @@ inference:
       enabled: true
       exit_frac: 0.85             # Exit band centre
       band_half_frac: 0.05        # ± 5% - wider for fast apple
-      entry_frac: 0.50            # Wider entry zone - fast apples miss the first 35%
-      min_frames: 6               # Low gate - 10 frame budget leaves no room for 12+
+      entry_frac: 0.40            # Lowered from 0.50: gives more valid detection window.
+                                  # At 2 apples/s (15 frames budget), 0.50 leaves only 7-8 frames.
+                                  # 0.40 gives 9-10 frames → more headroom for YOLO misses.
+      min_frames: 4               # Lowered from 6: 3 of 9 apples missed at 2 apples/s.
+                                  # YOLO misses 2-3 frames per apple → track never reaches 6.
+                                  # 4 gives commit even with 2-3 missed frames out of 10.
       max_lost_frames: 20         # Keep lost tracks longer; detector may skip 1-2 frames
       max_recover_dist: 160       # Fast apple moves more pixels between frames
       min_count_dist_frac: 0.12   # Exit-zone proximity for ghost detection
