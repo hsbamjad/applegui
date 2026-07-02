@@ -83,7 +83,7 @@ conveyor:
   #   LR = left→right   RL = right→left
   #   TB = top→bottom   BT = bottom→top  ← current camera setup
   orientation: "LR"   # LR=left→right (test video) | BT=bottom→top (real camera)
-  speed_apples_per_sec: 2          # Nominal: 1 | 2 | 3 apples/s/lane  ← SET TO MATCH CONVEYOR
+  speed_apples_per_sec: 1          # Nominal: 1 | 2 | 3 apples/s/lane  ← SET TO MATCH CONVEYOR
   camera_to_gate_m: 0.0            # Arduino handles timing via NIR sensor - fire immediately on grade
   # Timing delay (ms) = (camera_to_gate_m / conveyor_speed_m_s) * 1000
   # Software computes this dynamically - set conveyor_speed_m_s at runtime
@@ -195,9 +195,11 @@ inference:
       fresh_peak_protect: 1.0     # DISABLED - ALL apples peak 0.97-0.98 Fresh (model behaviour)
                                   # Guard was always True for every apple including Processing/Cull
       peak_conf_override: 0.55    # Fresh/Processing needs conf>=0.55 to block Cull override
-      overwhelming_cull_threshold: 45  # DATA: hit_cull=26-28 at 110 frames = 24% = NOT overwhelming
-                                       # 45 hits = 41% of frames = genuinely indisputable
-                                       # (was 14 - fired on Processing apples at only 24% Cull frames)
+      overwhelming_cull_threshold: 12  # Ground truth validation 2026-07-02: Cull apple showed
+                                       # hit_cull=12 with new NIR normalization (was 26-28 at old exposure).
+                                       # 45 was missing real Culls. Profile 2 threshold=14 caught them.
+                                       # Set to 12 to match profile 2 sensitivity at 1 apple/s.
+                                       # (was 45 - calibrated for old lighting, now too high)
 
     # ── 2 apples / second ────────────────────────────────────────────────
     # Budget: ~10 frames per apple. Tight window, needs relaxed thresholds.
