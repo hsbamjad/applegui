@@ -141,10 +141,6 @@ class RealInferenceWorker(QThread):
         self._recorder    = None
         self._running     = False
         self._queue: queue.Queue = queue.Queue(maxsize=4)  # was 2; 4 reduces drops at 2 apples/s
-        # EMA of NIR channel 99th-percentile max - used for stable normalization.
-        # Per-frame NORM_MINMAX causes flicker (scale jumps when apple enters/leaves).
-        # EMA time constant ≈ 12 frames (~0.4s at 30fps) → smooth, flicker-free display.
-        self._nir_norm_hi: float = 128.0
         self._tracker_cfg = str(
             Path(__file__).parent.parent.parent / "bytetrack.yaml"
         )
@@ -187,25 +183,25 @@ class RealInferenceWorker(QThread):
                 break
         return n
 
-    def _prepare_input(self, ch1, ch2, ch3) -> np.ndarray:
-        # Update EMA of NIR peak so normalization scale changes smoothly
-        # instead of jumping frame-to-frame (which caused visible flicker).
-        for _ch in (ch2, ch3):
-            if _ch is not None:
-                _cur = float(np.percentile(_ch, 99))
-                self._nir_norm_hi = 0.92 * self._nir_norm_hi + 0.08 * max(_cur, 30.0)
-        _stable_hi = max(self._nir_norm_hi, 30.0)
+    # ── NIR normalization ceilings (calibrated to locked exposure settings) ──
+    # CH2 (800nm NIR1) @ 1000 µs: observed apple peak ~197  → ceiling 210 (+7%)
+    # CH3 (900nm NIR2) @ 1500 µs: observed apple peak ~163  → ceiling 175 (+7%)
+    # Fixed ceilings give zero flicker because the normalization scale never changes.
+    # Update these if exposure settings are changed.
+    _NIR_CEIL_CH2: float = 210.0
+    _NIR_CEIL_CH3: float = 175.0
 
-        def _to_gray(f):
+    def _prepare_input(self, ch1, ch2, ch3) -> np.ndarray:
+        def _to_gray(f, ceil: float = 210.0):
+            """Normalize NIR channel to 0-255 using a fixed ceiling.
+            Fixed (not per-frame) scale = zero flicker in the AI input display."""
             if f is None:
                 return np.zeros(ch1.shape[:2], dtype=np.uint8)
             if f.dtype != np.uint8:
                 f = cv2.normalize(f, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
             f = f[:, :, 0] if f.ndim == 3 else f
-            # Stable NIR normalization: use EMA ceiling so scale adapts smoothly
-            # (~0.4s time constant) rather than jumping per-frame.
             lo = float(f.min())
-            scale = max(_stable_hi - lo, 1.0)
+            scale = max(ceil - lo, 1.0)
             return np.clip(
                 (f.astype(np.float32) - lo) / scale * 255.0, 0, 255
             ).astype(np.uint8)
@@ -218,11 +214,15 @@ class RealInferenceWorker(QThread):
         mode = self._input_mode.lower()
 
         if mode == "rb-nir1":
-            return np.stack([ch1[:, :, 2], ch1[:, :, 0], _to_gray(ch2)], axis=2)
+            return np.stack([ch1[:, :, 2], ch1[:, :, 0],
+                             _to_gray(ch2, self._NIR_CEIL_CH2)], axis=2)
         if mode == "rg-nir1":
-            return np.stack([ch1[:, :, 2], ch1[:, :, 1], _to_gray(ch2)], axis=2)
+            return np.stack([ch1[:, :, 2], ch1[:, :, 1],
+                             _to_gray(ch2, self._NIR_CEIL_CH2)], axis=2)
         if mode == "r-nir1-nir2":
-            return np.stack([ch1[:, :, 2], _to_gray(ch2), _to_gray(ch3)], axis=2)
+            return np.stack([ch1[:, :, 2],
+                             _to_gray(ch2, self._NIR_CEIL_CH2),
+                             _to_gray(ch3, self._NIR_CEIL_CH3)], axis=2)
         if mode == "rgb":
             return _ensure_bgr(ch1)
         return _ensure_bgr(ch1)
