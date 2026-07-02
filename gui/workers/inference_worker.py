@@ -189,7 +189,10 @@ class RealInferenceWorker(QThread):
                 return np.zeros(ch1.shape[:2], dtype=np.uint8)
             if f.dtype != np.uint8:
                 f = cv2.normalize(f, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
-            return f[:, :, 0] if f.ndim == 3 else f
+            f = f[:, :, 0] if f.ndim == 3 else f
+            # Normalize NIR contrast to full 0-255 range so inference is
+            # robust to exposure changes (e.g. after lighting environment change).
+            return cv2.normalize(f, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
 
         def _ensure_bgr(f):
             if f.dtype != np.uint8:
