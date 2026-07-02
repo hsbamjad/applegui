@@ -177,26 +177,29 @@ inference:
       min_count_dist_frac: 0.12
       count_memory_frames: 40
       count_merge_frames: 5       # Original
-      cull_weight: 1.3            # Boost Cull votes
-      processing_weight: 1.6      # Flips borderline Fresh/Proc via weighted vote max
-      hit_threshold: 15           # RECAL 2026-07-02: NIR normalisation changed model output.
-                                  # With normalised NIR, Cull apples show hit_cull~9-20
-                                  # (was 50 - calibrated for non-normalised high-exposure data
-                                  #  where Cull apples showed hit_cull=26-28 at 110 frames)
-      cull_ratio_threshold: 0.20  # RECAL 2026-07-02: lower threshold to catch Cull.
-                                  # Apple #1 had cull_ratio=0.31 but wasn't caught (was 0.58).
-                                  # 0.20 = if ≥20% of frames vote Cull → force Cull.
-                                  # Risk: monitor for false Cull on Fresh apples (expect ~0.05-0.12)
-      proc_ratio_threshold: 0.30  # Unchanged - catches Processing at 0.32+ without Fresh (0.09-0.19)
-      hit_proc_threshold: 999     # DISABLED - Fresh apples also get many Processing hits
-      fresh_peak_protect: 1.0     # DISABLED - all apples peak 0.97-0.98 Fresh (model behaviour)
-      peak_conf_override: 0.99    # RECAL 2026-07-02: effectively disabled.
-                                  # ALL apples (including real Cull) show peak_non_cull=0.97,
-                                  # so 0.55 was blocking force_cull on genuine Cull apples.
-                                  # 0.99 means only a perfect-confidence non-Cull sighting blocks.
-      overwhelming_cull_threshold: 12  # RECAL 2026-07-02: lower to match new hit_cull scale.
-                                       # With normalised NIR, 12 hits is a strong Cull signal.
-                                       # (was 45 - calibrated for old high-exposure non-normalised data)
+      cull_weight: 1.3            # Boost Cull - model biased toward Fresh/Processing
+                                  # cull_weight(1.3) > processing_weight(1.25) so Cull beats
+                                  # Processing even when model votes are roughly equal
+      processing_weight: 1.6       # KEY: flips borderline 60/40 Proc/Fresh via max(weighted votes)
+                                  # Data: Fresh=0.63/Proc=0.37 → stays Fresh (0.63 vs 0.592)
+                                  #       Fresh=0.61/Proc=0.39 → flips Proc (0.61 vs 0.624) ✓
+                                  # (was 1.25 - not enough to flip 60/40 borderline cases)
+      hit_threshold: 50           # DATA: ~110 frames/apple; 50 = 45% frames high-conf Cull
+                                  # (was 16 - calibrated for budget=21, real=110 frames)
+      cull_ratio_threshold: 0.58  # 58% weighted Cull votes forces Cull
+                                  # (was 0.65 - too hard to reach with model's Fresh bias)
+      proc_ratio_threshold: 0.30  # DATA gap: Fresh=0.09-0.19, Processing=0.32-0.39+
+                                  # 0.30 catches all Processing (0.32+) without touching Fresh (0.19-)
+                                  # (was 0.48 - too high, missed borderline Processing at 0.32-0.39)
+      hit_proc_threshold: 999     # DISABLED - even Fresh apples get 35+ Processing hits
+                                  # at conf>0.50 in 100+ frames. Use proc_ratio + weight instead.
+                                  # (was 33 - fired on every apple including Fresh)
+      fresh_peak_protect: 1.0     # DISABLED - ALL apples peak 0.97-0.98 Fresh (model behaviour)
+                                  # Guard was always True for every apple including Processing/Cull
+      peak_conf_override: 0.55    # Fresh/Processing needs conf>=0.55 to block Cull override
+      overwhelming_cull_threshold: 45  # DATA: hit_cull=26-28 at 110 frames = 24% = NOT overwhelming
+                                       # 45 hits = 41% of frames = genuinely indisputable
+                                       # (was 14 - fired on Processing apples at only 24% Cull frames)
 
     # ── 2 apples / second ────────────────────────────────────────────────
     # Budget: ~10 frames per apple. Tight window, needs relaxed thresholds.
