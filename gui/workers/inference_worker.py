@@ -190,8 +190,8 @@ class RealInferenceWorker(QThread):
             if f.dtype != np.uint8:
                 f = cv2.normalize(f, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
             f = f[:, :, 0] if f.ndim == 3 else f
-            # Per-frame NORM_MINMAX: stretches NIR to full 0-255 range each frame.
-            # Adapts automatically to exposure changes - confirmed best for grading.
+            # Normalize NIR contrast to full 0-255 range so inference is
+            # robust to exposure changes (e.g. after lighting environment change).
             return cv2.normalize(f, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
 
         def _ensure_bgr(f):
