@@ -33,7 +33,12 @@ camera:
     mac:         "00:0c:df:0a:f3:f8"
     serial:      "U320500"
     fps:         30                  # Confirmed: 30.0 FPS stable at full res
-    exposure_us: 9229                # Confirmed default (ExposureAuto=Off)
+    # Per-channel exposure (µs) - set from GUI on each session.
+    # Updated 2026-07-02 after LED strip installation raised NIR ambient.
+    # CH1 (Color ~660nm): 3000-5000 µs  - visible, less sensitive to NIR bleed
+    # CH2 (NIR1  ~800nm): 1000 µs       - was 9229; LED strips saturate above ~1500 µs
+    # CH3 (NIR2  ~900nm): 800-1000 µs   - most sensitive channel; saturates above ~1200 µs
+    exposure_us: 1000                # Safe default for NIR channels with LED strips present
     trigger_mode: "Off"             # Free-run (encoder trigger = future)
     num_channels: 3
     # Sources confirmed:
