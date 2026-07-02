@@ -381,14 +381,20 @@ class AppleTracker:
                     clearly_non_cull = max_non_cull_peak >= self._peak_conf_override
 
                     # Overwhelming cull: hit_cull so high it can only be a cull apple.
-                    # Lifts peak_conf_override protection - a genuine Fresh/Processing apple
-                    # will never accumulate this many high-conf Cull hits on a screw conveyor.
+                    # Lifts peak_conf_override protection AND independently forces Cull.
+                    # Matches the live display logic (which already shows Cull on overwhelming).
+                    # A genuine Fresh/Processing apple will never accumulate this many
+                    # high-conf Cull hits on a screw conveyor.
                     overwhelming_cull = hist["hit_cull"] >= self._overwhelming_cull
 
                     force_cull = (
-                        cull_ratio >= self._cull_ratio_thresh
-                        or hist["hit_cull"] >= self._hit_threshold
-                    ) and (not clearly_non_cull or overwhelming_cull)
+                        overwhelming_cull  # overwhelming alone is sufficient to force Cull
+                        or (
+                            (cull_ratio >= self._cull_ratio_thresh
+                             or hist["hit_cull"] >= self._hit_threshold)
+                            and (not clearly_non_cull or overwhelming_cull)
+                        )
+                    )
 
                     # ── Force Processing ──────────────────────────────────────
                     # Symmetric to force_cull: if Processing has a strong enough
@@ -404,6 +410,7 @@ class AppleTracker:
                     clearly_fresh = fresh_peak >= self._fresh_peak_protect
                     force_processing = (
                         not force_cull
+                        and not overwhelming_cull  # block force_proc when Cull signal is overwhelming
                         and not clearly_fresh
                         and (
                             proc_ratio >= self._proc_ratio_thresh
