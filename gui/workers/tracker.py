@@ -247,22 +247,26 @@ class AppleTracker:
             # a NEW apple appears nearby, ByteTrack may re-assign the same ID.
             # Without this guard the committed=True flag from the first apple
             # permanently blocks grading of the second apple, causing every
-            # second-wave apple on that lane to go ungraded.
+            # subsequent-wave apple on that lane to go ungraded.
             #
-            # Detection: the track is already committed AND it hasn't been seen
-            # for at least (max_lost_frames) frames AND the new detection is
+            # Detection: the track is already committed AND the new detection is
             # far from the last known position (> max_recover_dist pixels).
-            # In that situation we treat this as a brand-new apple.
+            # Geometry guarantee: a committed apple's last_pos is always near
+            # the EXIT zone (~x=1741 for LR). A new apple entering always
+            # appears at the ENTRY zone (~x=0). The gap (~1741 px) always
+            # exceeds max_recover_dist (160 px), so no time gate is needed.
+            # NOTE: The old time gate (frames_absent >= max_lost=20) was
+            # removed because consecutive apples on the same lane are only
+            # ~10-15 frames apart, causing wave-3 resets to be silently skipped.
             if hist_i["committed"] and hist_i["frames_seen"] > 0:
-                frames_absent = self._frame_no - hist_i["last_frame"]
                 cx_i = int((xyxys[i][0] + xyxys[i][2]) / 2)
                 cy_i = int((xyxys[i][1] + xyxys[i][3]) / 2)
                 dist_from_last = self._dist((cx_i, cy_i), hist_i["last_pos"])
-                if frames_absent >= self._max_lost and dist_from_last > self._max_recover:
+                if dist_from_last > self._max_recover:
                     log.debug(
-                        "Track %d ID reuse detected: committed apple gone %d frames, "
+                        "Track %d ID reuse detected: committed apple, "
                         "new detection %.0f px away → resetting history",
-                        tid, frames_absent, dist_from_last,
+                        tid, dist_from_last,
                     )
                     # Remove stale id_map entry so this apple gets a fresh seq_id
                     self._id_map.pop(tid, None)
