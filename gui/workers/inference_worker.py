@@ -183,30 +183,16 @@ class RealInferenceWorker(QThread):
                 break
         return n
 
-    # ── NIR normalization ceilings (calibrated to locked exposure settings) ──
-    # CH2 (800nm NIR1) @ 1000 µs: consistent apple peak ~90-115  → ceiling 130 (+13%)
-    # CH3 (900nm NIR2) @ 1500 µs: consistent apple peak ~125-150 → ceiling 160 (+7%)
-    # Fixed ceilings give zero flicker because the normalization scale never changes.
-    # Update these if exposure settings are changed.
-    # At these ceilings, bright apple pixels map to ~85-90% of 255 in the model input,
-    # matching the radiometric range the model was trained on.
-    _NIR_CEIL_CH2: float = 130.0
-    _NIR_CEIL_CH3: float = 160.0
-
     def _prepare_input(self, ch1, ch2, ch3) -> np.ndarray:
-        def _to_gray(f, ceil: float = 210.0):
-            """Normalize NIR channel to 0-255 using a fixed ceiling.
-            Fixed (not per-frame) scale = zero flicker in the AI input display."""
+        def _to_gray(f):
             if f is None:
                 return np.zeros(ch1.shape[:2], dtype=np.uint8)
             if f.dtype != np.uint8:
                 f = cv2.normalize(f, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
             f = f[:, :, 0] if f.ndim == 3 else f
-            lo = float(f.min())
-            scale = max(ceil - lo, 1.0)
-            return np.clip(
-                (f.astype(np.float32) - lo) / scale * 255.0, 0, 255
-            ).astype(np.uint8)
+            # Per-frame NORM_MINMAX: stretches NIR to full 0-255 range each frame.
+            # Adapts automatically to exposure changes - confirmed best for grading.
+            return cv2.normalize(f, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
 
         def _ensure_bgr(f):
             if f.dtype != np.uint8:
@@ -216,15 +202,11 @@ class RealInferenceWorker(QThread):
         mode = self._input_mode.lower()
 
         if mode == "rb-nir1":
-            return np.stack([ch1[:, :, 2], ch1[:, :, 0],
-                             _to_gray(ch2, self._NIR_CEIL_CH2)], axis=2)
+            return np.stack([ch1[:, :, 2], ch1[:, :, 0], _to_gray(ch2)], axis=2)
         if mode == "rg-nir1":
-            return np.stack([ch1[:, :, 2], ch1[:, :, 1],
-                             _to_gray(ch2, self._NIR_CEIL_CH2)], axis=2)
+            return np.stack([ch1[:, :, 2], ch1[:, :, 1], _to_gray(ch2)], axis=2)
         if mode == "r-nir1-nir2":
-            return np.stack([ch1[:, :, 2],
-                             _to_gray(ch2, self._NIR_CEIL_CH2),
-                             _to_gray(ch3, self._NIR_CEIL_CH3)], axis=2)
+            return np.stack([ch1[:, :, 2], _to_gray(ch2), _to_gray(ch3)], axis=2)
         if mode == "rgb":
             return _ensure_bgr(ch1)
         return _ensure_bgr(ch1)
