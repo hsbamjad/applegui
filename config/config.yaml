@@ -197,9 +197,11 @@ inference:
       fresh_peak_protect: 1.0     # DISABLED - ALL apples peak 0.97-0.98 Fresh (model behaviour)
                                   # Guard was always True for every apple including Processing/Cull
       peak_conf_override: 0.55    # Fresh/Processing needs conf>=0.55 to block Cull override
-      overwhelming_cull_threshold: 45  # DATA: hit_cull=26-28 at 110 frames = 24% = NOT overwhelming
-                                       # 45 hits = 41% of frames = genuinely indisputable
-                                       # (was 14 - fired on Processing apples at only 24% Cull frames)
+      overwhelming_cull_threshold: 35  # Lowered 45→35 after NIR normalization change (2026-07-02)
+                                       # Per-frame Cull confidence is weaker after NIR stretch,
+                                       # so genuine Culls accumulate fewer hits. 30 hits at
+                                       # 98 frames (31% of frames) = real Cull pattern.
+                                       # (was 45 - calibrated pre-LED strips at higher exposure)
 
     # ── 2 apples / second ────────────────────────────────────────────────
     # Budget: ~10 frames per apple. Tight window, needs relaxed thresholds.
