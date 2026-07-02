@@ -187,11 +187,12 @@ inference:
                                   # 40 catches them (43,49>40) without affecting Processing (hit_cull=0-3).
       cull_ratio_threshold: 0.58  # 58% weighted Cull votes forces Cull
                                   # (was 0.65 - too hard to reach with model's Fresh bias)
-      proc_ratio_threshold: 0.25  # Lowered from 0.28: Processing apple #1 had proc_ratio=0.27
-                                  # (just below 0.28) → graded Fresh. 0.25 catches it.
-                                  # Fresh apple has proc_ratio=0.24 (just below 0.25) → stays Fresh.
-                                  # Culls: proc_ratio=0.27-0.47 but caught by hit_threshold first.
-                                  # Result: 1 Fresh, 4 Processing, 4 Cull (matches GT).
+      proc_ratio_threshold: 0.45  # Raised from 0.25: Fresh apples show proc_ratio=0.35-0.40
+                                  # (fresh=0.60-0.65). With threshold=0.25 force_proc fires on
+                                  # Fresh apples. Processing apples show proc_ratio=0.50-0.68.
+                                  # Gap: Fresh≤0.40 < threshold=0.45 < Processing≥0.50.
+                                  # Fresh falls to weighted vote: proc×1.25 < fresh → Fresh wins.
+                                  # (was 0.25 - Fresh apple proc_ratio=0.35-0.40 triggered force_proc)
       hit_proc_threshold: 999     # DISABLED - even Fresh apples get 35+ Processing hits
                                   # at conf>0.50 in 100+ frames. Use proc_ratio + weight instead.
                                   # (was 33 - fired on every apple including Fresh)
