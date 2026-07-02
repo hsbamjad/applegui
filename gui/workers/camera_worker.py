@@ -85,6 +85,21 @@ class CameraWorker(QThread):
         self.sig_status.emit(
             f"Connected  ·  {actual_mode.upper()}", False
         )
+
+        # ── Read back actual firmware exposure on connect (read-only) ─────────
+        # This tells us what the camera's default/retained exposure is without
+        # changing anything, and syncs the GUI spinboxes to the real hardware value.
+        if actual_mode == "jai":
+            actuals = self._camera.get_exposures_per_source()
+            if actuals and len(actuals) >= 1:
+                while len(actuals) < 3:
+                    actuals.append(actuals[-1])
+                log.info(
+                    "CameraWorker: firmware exposure on connect - "
+                    "CH1=%d CH2=%d CH3=%d µs", actuals[0], actuals[1], actuals[2],
+                )
+                self.sig_exposure_readback.emit(actuals[0], actuals[1], actuals[2])
+
         self._running = True
 
         frame_count    = 0
