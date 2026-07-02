@@ -85,26 +85,6 @@ class CameraWorker(QThread):
         self.sig_status.emit(
             f"Connected  ·  {actual_mode.upper()}", False
         )
-
-        # ── Force safe exposure on every connect / reconnect ──────────────
-        # The JAI firmware retains the last-used exposure across sessions.
-        # Without this, reconnecting after a high-exposure run leaves the
-        # sensor fully saturated (pixel values ~255) until the user manually
-        # clicks Reset.  Writing 5,000 µs immediately after streaming starts
-        # guarantees a known, non-overexposed baseline every time.
-        _DEFAULT_EXPOSURE_US = 5_000
-        if actual_mode == "jai":
-            log.info(
-                "CameraWorker: forcing safe default exposure %d µs on connect",
-                _DEFAULT_EXPOSURE_US,
-            )
-            actuals = self._camera.set_exposures_per_source(
-                [_DEFAULT_EXPOSURE_US] * 3
-            )
-            while len(actuals) < 3:
-                actuals.append(actuals[-1] if actuals else _DEFAULT_EXPOSURE_US)
-            self.sig_exposure_readback.emit(actuals[0], actuals[1], actuals[2])
-
         self._running = True
 
         frame_count    = 0
