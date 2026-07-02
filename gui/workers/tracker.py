@@ -138,7 +138,8 @@ class AppleTracker:
         self._recent:      list[dict]      = []
         # Per-lane counters so that seq_id = (lane_count - 1) * n_lanes + lane,
         # matching the GT interleaving: Lane1→1,4,7…  Lane2→2,5,8…  Lane3→3,6,9…
-        self._lane_counts: dict[int, int]  = {}   # lane (1-indexed) → apples counted so far
+        self._lane_counts:      dict[int, int] = {}   # lane (1-indexed) → apples counted so far
+        self._committed_seq_ids: set[int]      = set() # seq_ids that have already fired a grade
         self._frame_no:    int = 0
 
     # ── Geometry helpers ──────────────────────────────────────────────────────
@@ -363,6 +364,19 @@ class AppleTracker:
                         break
 
                 if matched_seq is not None:
+                    if matched_seq in self._committed_seq_ids:
+                        # The matched seq_id is already a committed grade.
+                        # This is the NEXT real apple on the same lane arriving
+                        # at the same exit position - NOT a ghost of the previous
+                        # one.  Give it a fresh seq_id instead of merging.
+                        log.debug(
+                            "Track %d: proximity match seq=%d already committed – "
+                            "treating as new apple (same lane, age=%d)",
+                            tid, matched_seq, age,
+                        )
+                        matched_seq = None  # fall through to new-apple branch
+
+                if matched_seq is not None:
                     self._id_map[tid] = matched_seq
                     seq_id = matched_seq
                     hist["committed"] = True   # suppress ghost: this track is a duplicate of
@@ -487,6 +501,7 @@ class AppleTracker:
                             best_conf = hist["votes"][best_cls] / total
 
                     hist["committed"] = True
+                    self._committed_seq_ids.add(seq_id)   # mark this grade as fired
                     cls_name = (self.CLASS_NAMES[best_cls]
                                 if best_cls < len(self.CLASS_NAMES) else str(best_cls))
                     rec = GradeRecord(
@@ -579,6 +594,7 @@ class AppleTracker:
         self._id_map.clear()
         self._recent.clear()
         self._lane_counts.clear()
+        self._committed_seq_ids.clear()
         self._frame_no = 0
 
     @property
