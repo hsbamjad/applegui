@@ -212,9 +212,11 @@ inference:
       enabled: true
       exit_frac: 0.85             # Exit band centre
       band_half_frac: 0.05        # ± 5% - wider for fast apple
-      entry_frac: 0.40            # Lowered from 0.50: gives more valid detection window.
-                                  # At 2 apples/s (15 frames budget), 0.50 leaves only 7-8 frames.
-                                  # 0.40 gives 9-10 frames → more headroom for YOLO misses.
+      entry_frac: 0.65            # MUST be generous: entered_start = first_travel < entry_pos.
+                                  # Fast/late-detected apples are first seen at travel=0.40-0.60.
+                                  # entry_frac < first_detection → entered_start=False → never graded.
+                                  # 0.40 was WRONG (more strict than 0.50, made 3/9 misses worse).
+                                  # 0.65 allows first detection up to 65% of travel axis.
       min_frames: 4               # Lowered from 6: 3 of 9 apples missed at 2 apples/s.
                                   # YOLO misses 2-3 frames per apple → track never reaches 6.
                                   # 4 gives commit even with 2-3 missed frames out of 10.
