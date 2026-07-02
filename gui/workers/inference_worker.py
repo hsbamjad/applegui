@@ -184,12 +184,14 @@ class RealInferenceWorker(QThread):
         return n
 
     # ── NIR normalization ceilings (calibrated to locked exposure settings) ──
-    # CH2 (800nm NIR1) @ 1000 µs: observed apple peak ~197  → ceiling 210 (+7%)
-    # CH3 (900nm NIR2) @ 1500 µs: observed apple peak ~163  → ceiling 175 (+7%)
+    # CH2 (800nm NIR1) @ 1000 µs: consistent apple peak ~90-115  → ceiling 130 (+13%)
+    # CH3 (900nm NIR2) @ 1500 µs: consistent apple peak ~125-150 → ceiling 160 (+7%)
     # Fixed ceilings give zero flicker because the normalization scale never changes.
     # Update these if exposure settings are changed.
-    _NIR_CEIL_CH2: float = 210.0
-    _NIR_CEIL_CH3: float = 175.0
+    # At these ceilings, bright apple pixels map to ~85-90% of 255 in the model input,
+    # matching the radiometric range the model was trained on.
+    _NIR_CEIL_CH2: float = 130.0
+    _NIR_CEIL_CH3: float = 160.0
 
     def _prepare_input(self, ch1, ch2, ch3) -> np.ndarray:
         def _to_gray(f, ceil: float = 210.0):
