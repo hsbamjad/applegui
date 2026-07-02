@@ -83,7 +83,7 @@ conveyor:
   #   LR = left→right   RL = right→left
   #   TB = top→bottom   BT = bottom→top  ← current camera setup
   orientation: "LR"   # LR=left→right (test video) | BT=bottom→top (real camera)
-  speed_apples_per_sec: 2          # Nominal: 1 | 2 | 3 apples/s/lane  ← SET TO MATCH CONVEYOR
+  speed_apples_per_sec: 1          # Nominal: 1 | 2 | 3 apples/s/lane  ← SET TO MATCH CONVEYOR
   camera_to_gate_m: 0.0            # Arduino handles timing via NIR sensor - fire immediately on grade
   # Timing delay (ms) = (camera_to_gate_m / conveyor_speed_m_s) * 1000
   # Software computes this dynamically - set conveyor_speed_m_s at runtime
@@ -139,10 +139,7 @@ inference:
   model_dir: "models/"
   default_model: "best.pt"         # Auto-load on startup
   device: "cuda"                   # "cuda" | "cpu"
-  confidence_threshold: 0.40       # Lowered from 0.50: 3/9 apples missing at 2 apples/s.
-                                   # Those apples show NIR max=61-67 vs 90-107 for detected ones.
-                                   # YOLO likely detects them at conf=0.42-0.49 → filtered at 0.50.
-                                   # 0.40 catches borderline detections. Watch for ghost flickers.
+  confidence_threshold: 0.50       # Raise to 0.50 to kill low-confidence ghost flickers
   iou_threshold: 0.45              # NMS IoU threshold
   input_mode: "RB-nir1"           # Band combo model was trained on
                                    # Options: RB-nir1 | RG-nir1 | R-nir1-nir2 | RGB | CH1
@@ -215,14 +212,8 @@ inference:
       enabled: true
       exit_frac: 0.85             # Exit band centre
       band_half_frac: 0.05        # ± 5% - wider for fast apple
-      entry_frac: 0.65            # MUST be generous: entered_start = first_travel < entry_pos.
-                                  # Fast/late-detected apples are first seen at travel=0.40-0.60.
-                                  # entry_frac < first_detection → entered_start=False → never graded.
-                                  # 0.40 was WRONG (more strict than 0.50, made 3/9 misses worse).
-                                  # 0.65 allows first detection up to 65% of travel axis.
-      min_frames: 4               # Lowered from 6: 3 of 9 apples missed at 2 apples/s.
-                                  # YOLO misses 2-3 frames per apple → track never reaches 6.
-                                  # 4 gives commit even with 2-3 missed frames out of 10.
+      entry_frac: 0.50            # Wider entry zone - fast apples miss the first 35%
+      min_frames: 6               # Low gate - 10 frame budget leaves no room for 12+
       max_lost_frames: 20         # Keep lost tracks longer; detector may skip 1-2 frames
       max_recover_dist: 160       # Fast apple moves more pixels between frames
       min_count_dist_frac: 0.12   # Exit-zone proximity for ghost detection
