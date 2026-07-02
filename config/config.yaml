@@ -186,9 +186,12 @@ inference:
                                   # (was 16 - calibrated for budget=21, real=110 frames)
       cull_ratio_threshold: 0.58  # 58% weighted Cull votes forces Cull
                                   # (was 0.65 - too hard to reach with model's Fresh bias)
-      proc_ratio_threshold: 0.55  # Raised from 0.30 - NIR normalization lifts proc_ratio on ALL
-                                  # apples (Fresh apple #8 showed 0.48 with new normalization).
-                                  # 0.55 separates clear Processing (0.60-0.65) from borderline Fresh.
+      proc_ratio_threshold: 0.28  # Ground truth 2026-07-02: Processing apples proc_ratio=0.29-0.45
+                                  # Fresh apple proc_ratio=0.16. Cull apples proc_ratio=0.20-0.27
+                                  # (caught by force_cull before this threshold matters).
+                                  # 0.28 catches Processing (0.29+) without touching Fresh (0.16)
+                                  # or disrupting Culls (already force_culled).
+                                  # (was 0.55 - missed 3 of 4 Processing apples as Fresh)
       hit_proc_threshold: 999     # DISABLED - even Fresh apples get 35+ Processing hits
                                   # at conf>0.50 in 100+ frames. Use proc_ratio + weight instead.
                                   # (was 33 - fired on every apple including Fresh)
