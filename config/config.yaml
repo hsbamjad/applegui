@@ -28,10 +28,11 @@ camera:
       ch3: "D:/HA/apple_gui/videos/Source2/G5/G5.avi"
 
   jai:
-    # Confirmed hardware (Shuttle PC) - from camera_probe_jai.py output
-    ip:          "169.254.101.209"   # Update if DHCP changes
-    mac:         "00:0c:df:0a:f3:f8"
-    serial:      "U320500"
+    # Active camera - confirmed from Device Selection / camera_probe_jai.py
+    ip:          "169.254.2.93"      # Camera IP on GEV NIC (169.254.30.41 host side)
+    mac:         "00:0c:df:0a:b8:e9" # U320484 - current unit
+    serial:      "U320484"
+    # Shuttle PC camera (U320500): mac=00:0c:df:0a:f3:f8  ip=169.254.101.209
     fps:         30                  # Confirmed: 30.0 FPS stable at full res
     # Per-channel exposure (µs) - set from GUI on each session.
     # Updated 2026-07-02 after LED strip installation raised NIR ambient.

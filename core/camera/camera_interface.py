@@ -91,11 +91,13 @@ class _JAISource:
 
     BUFFER_COUNT = 16
 
-    def __init__(self, device, connection_id: str, source_name: str, ch_index: int):
+    def __init__(self, device, connection_id: str, source_name: str, ch_index: int,
+                 local_ip: str = ""):
         self._device         = device
         self._connection_id  = connection_id
         self._source_name    = source_name
         self._ch_index       = ch_index
+        self._local_ip       = local_ip   # GEV NIC IP - binds stream to correct adapter
         self.stream          = None
         self.pipeline        = None
         self.source_channel  = 0
@@ -149,9 +151,15 @@ class _JAISource:
             self._get_p(nm, "Width"), self._get_p(nm, "Height"),
         )
 
-        # Open dedicated GEV stream for this source channel
+        # Open dedicated GEV stream for this source channel.
+        # IMPORTANT: pass the local NIC IP explicitly so eBUS binds to the GEV
+        # adapter instead of auto-selecting (which picks Wi-Fi on multi-NIC machines,
+        # causing SetStreamDestination to point the camera at the wrong host IP).
         self.stream = eb.PvStreamGEV()
-        r = self.stream.Open(self._connection_id, 0, self.source_channel)
+        if self._local_ip:
+            r = self.stream.Open(self._connection_id, self._local_ip, self.source_channel)
+        else:
+            r = self.stream.Open(self._connection_id, 0, self.source_channel)
         if r.IsFailure():
             log.error("  %s: stream.Open failed: %s",
                       self._source_name, r.GetCodeString())
@@ -160,7 +168,7 @@ class _JAISource:
         lip = self.stream.GetLocalIPAddress()
         lp  = self.stream.GetLocalPort()
         self._device.SetStreamDestination(lip, lp, self.source_channel)
-        log.info("       → %s:%d", lip, lp)
+        log.info("       → %s:%d  (bound to local NIC: %s)", lip, lp, lip)
 
         # Pipeline
         payload_size = self._device.GetPayloadSize()
@@ -267,8 +275,14 @@ class JAICamera:
             return False
 
         connection_id = None
+        local_nic_ip  = ""   # IP of the host NIC that found the camera
         for i in range(sys_obj.GetInterfaceCount()):
             iface = sys_obj.GetInterface(i)
+            # Capture the host-side NIC IP for this interface
+            try:
+                iface_ip = str(iface.GetIPAddress())
+            except Exception:
+                iface_ip = ""
             for j in range(iface.GetDeviceCount()):
                 dev = iface.GetDeviceInfo(j)
                 mac = str(dev.GetMACAddress())
@@ -279,18 +293,25 @@ class JAICamera:
                 if connection_id is None:
                     if target_mac and mac.lower() == target_mac.lower():
                         connection_id = dev.GetConnectionID()
-                        log.info("  → Selected by MAC match")
+                        local_nic_ip  = iface_ip
+                        log.info("  → Selected by MAC match  (local NIC: %s)", iface_ip)
                     elif target_ip and ip == target_ip:
                         connection_id = dev.GetConnectionID()
-                        log.info("  → Selected by IP match")
+                        local_nic_ip  = iface_ip
+                        log.info("  → Selected by IP match  (local NIC: %s)", iface_ip)
 
         # Last resort: use first found device if no match
         if connection_id is None:
             for i in range(sys_obj.GetInterfaceCount()):
                 iface = sys_obj.GetInterface(i)
+                try:
+                    iface_ip = str(iface.GetIPAddress())
+                except Exception:
+                    iface_ip = ""
                 for j in range(iface.GetDeviceCount()):
                     connection_id = iface.GetDeviceInfo(j).GetConnectionID()
-                    log.info("  → No MAC/IP match - using first found device")
+                    local_nic_ip  = iface_ip
+                    log.info("  → No MAC/IP match - using first found device  (local NIC: %s)", iface_ip)
                     break
                 if connection_id:
                     break
@@ -331,8 +352,11 @@ class JAICamera:
         log.info("Sources: %s", source_names)
 
         # ── Open all streams simultaneously ───────────────────────
+        # local_nic_ip pins each stream to the GEV NIC, not a Wi-Fi adapter.
+        log.info("JAICamera: opening streams bound to local NIC %s", local_nic_ip or "(auto)")
         for ch_idx, src_name in enumerate(source_names):
-            src = _JAISource(self._device, connection_id, src_name, ch_idx)
+            src = _JAISource(self._device, connection_id, src_name, ch_idx,
+                             local_ip=local_nic_ip)
             if src.open():
                 self._sources.append(src)
 
