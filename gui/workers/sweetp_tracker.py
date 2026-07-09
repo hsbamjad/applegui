@@ -76,9 +76,10 @@ class SweetPotatoTracker:
         n_lanes:                int   = 2,
         orientation:            str   = "LR",
         class_names:            list | None = None,
-        line_frac:              float = 0.70,
-        band_half_frac:         float = 0.04,
-        min_frames:             int   = 10,
+        line_frac:              float = 0.50,
+        band_half_frac:         float = 0.06,
+        min_frames:             int   = 5,
+        min_frames_to_count:    int   = 2,     # frames needed at gate to earn seq_id
         max_lost_frames:        int   = 15,
         max_recover_dist:       int   = 120,
         min_count_dist:         int   = 100,
@@ -88,7 +89,7 @@ class SweetPotatoTracker:
         defect_ratio_threshold: float = 0.58,
         min_det_conf:           float = 0.30,
         min_vote_conf:          float = 0.20,
-        # kept for API compatibility - no longer used
+        # kept for API compatibility
         entry_frac:             float = 0.30,
         count_merge_frames:     int   = 5,
     ) -> None:
@@ -99,7 +100,8 @@ class SweetPotatoTracker:
         self._ori              = orientation
         self._line_frac        = line_frac
         self._band_half_frac   = band_half_frac
-        self._min_frames       = min_frames
+        self._min_frames       = min_frames           # for grade commit
+        self._min_frames_count = max(1, min_frames_to_count)  # for counting gate
         self._max_lost         = max_lost_frames
         self._max_recover      = max_recover_dist
         self._min_count_dist   = min_count_dist
@@ -307,11 +309,13 @@ class SweetPotatoTracker:
 
             # ── Counting gate ──────────────────────────────────────────────────
             # RULE: if track_id already has a seq_id, NEVER count it again.
-            # This is the primary dedup guard (same as chestnut).
-            in_band      = (line_pos - band_half) <= travel <= (line_pos + band_half)
-            enough_frames = hist["frames_seen"] >= self._min_frames
+            # Only require min_frames_to_count (default 2) - much lower than
+            # min_frames (5) which is for grade commit. This ensures objects
+            # that cross the gate early are counted even with few frames.
+            in_band       = (line_pos - band_half) <= travel <= (line_pos + band_half)
+            can_count     = hist["frames_seen"] >= self._min_frames_count
 
-            if in_band and enough_frames and tid not in self._id_map:
+            if in_band and can_count and tid not in self._id_map:
                 # Proximity dedup: check recently counted positions by DISTANCE only.
                 # Do NOT filter by age here - only purge the buffer at end of frame.
                 matched_seq = None
@@ -395,10 +399,42 @@ class SweetPotatoTracker:
                 "eligible": True,
             })
 
-        # ── Move disappeared tracks to lost buffer ─────────────────────────────
+        # ── Move disappeared tracks to lost buffer / exit commit ──────────────
         for tid in list(self._history.keys()):
             if tid not in seen_ids:
                 hist = self._history.pop(tid)
+                seq_id = self._id_map.get(tid)
+
+                # EXIT COMMIT: if track had a seq_id but grade never committed,
+                # commit now with whatever frames were accumulated. This prevents
+                # counted objects from being left without a grade result.
+                if (
+                    seq_id is not None
+                    and seq_id not in self._committed_seqs
+                    and hist["frames_seen"] >= self._min_frames_count
+                ):
+                    best_cls, best_conf = self._best_grade(hist)
+                    self._committed_seqs.add(seq_id)
+                    cls_name = (
+                        self.CLASS_NAMES[best_cls]
+                        if best_cls < len(self.CLASS_NAMES)
+                        else str(best_cls)
+                    )
+                    rec = GradeRecord(
+                        seq_id      = seq_id,
+                        lane        = hist["lane"],
+                        class_id    = best_cls,
+                        class_name  = cls_name,
+                        confidence  = best_conf,
+                        frames_seen = hist["frames_seen"],
+                        track_id    = tid,
+                    )
+                    graded.append(rec)
+                    log.info(
+                        "EXIT Grade #%d  lane=%d  %s  conf=%.2f  frames=%d (exit commit)",
+                        seq_id, hist["lane"], cls_name, best_conf, hist["frames_seen"],
+                    )
+
                 if hist["frames_seen"] > 0:
                     # Deep-copy to avoid shared defaultdict references
                     lost_entry = dict(hist)

@@ -119,16 +119,18 @@ tracker:
   mode: "sweetp"
 
   # Counting line position as fraction of travel axis (LR -> fraction of width)
-  line_frac: 0.70          # counting gate at 70% of frame width
+  line_frac: 0.50          # counting gate at 50% of frame width (mid-frame)
 
   # +/- band around the counting line (fraction of travel axis)
-  band_half_frac: 0.04     # +/- 4% = about 80px on a 2048px frame
+  band_half_frac: 0.06     # +/- 6% = about 123px on a 2048px frame
 
   # Entry zone: first detection must be in this zone (fraction) to be eligible
   entry_frac: 0.30         # must enter from left 30% of frame
 
-  min_frames: 5            # minimum frames seen before counting
-                           # at 3fps: 5 frames = ~1.7s on screen (was 10)
+  min_frames_to_count: 2   # frames seen before object earns a seq_id at the gate
+                           # (low so objects crossing gate quickly still get counted)
+  min_frames: 5            # minimum frames for committed grade (grade quality gate)
+                           # at 3fps: 5 frames = ~1.7s on screen
   max_lost_frames: 12      # frames before lost track is dropped
   max_recover_dist: 100    # pixels for lost-track recovery
   min_count_dist: 120      # min pixel distance between two different counts

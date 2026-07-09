@@ -656,22 +656,23 @@ class MainWindow(QMainWindow):
                 n_lanes                = conv_cfg.get("lanes", 2),
                 orientation            = conv_cfg.get("orientation", "LR"),
                 class_names            = cfg_cls,
-                line_frac              = tracker_cfg.get("line_frac",              0.70),
-                band_half_frac         = tracker_cfg.get("band_half_frac",         0.04),
+                line_frac              = tracker_cfg.get("line_frac",              0.50),
+                band_half_frac         = tracker_cfg.get("band_half_frac",         0.06),
                 entry_frac             = tracker_cfg.get("entry_frac",             0.30),
-                min_frames             = tracker_cfg.get("min_frames",             10),
-                max_lost_frames        = tracker_cfg.get("max_lost_frames",        12),
-                max_recover_dist       = tracker_cfg.get("max_recover_dist",       100),
-                min_count_dist         = tracker_cfg.get("min_count_dist",         120),
+                min_frames_to_count    = tracker_cfg.get("min_frames_to_count",    2),
+                min_frames             = tracker_cfg.get("min_frames",             5),
+                max_lost_frames        = tracker_cfg.get("max_lost_frames",        15),
+                max_recover_dist       = tracker_cfg.get("max_recover_dist",       120),
+                min_count_dist         = tracker_cfg.get("min_count_dist",         100),
                 count_memory_frames    = tracker_cfg.get("count_memory_frames",    30),
                 count_merge_frames     = tracker_cfg.get("count_merge_frames",     5),
                 defect_weight          = tracker_cfg.get("defect_weight",          1.5),
-                hit_threshold          = tracker_cfg.get("hit_threshold",          20),
+                hit_threshold          = tracker_cfg.get("hit_threshold",          32),
                 defect_ratio_threshold = tracker_cfg.get("defect_ratio_threshold", 0.58),
                 min_vote_conf          = tracker_cfg.get("min_vote_conf",          0.20),
                 min_det_conf           = tracker_cfg.get("min_det_conf",           0.30),
             )
-            self._exit_x_frac = tracker_cfg.get("line_frac", 0.70)
+            self._exit_x_frac = tracker_cfg.get("line_frac", 0.50)
             log.info("SweetPotatoTracker created (2-lane LR, global counting)")
         else:
             # ── Apple 3-lane tracker (original) ───────────────────────
