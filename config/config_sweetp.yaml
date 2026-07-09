@@ -114,35 +114,36 @@ inference:
 # SweetPotatoTracker - chestnut-style line-crossing gate
 # ══════════════════════════════════════════════════════════════
 tracker:
-  # IMPORTANT: Set mode to "sweetp" to use SweetPotatoTracker.
-  # Set to "apple" to use the original AppleTracker (3-lane).
+  # mode: "sweetp" uses AppleTracker with counting_mode="global" (sequential IDs)
+  # mode: "apple"  uses AppleTracker with counting_mode="lane_interleaved" (3-lane GT)
   mode: "sweetp"
 
-  # Counting line position as fraction of travel axis (LR -> fraction of width)
-  line_frac: 0.50          # counting gate at 50% of frame width (mid-frame)
+  # Counting gate position as fraction of travel axis (LR -> fraction of width)
+  exit_frac: 0.70          # count objects when they cross 70% of frame width
 
-  # +/- band around the counting line (fraction of travel axis)
-  band_half_frac: 0.06     # +/- 6% = about 123px on a 2048px frame
+  # +/- band around the counting gate (fraction of travel axis)
+  band_half_frac: 0.05     # +/- 5% = about 102px on a 2048px frame
 
   # Entry zone: first detection must be in this zone (fraction) to be eligible
-  entry_frac: 0.30         # must enter from left 30% of frame
+  # Prevents counting objects that appear mid-frame (already past the gate)
+  entry_frac: 0.35         # must enter from left 35% of frame
 
-  min_frames_to_count: 2   # frames seen before object earns a seq_id at the gate
-                           # (low so objects crossing gate quickly still get counted)
-  min_frames: 5            # minimum frames for committed grade (grade quality gate)
+  min_frames: 5            # minimum frames seen before grade is committed
                            # at 3fps: 5 frames = ~1.7s on screen
-  max_lost_frames: 12      # frames before lost track is dropped
-  max_recover_dist: 100    # pixels for lost-track recovery
-  min_count_dist: 120      # min pixel distance between two different counts
-  count_memory_frames: 30  # frames the proximity dedup buffer lives
+  max_lost_frames: 10      # frames before a lost track is dropped
+  max_recover_dist: 80     # pixels for lost-track recovery
+  min_count_dist_frac: 0.06  # min distance between two counts as fraction of axis
+  count_memory_frames: 40  # frames the proximity dedup buffer lives
   count_merge_frames: 5    # merge window for same-object dedup
 
-  # Grade decision parameters
-  defect_weight: 1.5           # vote multiplier for defect classes
-  hit_threshold: 20            # raw hits of high-conf defect to force defect grade
-  defect_ratio_threshold: 0.58 # vote ratio to force defect grade
+  # Grade decision parameters (same logic as apple, mapped to defect classes)
+  defect_weight: 1.5           # vote multiplier for defect classes (cull_weight)
+  hit_threshold: 20            # raw high-conf defect hits to force defect grade
+  cull_ratio_threshold: 0.58   # vote ratio to force defect grade
   min_vote_conf: 0.20          # ignore votes below this confidence
   min_det_conf: 0.30           # drop YOLO boxes below this confidence
+  peak_conf_override: 0.50     # if a non-defect class ever seen >= this, protect from defect
+  overwhelming_cull_threshold: 40  # hit_threshold bypass for extremely defective objects
 
 # ══════════════════════════════════════════════════════════════
 # DATA LOGGING

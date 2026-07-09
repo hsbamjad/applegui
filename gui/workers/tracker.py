@@ -19,6 +19,16 @@ scalar `travel_pos` that monotonically INCREASES as the apple travels:
 
 All gate logic (entry zone, counting band, proximity) operates on travel_pos.
 Lane assignment uses the orthogonal axis (Y for LR/RL, X for TB/BT).
+
+counting_mode
+-------------
+  "lane_interleaved" (default, apple):
+      seq_id = (lane_cnt - 1) * n_lanes + lane
+      Produces GT-compatible interleaved IDs: L1→1,4,7  L2→2,5,8  L3→3,6,9
+
+  "global" (sweet potato):
+      seq_id = global_count (1, 2, 3, … in order of first gate crossing)
+      No lane interleaving - objects counted globally as they appear.
 """
 
 from __future__ import annotations
@@ -47,8 +57,11 @@ class GradeRecord:
 
 class AppleTracker:
     """
-    Stateful apple tracker for conveyor grading.
+    Stateful apple/sweet-potato tracker for conveyor grading.
     Works for any of the four conveyor orientations.
+
+    Set counting_mode="global" for sweet potato (2-lane, sequential IDs).
+    Set counting_mode="lane_interleaved" for apple (3-lane, interleaved IDs).
     """
 
     CLASS_NAMES = ["Fresh", "Processing", "Cull"]   # index 0 / 1 / 2
@@ -57,6 +70,7 @@ class AppleTracker:
         self,
         n_lanes:                    int   = 3,
         orientation:                str   = "BT",
+        counting_mode:              str   = "lane_interleaved",  # "lane_interleaved" | "global"
         exit_frac:                  float = 0.85,
         band_half_frac:             float = 0.025,
         entry_frac:                 float = 0.35,
@@ -73,12 +87,16 @@ class AppleTracker:
         min_det_conf:               float = 0.35,
         peak_conf_override:         float = 0.50,
         overwhelming_cull_threshold: int  = 40,   # hit_cull above this bypasses peak protection
+        class_names:                list | None = None,
     ) -> None:
         assert orientation in ORIENTATIONS, \
             f"orientation must be one of {ORIENTATIONS}, got '{orientation}'"
+        assert counting_mode in ("lane_interleaved", "global"), \
+            f"counting_mode must be 'lane_interleaved' or 'global', got '{counting_mode}'"
 
         self._n_lanes                  = n_lanes
         self._ori                      = orientation
+        self._counting_mode            = counting_mode
         self._exit_frac                = exit_frac
         self._band_half_frac           = band_half_frac
         self._entry_frac               = entry_frac
@@ -96,13 +114,19 @@ class AppleTracker:
         self._peak_conf_override       = peak_conf_override
         self._overwhelming_cull        = overwhelming_cull_threshold
 
+        # Instance-level class names so they can be updated at runtime
+        self.CLASS_NAMES = list(class_names) if class_names else list(self.__class__.CLASS_NAMES)
+
         self._history:     dict[int, dict] = defaultdict(self._new_history)
         self._lost:        dict[int, dict] = {}
         self._id_map:      dict[int, int]  = {}
         self._recent:      list[dict]      = []
-        # Per-lane counters so that seq_id = (lane_count - 1) * n_lanes + lane,
-        # matching the GT interleaving: Lane1→1,4,7…  Lane2→2,5,8…  Lane3→3,6,9…
+        # Per-lane counters (lane_interleaved mode)
         self._lane_counts: dict[int, int]  = {}   # lane (1-indexed) → apples counted so far
+        # Global counter (global mode - sweet potato)
+        self._global_count: int = 0
+        # Extra safety set to prevent double-commit on same seq_id (global mode)
+        self._committed_seqs: set[int] = set()
         self._frame_no:    int = 0
 
     # ── Geometry helpers ──────────────────────────────────────────────────────
@@ -150,6 +174,10 @@ class AppleTracker:
     @staticmethod
     def _dist(p1: tuple, p2: tuple) -> float:
         return math.sqrt((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
+
+    def set_class_names(self, names: list) -> None:
+        """Update class names after model loads (called from _on_model_ready)."""
+        self.CLASS_NAMES = list(names)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -259,7 +287,7 @@ class AppleTracker:
             seq_id = self._id_map.get(tid)
 
             # ── Counting gate ─────────────────────────────────────────────────
-            #  Guard 1: narrow band  - apple inside exit_pos ± band_half
+            #  Guard 1: narrow band  - object inside exit_pos ± band_half
             #  Guard 2: entry zone   - first detection was in the START of travel
             #  Guard 3: min frames   - not a phantom
             in_band       = (exit_pos - band_half) <= travel <= (exit_pos + band_half)
@@ -267,9 +295,7 @@ class AppleTracker:
             enough_frames = hist["frames_seen"] >= self._min_frames
 
             if in_band and entered_start and enough_frames and seq_id is None:
-                # Proximity check - prevent double-fire on the SAME apple only.
-                # Require same lane, very recent count, and close position so that
-                # lag/bunching does not assign one seq_id to different apples.
+                # Proximity check - prevent double-fire on the SAME object only.
                 matched_seq = None
                 for recent in self._recent:
                     age = self._frame_no - recent["frame"]
@@ -287,11 +313,16 @@ class AppleTracker:
                     log.debug("Track %d linked to existing #%d (lane=%d age=%d)",
                               tid, matched_seq, lane, age)
                 else:
-                    lane_cnt = self._lane_counts.get(lane, 0) + 1
-                    self._lane_counts[lane] = lane_cnt
-                    # Interleaved GT formula: Apple #1 on Lane1→1, Lane2→2, Lane3→3,
-                    # Apple #2 on Lane1→4, Lane2→5, Lane3→6, etc.
-                    seq_id = (lane_cnt - 1) * self._n_lanes + lane
+                    if self._counting_mode == "global":
+                        # Sweet potato: simple global sequential IDs
+                        self._global_count += 1
+                        seq_id = self._global_count
+                    else:
+                        # Apple: lane-interleaved IDs matching GT format
+                        lane_cnt = self._lane_counts.get(lane, 0) + 1
+                        self._lane_counts[lane] = lane_cnt
+                        seq_id = (lane_cnt - 1) * self._n_lanes + lane
+
                     self._id_map[tid] = seq_id
                     self._recent.append({
                         "pos":    (cx, cy),
@@ -299,13 +330,22 @@ class AppleTracker:
                         "seq_id": seq_id,
                         "lane":   lane,
                     })
-                    log.debug("NEW apple #%d  lane=%d  lane_cnt=%d  ori=%s  travel=%d  first=%d  frames=%d",
-                              seq_id, lane, lane_cnt, self._ori, travel, hist["first_travel"], hist["frames_seen"])
+                    log.debug("NEW #%d  lane=%d  mode=%s  travel=%d  first=%d  frames=%d",
+                              seq_id, lane, self._counting_mode, travel,
+                              hist["first_travel"], hist["frames_seen"])
 
             # ── Grade commit ──────────────────────────────────────────────────
+            # In global mode: also check _committed_seqs so double-commit is
+            # impossible even if two track_ids map to the same seq_id.
+            already_committed = (
+                hist["committed"]
+                or (self._counting_mode == "global"
+                    and seq_id is not None
+                    and seq_id in self._committed_seqs)
+            )
             if (
                 seq_id is not None
-                and not hist["committed"]
+                and not already_committed
                 and hist["frames_seen"] >= self._min_frames
             ):
                 total = sum(hist["votes"].values())
@@ -336,12 +376,12 @@ class AppleTracker:
                     # Non-cull vote split for diagnostics
                     non_cull = {k: v for k, v in hist["votes"].items() if k != 2}
                     non_cull_str = "  ".join(
-                        f"{self.CLASS_NAMES[k]}={v/total:.2f}"
+                        f"{self.CLASS_NAMES[k] if k < len(self.CLASS_NAMES) else k}={v/total:.2f}"
                         for k, v in sorted(non_cull.items(), key=lambda x: -x[1])
                     ) if non_cull else "(none)"
 
                     log.info(
-                        "Vote commit: apple=%s lane=%d  cull_ratio=%.2f  hit_cull=%d  "
+                        "Vote commit: #%s lane=%d  cull_ratio=%.2f  hit_cull=%d  "
                         "overwhelming=%s  peak_non_cull=%.2f  clearly_non_cull=%s  "
                         "force_cull=%s  | non_cull split: %s",
                         seq_id, lane, cull_ratio, hist["hit_cull"],
@@ -353,18 +393,16 @@ class AppleTracker:
                         best_cls, best_conf = 2, cull_ratio
                     else:
                         # Let all classes compete including Cull.
-                        # Previously this code used max(non_cull) which stripped Cull out of
-                        # the race entirely - so if Cull had 40% of votes (live display showed
-                        # Cull) but force_cull=False, Fresh at 35% would win the committed
-                        # grade. That caused "tracked as Cull on screen → committed as Fresh."
                         best_cls = max(hist["votes"], key=hist["votes"].get)
                         if best_cls == 2:
-                            # Cull won the vote count even without hitting force_cull threshold
                             best_conf = cull_ratio
                         else:
                             best_conf = hist["votes"][best_cls] / total
 
                     hist["committed"] = True
+                    if self._counting_mode == "global":
+                        self._committed_seqs.add(seq_id)
+
                     cls_name = (self.CLASS_NAMES[best_cls]
                                 if best_cls < len(self.CLASS_NAMES) else str(best_cls))
                     rec = GradeRecord(
@@ -382,8 +420,6 @@ class AppleTracker:
 
             # Live display grade - mirrors commit force_cull logic so on-screen label
             # always matches what the committed grade will be.
-            # Previously used raw max(votes) which showed "Fresh" even while Cull
-            # evidence was accumulating, creating a confusing mismatch.
             if hist["votes"]:
                 total_v      = sum(hist["votes"].values())
                 cull_v       = hist["votes"].get(2, 0)
@@ -403,8 +439,6 @@ class AppleTracker:
                 )
 
                 if force_cull_v or overwhelming_v:
-                    # Cull evidence is strong enough that commit will override to Cull -
-                    # show Cull on screen now so the label matches the final grade.
                     disp_cls  = 2
                     disp_conf = cull_ratio_v
                 else:
@@ -443,8 +477,12 @@ class AppleTracker:
         self._id_map.clear()
         self._recent.clear()
         self._lane_counts.clear()
+        self._global_count   = 0
+        self._committed_seqs.clear()
         self._frame_no = 0
 
     @property
     def total_counted(self) -> int:
+        if self._counting_mode == "global":
+            return self._global_count
         return sum(self._lane_counts.values())
