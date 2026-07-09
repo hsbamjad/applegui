@@ -19,8 +19,8 @@ camera:
   # without live camera hardware.
   simulation:
     enabled: true
-    loop: true
-    fps: 30
+    loop: false        # IMPORTANT: keep false - looping causes re-counting
+    fps: 3             # match the fps used when generating the video
     videos:
       ch1: "S:/MSU_Research/sweetpotatoes/videos/ch1/sweetp_ch1.mp4"
       ch2: "S:/MSU_Research/sweetpotatoes/videos/ch2/sweetp_ch2.avi"
@@ -127,7 +127,8 @@ tracker:
   # Entry zone: first detection must be in this zone (fraction) to be eligible
   entry_frac: 0.30         # must enter from left 30% of frame
 
-  min_frames: 10           # minimum frames seen before counting
+  min_frames: 5            # minimum frames seen before counting
+                           # at 3fps: 5 frames = ~1.7s on screen (was 10)
   max_lost_frames: 12      # frames before lost track is dropped
   max_recover_dist: 100    # pixels for lost-track recovery
   min_count_dist: 120      # min pixel distance between two different counts
