@@ -460,6 +460,7 @@ class MainWindow(QMainWindow):
         self._cam_fps_reported = 0.0
         self._frame_coalesce_pending = False
         self._pending_frame: tuple | None = None
+        self._channel_frame_dirty = False   # True only when camera sent a new frame
 
         self._preview_timer = QTimer(self)
         self._preview_timer.setInterval(33)   # ~30 Hz channel refresh, off hot path
@@ -878,6 +879,7 @@ class MainWindow(QMainWindow):
             self._grading_recorder.submit_raw_frame(ch1, ch2, ch3)
 
         if self._infer_w is not None and self._infer_w.isRunning():
+            self._channel_frame_dirty = True   # new frame arrived - flag for preview timer
             self._infer_w.enqueue(ch1, ch2, ch3)
         else:
             self._center.channel_display.update_frames(ch1, ch2, ch3, fps)
@@ -904,10 +906,19 @@ class MainWindow(QMainWindow):
         self._infer_w.set_grading_recorder(rec)
 
     def _flush_channel_preview(self) -> None:
-        """Timer-driven channel refresh - never blocks camera or inference enqueue."""
+        """Timer-driven channel refresh - only fires when a new camera frame arrived.
+
+        Guard: _channel_frame_dirty is True only after _apply_pending_frame enqueues
+        a new frame to the inference worker.  This ensures update_channel_frame is
+        called at the true camera fps (e.g. 3fps for video simulation), not at the
+        30Hz timer rate - preventing the channel FPS badge from showing inflated values.
+        """
         if self._last_ch1 is None:
             return
+        if not self._channel_frame_dirty:
+            return
         if self._infer_w is not None and self._infer_w.isRunning():
+            self._channel_frame_dirty = False
             fps = self._cam_fps_reported
             orig_shape = (self._last_ch1.shape[1], self._last_ch1.shape[0])
             for idx, frame in enumerate((self._last_ch1, self._last_ch2, self._last_ch3)):
