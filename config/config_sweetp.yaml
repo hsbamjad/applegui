@@ -167,9 +167,9 @@ logging:
 sorter:
   mode: "simulation"
   grade_outlet_map:
-    n: "A"    # Normal          → Outlet A (accept)
-    m: "B"    # Moderate defect → Outlet B
-    s: "C"    # Severe defect   → Outlet C (reject)
+    n: "n"    # Normal          → show 'n'
+    m: "m"    # Moderate defect → show 'm'
+    s: "s"    # Severe defect   → show 's'
 
 # ══════════════════════════════════════════════════════════════
 # DISPLAY
