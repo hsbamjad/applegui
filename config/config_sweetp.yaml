@@ -20,11 +20,11 @@ camera:
   simulation:
     enabled: true
     loop: false        # IMPORTANT: keep false - looping causes re-counting
-    fps: 3             # match the fps used when generating the video
+    fps: 15             # match the fps used when generating the video
     videos:
-      ch1: "S:/MSU_Research/sweetpotatoes/videos/ch1/sweetp_ch1.mp4"
-      ch2: "S:/MSU_Research/sweetpotatoes/videos/ch2/sweetp_ch2.avi"
-      ch3: "S:/MSU_Research/sweetpotatoes/videos/ch3/sweetp_ch3.avi"
+      ch1: "videos/ch1_s/sweetp_ch1.mp4"
+      ch2: "videos/ch2_s/sweetp_ch2.avi"
+      ch3: "videos/ch3_s/sweetp_ch3.avi"
 
   jai:
     ip:          "169.254.101.209"
@@ -158,6 +158,18 @@ logging:
   max_pending_batches: 2
   max_crops_per_batch: 8
   heavy_threshold: 12
+
+# ══════════════════════════════════════════════════════════════
+# SORTER
+# Maps model class names → physical outlet letters.
+# Keys MUST match the exact class names from best.pt (model.names).
+# ══════════════════════════════════════════════════════════════
+sorter:
+  mode: "simulation"
+  grade_outlet_map:
+    n: "A"    # Normal          → Outlet A (accept)
+    m: "B"    # Moderate defect → Outlet B
+    s: "C"    # Severe defect   → Outlet C (reject)
 
 # ══════════════════════════════════════════════════════════════
 # DISPLAY
