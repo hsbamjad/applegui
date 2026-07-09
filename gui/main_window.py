@@ -764,6 +764,8 @@ class MainWindow(QMainWindow):
             if not base_dir.exists():
                 base_dir = SESSIONS_DIR
 
+        tracker_mode  = self._cfg.get("tracker", {}).get("mode", "apple")
+        default_prefix = "sweetp" if tracker_mode == "sweetp" else "Apple"
         self._grading_recorder = GradingRecorder(
             image_format          = log_cfg.get("image_format", "jpg"),
             jpeg_quality          = int(log_cfg.get("jpeg_quality", 92)),
@@ -775,6 +777,7 @@ class MainWindow(QMainWindow):
             max_pending_batches   = int(log_cfg.get("max_pending_batches", 2)),
             max_crops_per_batch   = int(log_cfg.get("max_crops_per_batch", 8)),
             heavy_threshold       = int(log_cfg.get("heavy_threshold", 12)),
+            item_prefix           = log_cfg.get("item_prefix", default_prefix),
         )
         session_dir = self._grading_recorder.start_session(base_dir)
         self._wire_infer_logging()

@@ -115,6 +115,7 @@ class GradingRecorder:
         max_pending_batches: int = _MAX_PENDING_BATCHES,
         max_crops_per_batch: int = _DEFAULT_MAX_CROPS,
         heavy_threshold: int = _DEFAULT_HEAVY_THRESHOLD,
+        item_prefix: str = "Apple",           # folder/file prefix e.g. "Apple", "sweetp"
     ) -> None:
         self._image_ext = image_format.lower().lstrip(".")
         self._jpeg_quality = jpeg_quality
@@ -129,6 +130,7 @@ class GradingRecorder:
         self._max_crops = max(1, max_crops_per_batch)
         self._heavy_threshold = max(1, heavy_threshold)
 
+        self._item_prefix = item_prefix
         self._lock = threading.Lock()
         self._session_dir: Path | None = None
         self._apples: dict[int, _AppleState] = {}
@@ -574,9 +576,9 @@ class GradingRecorder:
     # ── Filesystem ────────────────────────────────────────────────────────────
 
     def _apple_dir(self, state: _AppleState) -> Path:
-        """Per-apple folder for detected crop JPEGs."""
+        """Per-item folder for detected crop JPEGs."""
         assert self._session_dir is not None
-        return self._session_dir / f"Lane{state.lane}" / f"Apple{state.seq_id}"
+        return self._session_dir / f"Lane{state.lane}" / f"{self._item_prefix}{state.seq_id}"
 
     def _ensure_dir(self, path: Path) -> None:
         parent = path.parent
@@ -600,7 +602,7 @@ class GradingRecorder:
         if lane_dir not in self._dirs_made:
             lane_dir.mkdir(parents=True, exist_ok=True)
             self._dirs_made.add(lane_dir)
-        path = lane_dir / f"Apple{state.seq_id}.csv"
+        path = lane_dir / f"{self._item_prefix}{state.seq_id}.csv"
 
         with path.open("w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
