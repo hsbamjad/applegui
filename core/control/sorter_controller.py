@@ -93,7 +93,6 @@ class SorterController:
         self._valve_pulse_ms   = sorter_cfg.get("valve_pulse_ms", 80)
         self._camera_to_gate_m = conveyor_cfg.get("camera_to_gate_m", 0.5)
         self._conveyor_speed   = conveyor_cfg.get("speed_apples_per_sec", 1)
-        self._n_lanes          = conveyor_cfg.get("lanes", 3)   # 2 for sweet potato
 
         self._serial           = None      # serial.Serial instance when connected
         self._queue: list[GradeCommand] = []
@@ -300,12 +299,9 @@ class SorterController:
             )
             return
 
-        # Build N-lane command: digit in the correct lane slot, zeros elsewhere
-        # N = self._n_lanes (2 for sweet potato, 3 for apple)
-        digits = ['0'] * self._n_lanes
-        lane_idx = cmd.lane - 1
-        if 0 <= lane_idx < self._n_lanes:
-            digits[lane_idx] = str(cmd.digit)
+        # Build 3-char command: digit in the correct lane slot, zeros elsewhere
+        digits = ['0', '0', '0']
+        digits[cmd.lane - 1] = str(cmd.digit)
         serial_cmd = "".join(digits) + "\n"
 
         if self._mode == "simulation":

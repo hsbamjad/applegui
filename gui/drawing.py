@@ -1,12 +1,8 @@
 """
 gui/drawing.py
 ==============
-Shared OpenCV drawing helpers for tracked-object overlays.
+Shared OpenCV drawing helpers for tracked-apple overlays.
 Used by the inference worker (off GUI thread) and main window.
-
-Call configure(class_names) after loading a model to update the
-module-level CLASS_NAMES and CLASS_COLORS for any grade set
-(works for both apple and sweet potato modes).
 """
 
 from __future__ import annotations
@@ -16,43 +12,13 @@ import numpy as np
 
 DRAW_W = 512
 
-# ── Color palette for N classes ────────────────────────────────────────────────
-
-_PALETTE: list[tuple[int, int, int]] = [
-    (52,  211, 153),    # 0: emerald green  (Normal / Fresh)
-    (251, 191,  36),    # 1: amber          (Moderate defect / Processing)
-    (248, 113, 113),    # 2: coral red      (Severe defect / Cull)
-    (129, 140, 248),    # 3: indigo
-    (251, 146,  60),    # 4: orange
-    (34,  211, 238),    # 5: cyan
-    (163, 230,  53),    # 6: lime
-    (244, 114, 182),    # 7: pink
-]
-
-# Module-level mutable lists - updated by configure()
-CLASS_COLORS: list[tuple[int, int, int]] = [
+CLASS_COLORS = [
     (52, 211, 153),    # Fresh - emerald green
     (251, 191, 36),    # Processing - amber
     (248, 113, 113),   # Cull - red
 ]
 
-CLASS_NAMES: list[str] = ["Fresh", "Processing", "Cull"]
-
-
-def configure(class_names: list[str]) -> None:
-    """Update module-level CLASS_NAMES and CLASS_COLORS for any set of grades.
-
-    Call this after loading a model to ensure drawing labels and colors
-    match the actual class names the model outputs.
-
-    Parameters
-    ----------
-    class_names : list of class name strings in class-index order.
-                  e.g. ["Normal", "Moderate defect", "Severe defect"]
-    """
-    global CLASS_NAMES, CLASS_COLORS
-    CLASS_NAMES  = list(class_names)
-    CLASS_COLORS = [_PALETTE[i % len(_PALETTE)] for i in range(len(class_names))]
+CLASS_NAMES = ["Fresh", "Processing", "Cull"]
 
 
 def annotate_tracked(

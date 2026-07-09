@@ -84,17 +84,6 @@ conveyor:
   # Software computes this dynamically - set conveyor_speed_m_s at runtime
 
 # ══════════════════════════════════════════════════════════════
-# TRACKER MODE
-# Controls which tracker is instantiated when camera connects.
-# "apple"  → AppleTracker  (3-lane, zone-based exit gate)
-# "sweetp" → SweetPotatoTracker (2-lane, line-crossing gate, global count)
-# When mode == "sweetp", config_sweetp.yaml is loaded automatically.
-# ══════════════════════════════════════════════════════════════
-tracker:
-  mode: "apple"          # change to "sweetp" to activate sweet potato pipeline
-
-
-# ══════════════════════════════════════════════════════════════
 # SORTER HARDWARE
 # 3 sorting units - one per lane - at end of conveyor
 # Each unit: Submodule A (Fresh→Outlet A) + Submodule B (Processing→Outlet B)

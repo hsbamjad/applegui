@@ -37,9 +37,6 @@ else:
 CONFIG_PATH: Path = APP_ROOT / "config" / "config.yaml"
 """Absolute path to config/config.yaml"""
 
-CONFIG_SWEETP_PATH: Path = APP_ROOT / "config" / "config_sweetp.yaml"
-"""Absolute path to config/config_sweetp.yaml (sweet potato mode)"""
-
 MODELS_DIR: Path = APP_ROOT / "models"
 """Absolute path to the models/ directory"""
 
