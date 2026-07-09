@@ -18,13 +18,13 @@ camera:
   # Video simulation mode - set enabled: true and update paths to test
   # without live camera hardware.
   simulation:
-    enabled: false
+    enabled: true
     loop: true
     fps: 30
     videos:
-      ch1: ""            # Path to RGB/color video file
-      ch2: ""            # Path to NIR1 video file (if multispectral)
-      ch3: ""            # Path to NIR2 video file (if multispectral)
+      ch1: "S:/MSU_Research/sweetpotatoes/videos/ch1/sweetp_ch1.mp4"
+      ch2: "S:/MSU_Research/sweetpotatoes/videos/ch2/sweetp_ch2.avi"
+      ch3: "S:/MSU_Research/sweetpotatoes/videos/ch3/sweetp_ch3.avi"
 
   jai:
     ip:          "169.254.101.209"
