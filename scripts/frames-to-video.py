@@ -3,10 +3,14 @@ import os
 import re
 import argparse
 import sys
+import logging
 
-from core.log import get_logger, configure_root
-
-logger = get_logger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 
 def create_video_from_frames(input_folder, output_filename, fps=60, lossless=False):
@@ -104,8 +108,6 @@ def batch_process(source_root, output_root, fps=60, lossless=False):
 
 
 def main():
-    configure_root()
-
     parser = argparse.ArgumentParser(
         description=(
             "Convert image frames to video.\n\n"
