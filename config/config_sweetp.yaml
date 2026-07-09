@@ -103,7 +103,7 @@ inference:
   iou_threshold: 0.45
   # Input band combo the model was trained on
   # Options: RB-nir1 | RG-nir1 | R-nir1-nir2 | RGB | CH1
-  input_mode: "rgb"
+  input_mode: "rg-nir1"
   class_names:
     - "Normal"           # 0
     - "Moderate defect"  # 1
