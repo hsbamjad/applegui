@@ -52,6 +52,7 @@ from gui.workers.camera_worker import CameraWorker
 from gui.workers.video_worker  import VideoWorker
 from gui.workers.inference_worker import MockInferenceWorker, RealInferenceWorker
 from gui.workers.tracker import AppleTracker as ConveyorTracker
+from gui.workers.sweetp_tracker import SweetPotatoTracker
 from gui.drawing import annotate_tracked
 from core.control import SorterController
 from core.logging import GradingRecorder
@@ -60,14 +61,44 @@ log = get_logger(__name__)
 
 
 def _load_config(path=None) -> dict:
-    """Load config.yaml - defaults to the canonical location via utils.paths."""
-    from utils.paths import CONFIG_PATH
+    """Load config.yaml - defaults to the canonical location via utils.paths.
+
+    If the environment variable SWEETP_MODE is set, or if the sweet-potato
+    config exists and the standard config has tracker.mode == 'sweetp',
+    config_sweetp.yaml will be loaded automatically.
+    """
+    from utils.paths import CONFIG_PATH, CONFIG_SWEETP_PATH
     resolved = Path(path) if path else CONFIG_PATH
+
+    # Auto-detect sweet potato mode: if the sweetp config exists and the
+    # caller hasn't specified an explicit path, check if we should switch.
+    if path is None and CONFIG_SWEETP_PATH.exists():
+        # Try reading just the tracker.mode from the standard config to
+        # decide which config file to actually use.
+        try:
+            with open(resolved, encoding="utf-8") as f:
+                base = yaml.safe_load(f) or {}
+            if base.get("tracker", {}).get("mode") == "sweetp":
+                resolved = CONFIG_SWEETP_PATH
+        except Exception:
+            pass
+
     try:
         with open(resolved, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except FileNotFoundError:
         log.warning("config.yaml not found at %s", resolved)
+        return {}
+
+
+def _load_sweetp_config() -> dict:
+    """Always load config_sweetp.yaml regardless of standard config setting."""
+    from utils.paths import CONFIG_SWEETP_PATH
+    try:
+        with open(CONFIG_SWEETP_PATH, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        log.warning("config_sweetp.yaml not found at %s", CONFIG_SWEETP_PATH)
         return {}
 
 
@@ -442,7 +473,12 @@ class MainWindow(QMainWindow):
     # ── Setup ─────────────────────────────────────────────────────────────────
 
     def _setup_window(self) -> None:
-        self.setWindowTitle("Infield Apple Sorting System")
+        # Adjust title depending on mode
+        tracker_mode = self._cfg.get("tracker", {}).get("mode", "apple")
+        if tracker_mode == "sweetp":
+            self.setWindowTitle("Sweet Potato Grading System")
+        else:
+            self.setWindowTitle("Infield Apple Sorting System")
         self.setMinimumSize(1640, 760)
         self.resize(1720, 920)
         self.setStyleSheet(APP_STYLESHEET)
@@ -606,28 +642,58 @@ class MainWindow(QMainWindow):
         self._preview_timer.start()
 
         # ── Conveyor tracker ───────────────────────────────────────
-        inf_cfg      = self._cfg.get("inference", {})
-        inf_tracking = inf_cfg.get("tracking", {})
-        conv_cfg     = self._cfg.get("conveyor", {})
-        self._exit_x_frac = inf_tracking.get("exit_frac", 0.85)
-        self._tracker = ConveyorTracker(
-            n_lanes                     = conv_cfg.get("lanes", 3),
-            orientation                 = conv_cfg.get("orientation", "BT"),
-            exit_frac                   = inf_tracking.get("exit_frac",                    0.85),
-            band_half_frac              = inf_tracking.get("band_half_frac",               0.025),
-            entry_frac                  = inf_tracking.get("entry_frac",                   0.35),
-            min_frames                  = inf_tracking.get("min_frames",                   15),
-            max_lost_frames             = inf_tracking.get("max_lost_frames",              10),
-            max_recover_dist            = inf_tracking.get("max_recover_dist",             80),
-            min_count_dist_frac         = inf_tracking.get("min_count_dist_frac",          0.12),
-            count_memory_frames         = inf_tracking.get("count_memory_frames",          40),
-            count_merge_frames          = inf_tracking.get("count_merge_frames",            5),
-            cull_weight                 = inf_tracking.get("cull_weight",                  1.0),
-            hit_threshold               = inf_tracking.get("hit_threshold",                25),
-            cull_ratio_threshold        = inf_tracking.get("cull_ratio_threshold",         0.65),
-            peak_conf_override          = inf_tracking.get("peak_conf_override",           0.50),
-            overwhelming_cull_threshold = inf_tracking.get("overwhelming_cull_threshold",  60),
-        )
+        inf_cfg        = self._cfg.get("inference", {})
+        inf_tracking   = inf_cfg.get("tracking", {})
+        conv_cfg       = self._cfg.get("conveyor", {})
+        tracker_cfg    = self._cfg.get("tracker", {})
+        tracker_mode   = tracker_cfg.get("mode", "apple")
+
+        if tracker_mode == "sweetp":
+            # ── Sweet potato 2-lane tracker (chestnut-style gate) ──────
+            cfg_cls = inf_cfg.get("class_names", ["Normal", "Moderate defect", "Severe defect"])
+            self._tracker = SweetPotatoTracker(
+                n_lanes                = conv_cfg.get("lanes", 2),
+                orientation            = conv_cfg.get("orientation", "LR"),
+                class_names            = cfg_cls,
+                line_frac              = tracker_cfg.get("line_frac",              0.70),
+                band_half_frac         = tracker_cfg.get("band_half_frac",         0.04),
+                entry_frac             = tracker_cfg.get("entry_frac",             0.30),
+                min_frames             = tracker_cfg.get("min_frames",             10),
+                max_lost_frames        = tracker_cfg.get("max_lost_frames",        12),
+                max_recover_dist       = tracker_cfg.get("max_recover_dist",       100),
+                min_count_dist         = tracker_cfg.get("min_count_dist",         120),
+                count_memory_frames    = tracker_cfg.get("count_memory_frames",    30),
+                count_merge_frames     = tracker_cfg.get("count_merge_frames",     5),
+                defect_weight          = tracker_cfg.get("defect_weight",          1.5),
+                hit_threshold          = tracker_cfg.get("hit_threshold",          20),
+                defect_ratio_threshold = tracker_cfg.get("defect_ratio_threshold", 0.58),
+                min_vote_conf          = tracker_cfg.get("min_vote_conf",          0.20),
+                min_det_conf           = tracker_cfg.get("min_det_conf",           0.30),
+            )
+            self._exit_x_frac = tracker_cfg.get("line_frac", 0.70)
+            log.info("SweetPotatoTracker created (2-lane LR, global counting)")
+        else:
+            # ── Apple 3-lane tracker (original) ───────────────────────
+            self._exit_x_frac = inf_tracking.get("exit_frac", 0.85)
+            self._tracker = ConveyorTracker(
+                n_lanes                     = conv_cfg.get("lanes", 3),
+                orientation                 = conv_cfg.get("orientation", "BT"),
+                exit_frac                   = inf_tracking.get("exit_frac",                    0.85),
+                band_half_frac              = inf_tracking.get("band_half_frac",               0.025),
+                entry_frac                  = inf_tracking.get("entry_frac",                   0.35),
+                min_frames                  = inf_tracking.get("min_frames",                   15),
+                max_lost_frames             = inf_tracking.get("max_lost_frames",              10),
+                max_recover_dist            = inf_tracking.get("max_recover_dist",             80),
+                min_count_dist_frac         = inf_tracking.get("min_count_dist_frac",          0.12),
+                count_memory_frames         = inf_tracking.get("count_memory_frames",          40),
+                count_merge_frames          = inf_tracking.get("count_merge_frames",            5),
+                cull_weight                 = inf_tracking.get("cull_weight",                  1.0),
+                hit_threshold               = inf_tracking.get("hit_threshold",                25),
+                cull_ratio_threshold        = inf_tracking.get("cull_ratio_threshold",         0.65),
+                peak_conf_override          = inf_tracking.get("peak_conf_override",           0.50),
+                overwhelming_cull_threshold = inf_tracking.get("overwhelming_cull_threshold",  60),
+            )
+            log.info("AppleTracker (ConveyorTracker) created (3-lane BT)")
 
         # ── Apple size accumulator ─────────────────────────────────
         size_cfg = self._cfg.get("sizing", {})
@@ -984,8 +1050,21 @@ class MainWindow(QMainWindow):
         self._wire_infer_logging()
         self._infer_w.start()
 
-    # ── Class colours (BGR): 0=Fresh-green  1=Processing-amber  2=Cull-red ──
-    _OUTLET_MAP  = {"Fresh": "A", "Processing": "B", "Cull": "C"}
+    # ── Outlet map: grade name -> sorter outlet letter ──────────────────────
+    # For apple mode: Fresh->A, Processing->B, Cull->C
+    # For sweetp mode: loaded from config sorter.grade_outlet_map
+    # Fallback order ensures unknown classes always go to the last outlet.
+    _OUTLET_MAP: dict[str, str] = {"Fresh": "A", "Processing": "B", "Cull": "C"}
+
+    def _build_outlet_map(self) -> None:
+        """Build _OUTLET_MAP from config sorter.grade_outlet_map (supports any class names)."""
+        grade_outlet = self._cfg.get("sorter", {}).get("grade_outlet_map", {})
+        if grade_outlet:
+            self._OUTLET_MAP = dict(grade_outlet)
+            log.info("Outlet map loaded from config: %s", self._OUTLET_MAP)
+        else:
+            # Default apple map
+            self._OUTLET_MAP = {"Fresh": "A", "Processing": "B", "Cull": "C"}
 
     @pyqtSlot()
     def _on_model_ready(self) -> None:
@@ -993,15 +1072,38 @@ class MainWindow(QMainWindow):
         Called (in the main thread via Qt signal) once RealInferenceWorker has
         finished loading the model and is about to enter the inference loop.
 
-        At this point the VideoWorker is still paused, so no new frames have
-        entered the inference queue since the pause.  We drain any stale frames
-        that were already in the queue before the pause, then resume the video
-        so it continues from exactly where it stopped.
+        Drains stale queued frames, resumes video, and (for sweetp mode) reads
+        the YOLO model's class names and pushes them to the SweetPotatoTracker
+        so the tracker always uses the authoritative model names.
         """
         if self._infer_w is not None:
             drained = self._infer_w.drain_pending()
             if drained:
                 log.debug("_on_model_ready: drained %d stale frame(s)", drained)
+
+            # For sweet potato mode: push actual model class names to tracker
+            tracker_mode = self._cfg.get("tracker", {}).get("mode", "apple")
+            if tracker_mode == "sweetp" and isinstance(self._tracker, SweetPotatoTracker):
+                try:
+                    # Access the YOLO model object inside the inference worker
+                    # The worker exposes the loaded model as _model_path; we re-read
+                    # from the already-loaded model object stored internally.
+                    # We read the names from the running model via the worker's queue.
+                    # The model is loaded inside the worker thread; we query it via
+                    # a brief inspection of the YOLO object stored in the thread.
+                    import ultralytics
+                    model_obj = ultralytics.YOLO(self._infer_w._model_path)
+                    names = [model_obj.names[i] for i in sorted(model_obj.names.keys())]
+                    self._tracker.set_class_names(names)
+                    # Update drawing module so overlays show the right class names/colors
+                    from gui import drawing as _drawing
+                    _drawing.configure(names)
+                    log.info("SweetPotatoTracker class names updated from model: %s", names)
+                except Exception as exc:
+                    log.warning("Could not read model class names: %s", exc)
+
+        # Build outlet map from config (covers both apple and sweetp)
+        self._build_outlet_map()
 
         # Resume video from the exact frame it was paused at.
         if isinstance(self._cam_w, VideoWorker):

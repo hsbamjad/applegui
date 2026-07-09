@@ -1,0 +1,176 @@
+# Sweet Potato Grading GUI - Configuration
+# Michigan State University | 2026
+# ─────────────────────────────────────────────
+# Hardware: JAI FSFE-3200T-10GE camera + 2-lane conveyor with divider
+#           + 2x pneumatic sorting units controlled via Arduino
+
+# ══════════════════════════════════════════════════════════════
+# CAMERA
+# ══════════════════════════════════════════════════════════════
+camera:
+  mode: "mock"           # Options: "mock" | "jai"
+
+  mock:
+    fps: 30
+    resolution: [2048, 1536]
+    replay_folder: null
+
+  # Video simulation mode - set enabled: true and update paths to test
+  # without live camera hardware.
+  simulation:
+    enabled: false
+    loop: true
+    fps: 30
+    videos:
+      ch1: ""            # Path to RGB/color video file
+      ch2: ""            # Path to NIR1 video file (if multispectral)
+      ch3: ""            # Path to NIR2 video file (if multispectral)
+
+  jai:
+    ip:          "169.254.101.209"
+    mac:         "00:0c:df:0a:f3:f8"
+    serial:      "U320500"
+    fps:         30
+    exposure_us: 9229
+    trigger_mode: "Off"
+    num_channels: 3
+
+# ══════════════════════════════════════════════════════════════
+# SPECTRAL CHANNELS
+# ══════════════════════════════════════════════════════════════
+channels:
+  ch1:
+    name: "RGB"
+    description: "Full-color RGB band"
+    wavelength_nm: 660
+    sensor_index: 0
+    color: "#60A5FA"
+
+  ch2:
+    name: "NIR1"
+    description: "Near-infrared band 1"
+    wavelength_nm: 800
+    sensor_index: 1
+    color: "#34D399"
+
+  ch3:
+    name: "NIR2"
+    description: "Near-infrared band 2"
+    wavelength_nm: 900
+    sensor_index: 2
+    color: "#A78BFA"
+
+# ══════════════════════════════════════════════════════════════
+# CONVEYOR
+# 2-lane conveyor with divider; sweet potatoes travel left→right
+# ══════════════════════════════════════════════════════════════
+conveyor:
+  lanes: 2
+  # Orientation: LR = left→right (sweet potato setup)
+  orientation: "LR"
+  speed_apples_per_sec: 1
+  camera_to_gate_m: 0.0
+
+# ══════════════════════════════════════════════════════════════
+# SORTER HARDWARE
+# 2 sorting units (one per lane)
+# ══════════════════════════════════════════════════════════════
+sorter:
+  mode: "simulation"    # "simulation" | "serial" (Arduino)
+
+  grade_outlet_map:
+    Normal:           "A"    # Good grade -> Outlet A
+    Moderate defect:  "B"    # Moderate defect -> Outlet B
+    Severe defect:    "C"    # Severe defect -> Outlet C (default)
+
+  serial:
+    port: "COM3"
+    baudrate: 115200
+    timeout_s: 1.0
+
+  valve_pulse_ms: 80
+
+# ══════════════════════════════════════════════════════════════
+# AI INFERENCE
+# YOLO model trained on sweet potatoes (Normal / Moderate defect / Severe defect)
+# ══════════════════════════════════════════════════════════════
+inference:
+  # Model directory - where .pt files are listed in the GUI dropdown
+  model_dir: "S:/MSU_Research/sweetpotatoes/"
+  default_model: "yolo26m-seg.pt"
+  device: "cuda"                   # "cuda" | "cpu"
+  confidence_threshold: 0.45
+  iou_threshold: 0.45
+  # Input band combo the model was trained on
+  # Options: RB-nir1 | RG-nir1 | R-nir1-nir2 | RGB | CH1
+  input_mode: "rgb"
+  class_names:
+    - "Normal"           # 0
+    - "Moderate defect"  # 1
+    - "Severe defect"    # 2
+
+# ══════════════════════════════════════════════════════════════
+# TRACKER
+# SweetPotatoTracker - chestnut-style line-crossing gate
+# ══════════════════════════════════════════════════════════════
+tracker:
+  # IMPORTANT: Set mode to "sweetp" to use SweetPotatoTracker.
+  # Set to "apple" to use the original AppleTracker (3-lane).
+  mode: "sweetp"
+
+  # Counting line position as fraction of travel axis (LR -> fraction of width)
+  line_frac: 0.70          # counting gate at 70% of frame width
+
+  # +/- band around the counting line (fraction of travel axis)
+  band_half_frac: 0.04     # +/- 4% = about 80px on a 2048px frame
+
+  # Entry zone: first detection must be in this zone (fraction) to be eligible
+  entry_frac: 0.30         # must enter from left 30% of frame
+
+  min_frames: 10           # minimum frames seen before counting
+  max_lost_frames: 12      # frames before lost track is dropped
+  max_recover_dist: 100    # pixels for lost-track recovery
+  min_count_dist: 120      # min pixel distance between two different counts
+  count_memory_frames: 30  # frames the proximity dedup buffer lives
+  count_merge_frames: 5    # merge window for same-object dedup
+
+  # Grade decision parameters
+  defect_weight: 1.5           # vote multiplier for defect classes
+  hit_threshold: 20            # raw hits of high-conf defect to force defect grade
+  defect_ratio_threshold: 0.58 # vote ratio to force defect grade
+  min_vote_conf: 0.20          # ignore votes below this confidence
+  min_det_conf: 0.30           # drop YOLO boxes below this confidence
+
+# ══════════════════════════════════════════════════════════════
+# DATA LOGGING
+# ══════════════════════════════════════════════════════════════
+logging:
+  enabled: false
+  output_dir: "data/sessions_sweetp"
+  image_format: "jpg"
+  jpeg_quality: 92
+  crop_padding_frac: 0.20
+  save_max_dim: 0
+  max_pending_batches: 2
+  max_crops_per_batch: 8
+  heavy_threshold: 12
+
+# ══════════════════════════════════════════════════════════════
+# DISPLAY
+# ══════════════════════════════════════════════════════════════
+display:
+  fps_limit: 60
+  image_width: 480
+  image_height: 360
+  show_bounding_boxes: true
+  show_tracking_id: true
+  show_grade_label: true
+
+# ══════════════════════════════════════════════════════════════
+# APPLE SIZING - disabled for sweet potatoes
+# ══════════════════════════════════════════════════════════════
+sizing:
+  enabled: false
+  model_path: "models/size_model.pkl"
+  min_frames: 4
+  bg_angle_step: 10
