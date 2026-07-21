@@ -1,4 +1,4 @@
-﻿"""
+"""
 gui/panels/camera_panel.py
 ==========================
 Left control sidebar - dual-column hardware-aware layout.
@@ -940,6 +940,8 @@ class LeftControlPanel(QWidget):
     sig_gains_changed         = pyqtSignal(float, float, float)   # CH1/CH2/CH3 dB - emitted on Apply
     sig_awb_triggered         = pyqtSignal()                 # One-Push AWB requested (Color CH1 / Source0)
     sig_wb_revert             = pyqtSignal()                 # Revert to pre-AWB ratios requested
+    sig_wb_lock               = pyqtSignal()                 # Save current WB gains as locked preset
+    sig_wb_load_locked        = pyqtSignal()                 # Apply the saved locked WB preset to camera
     sig_black_level_changed   = pyqtSignal(float, float, float)  # CH1/CH2/CH3 DN - emitted on Apply
     sig_roi_changed           = pyqtSignal(int, int, int, int)   # OffsetX, OffsetY, Width, Height
     sig_roi_reset             = pyqtSignal()                 # Reset ROI to full frame
@@ -1451,6 +1453,67 @@ class LeftControlPanel(QWidget):
         wb_btn_hl.addWidget(self._btn_awb, stretch=1)
         wb_btn_hl.addWidget(self._btn_revert_wb)
         right.add_layout(wb_btn_hl)
+
+        # Lock WB / Load Locked row
+        self._btn_lock_wb = QPushButton("Lock WB")
+        self._btn_lock_wb.setFixedHeight(30)
+        self._btn_lock_wb.setEnabled(False)   # enabled only after a successful AWB run
+        self._btn_lock_wb.setToolTip(
+            "Save the current R/G/B ratios as a locked preset.\n"
+            "Run Auto WB first (with the white reference panel in view),\n"
+            "then click Lock WB to persist those exact gains.\n"
+            "Use Load Locked before every apple capture session."
+        )
+        self._btn_lock_wb.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {SUCCESS}22; color: {SUCCESS};
+                border: 1px solid {SUCCESS}55; font-weight: 700; font-size: 11px;
+                border-radius: 7px;
+            }}
+            QPushButton:hover:enabled   {{ background-color: {SUCCESS}44; }}
+            QPushButton:pressed:enabled {{ background-color: {SUCCESS}66; }}
+            QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3};
+                                    border-color: {BORDER}; }}
+        """)
+        self._btn_lock_wb.clicked.connect(self.sig_wb_lock.emit)
+
+        self._btn_load_locked_wb = QPushButton("Load Locked")
+        self._btn_load_locked_wb.setFixedHeight(30)
+        self._btn_load_locked_wb.setEnabled(False)  # enabled when a saved lock file exists
+        self._btn_load_locked_wb.setToolTip(
+            "Apply the previously locked R/G/B ratios directly to the camera.\n"
+            "Use this at the start of every apple capture session to ensure\n"
+            "the same white balance is applied as during the white reference capture."
+        )
+        self._btn_load_locked_wb.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {INFO}22; color: {INFO};
+                border: 1px solid {INFO}55; font-weight: 700; font-size: 11px;
+                border-radius: 7px;
+            }}
+            QPushButton:hover:enabled   {{ background-color: {INFO}44; }}
+            QPushButton:pressed:enabled {{ background-color: {INFO}66; }}
+            QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3};
+                                    border-color: {BORDER}; }}
+        """)
+        self._btn_load_locked_wb.clicked.connect(self.sig_wb_load_locked.emit)
+
+        wb_lock_hl = QHBoxLayout()
+        wb_lock_hl.setContentsMargins(0, 2, 0, 0)
+        wb_lock_hl.setSpacing(6)
+        wb_lock_hl.addWidget(self._btn_lock_wb, stretch=1)
+        wb_lock_hl.addWidget(self._btn_load_locked_wb, stretch=1)
+        right.add_layout(wb_lock_hl)
+
+        # Lock status label - shows saved R/G/B values when a lock exists
+        self._lbl_wb_lock_status = QLabel("Locked WB: none")
+        self._lbl_wb_lock_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl_wb_lock_status.setStyleSheet(
+            f"color: {TEXT_3}; font-size: 9px; background: transparent; "
+            f"border: 1px dashed {BORDER}; border-radius: 4px; padding: 2px 4px;"
+        )
+        right.add(self._lbl_wb_lock_status)
+
         self._double_sep(right)
 
 
@@ -1618,7 +1681,8 @@ class LeftControlPanel(QWidget):
     ) -> None:
         """
         Called by main_window after AWB or Revert is confirmed by firmware.
-        Updates the ratio readout label.
+        Updates the ratio readout label and enables the Lock WB button
+        when a successful AWB result is available.
 
         If revert_done=True the snapshot has been consumed; disable Revert so
         the user cannot revert again until a fresh AWB run saves a new baseline.
@@ -1631,11 +1695,38 @@ class LeftControlPanel(QWidget):
             )
             # Enable Revert after AWB; disable it after a Revert (snapshot consumed)
             self._btn_revert_wb.setEnabled(not revert_done)
+            # Enable Lock WB so user can persist these gains
+            if not revert_done:
+                self._btn_lock_wb.setEnabled(True)
         else:
             self._lbl_wb_ratios.setText("R: -   G: -   B: - (failed)")
             self._lbl_wb_ratios.setStyleSheet(
                 f"color: {DANGER}; font-size: 10px; background: transparent;"
             )
+
+    def update_wb_lock_status(self, r: float, g: float, b: float, *, locked: bool) -> None:
+        """
+        Update the lock status label and enable/disable the Load Locked button.
+        Called by main_window after a lock is saved or on startup if a lock file exists.
+
+        Args:
+            r, g, b: The locked R/G/B gain values.
+            locked:  True = lock file exists and is valid, False = clear/no lock.
+        """
+        if locked:
+            self._lbl_wb_lock_status.setText(f"Locked: R:{r:.3f}  G:{g:.3f}  B:{b:.3f}")
+            self._lbl_wb_lock_status.setStyleSheet(
+                f"color: {SUCCESS}; font-size: 9px; background: transparent; "
+                f"border: 1px solid {SUCCESS}55; border-radius: 4px; padding: 2px 4px;"
+            )
+            self._btn_load_locked_wb.setEnabled(True)
+        else:
+            self._lbl_wb_lock_status.setText("Locked WB: none")
+            self._lbl_wb_lock_status.setStyleSheet(
+                f"color: {TEXT_3}; font-size: 9px; background: transparent; "
+                f"border: 1px dashed {BORDER}; border-radius: 4px; padding: 2px 4px;"
+            )
+            self._btn_load_locked_wb.setEnabled(False)
 
     def _on_apply_black_levels(self) -> None:
         """Emit per-channel black levels → main_window._on_black_level_changed."""

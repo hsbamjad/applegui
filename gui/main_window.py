@@ -22,6 +22,7 @@ Layout:
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 
@@ -421,6 +422,7 @@ class MainWindow(QMainWindow):
         self._total        = 0
         self._total_graded = 0             # running count for model input panel badge
         self._wb_reverting = False   # True while a revert_white_balance() call is in flight
+        self._current_wb: tuple[float, float, float] = (1.0, 1.0, 1.0)  # last confirmed R/G/B gains
         self._display_pending = False
         self._graded_ui_pending = False
         self._graded_ui_queue: list = []
@@ -514,6 +516,8 @@ class MainWindow(QMainWindow):
         # White balance controls - Source0 (Color CH1) only
         self._left.sig_awb_triggered.connect(self._on_awb_triggered)
         self._left.sig_wb_revert.connect(self._on_wb_revert)
+        self._left.sig_wb_lock.connect(self._on_wb_lock)
+        self._left.sig_wb_load_locked.connect(self._on_wb_load_locked)
         # Black Level controls - all 3 sources independently
         self._left.sig_black_level_changed.connect(self._on_black_level_changed)
         # ROI controls - all 3 sources simultaneously
@@ -549,6 +553,16 @@ class MainWindow(QMainWindow):
             self._left.set_save_mode(True)   # sync button state without emitting signal
             self._right.status_group.set_status("Logger", "idle", "Armed")
         self._left.set_save_max_dim(int(log_cfg.get("save_max_dim", 0)))
+
+        # Restore WB lock status from previous session if the lock file exists
+        try:
+            with open(self._WB_LOCK_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            r, g, b = float(data["r"]), float(data["g"]), float(data["b"])
+            self._left.update_wb_lock_status(r, g, b, locked=True)
+            log.info("WB lock file found on startup - R=%.4f G=%.4f B=%.4f", r, g, b)
+        except (FileNotFoundError, KeyError, ValueError, OSError):
+            pass  # no lock file yet - that is normal on first run
 
     def closeEvent(self, event) -> None:
         """Guarantee camera disconnect on window close - releases eBUS device lock."""
@@ -1374,6 +1388,8 @@ class MainWindow(QMainWindow):
         """
         was_revert = self._wb_reverting
         self._wb_reverting = False   # reset flag for next operation
+        if success:
+            self._current_wb = (r, g, b)   # store for Lock WB
         self._left.update_white_balance(success, r, g, b, revert_done=was_revert)
         if success:
             self.statusBar().showMessage(
@@ -1385,6 +1401,67 @@ class MainWindow(QMainWindow):
                 "White Balance: calibration failed - check connection and try again"
             )
             log.warning("WB readback: failed")
+
+    # ── White Balance Lock slots ───────────────────────────────────────────────
+
+    _WB_LOCK_PATH = Path(__file__).resolve().parent.parent / "config" / "wb_lock.json"
+
+    @pyqtSlot()
+    def _on_wb_lock(self) -> None:
+        """
+        Save current confirmed WB gains to config/wb_lock.json.
+        Called when the user clicks the 'Lock WB' button after a successful AWB run.
+        The file is read back on startup and by _on_wb_load_locked().
+        """
+        r, g, b = self._current_wb
+        from datetime import datetime
+        payload = {
+            "r": round(r, 6),
+            "g": round(g, 6),
+            "b": round(b, 6),
+            "locked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "note": "Locked via GUI Lock WB button. Apply with Load Locked before each apple session.",
+        }
+        try:
+            self._WB_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._WB_LOCK_PATH, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+            self._left.update_wb_lock_status(r, g, b, locked=True)
+            self.statusBar().showMessage(
+                f"WB Locked - R:{r:.4f}  G:{g:.4f}  B:{b:.4f}  (saved to config/wb_lock.json)"
+            )
+            log.info("WB lock saved - R=%.4f G=%.4f B=%.4f", r, g, b)
+        except OSError as e:
+            self.statusBar().showMessage(f"WB Lock: failed to save - {e}")
+            log.error("WB lock save failed: %s", e)
+
+    @pyqtSlot()
+    def _on_wb_load_locked(self) -> None:
+        """
+        Read config/wb_lock.json and apply those R/G/B gains directly to the camera.
+        Called when the user clicks 'Load Locked WB'. Ensures every apple capture
+        session uses exactly the same white balance as the white reference panel capture.
+        """
+        try:
+            with open(self._WB_LOCK_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            r, g, b = float(data["r"]), float(data["g"]), float(data["b"])
+        except (FileNotFoundError, KeyError, ValueError, OSError) as e:
+            self.statusBar().showMessage(f"WB Load Locked: could not read lock file - {e}")
+            log.error("WB load locked failed: %s", e)
+            return
+
+        running = self._cam_w is not None and self._cam_w.isRunning()
+        if running:
+            self._cam_w.set_white_balance(r, g, b)
+            self.statusBar().showMessage(
+                f"WB Load Locked: applying R:{r:.4f}  G:{g:.4f}  B:{b:.4f} to camera…"
+            )
+            log.info("WB load locked applied - R=%.4f G=%.4f B=%.4f", r, g, b)
+        else:
+            self.statusBar().showMessage(
+                "WB Load Locked: camera not connected - connect camera first"
+            )
 
     # ── Black Level slots ──────────────────────────────────────────────────────
 
