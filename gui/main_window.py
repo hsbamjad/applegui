@@ -421,7 +421,8 @@ class MainWindow(QMainWindow):
         self._exit_x_frac: float = 0.85   # set again in _start_pipeline from config
         self._total        = 0
         self._total_graded = 0             # running count for model input panel badge
-        self._wb_reverting = False   # True while a revert_white_balance() call is in flight
+        self._wb_reverting = False      # True while a revert_white_balance() call is in flight
+        self._wb_loading_locked = False  # True while a load-locked set_white_balance() call is in flight
         self._current_wb: tuple[float, float, float] = (1.0, 1.0, 1.0)  # last confirmed R/G/B gains
         self._display_pending = False
         self._graded_ui_pending = False
@@ -1386,11 +1387,16 @@ class MainWindow(QMainWindow):
         When the readback follows a Revert, the Revert button is disabled again
         because _saved_wb has been cleared in camera_interface - no snapshot remains.
         """
-        was_revert = self._wb_reverting
-        self._wb_reverting = False   # reset flag for next operation
+        was_revert       = self._wb_reverting
+        was_load_locked  = self._wb_loading_locked
+        self._wb_reverting      = False
+        self._wb_loading_locked = False
         if success:
             self._current_wb = (r, g, b)   # store for Lock WB
-        self._left.update_white_balance(success, r, g, b, revert_done=was_revert)
+        # Treat load-locked the same as a completed revert for UI purposes:
+        # disable the Revert button because there is no AWB snapshot to go back to.
+        revert_done_ui = was_revert or was_load_locked
+        self._left.update_white_balance(success, r, g, b, revert_done=revert_done_ui)
         if success:
             self.statusBar().showMessage(
                 f"White Balance confirmed - R: {r:.4f}  G: {g:.4f}  B: {b:.4f}"
@@ -1453,6 +1459,7 @@ class MainWindow(QMainWindow):
 
         running = self._cam_w is not None and self._cam_w.isRunning()
         if running:
+            self._wb_loading_locked = True   # flag so _on_wb_readback disables Revert
             self._cam_w.set_white_balance(r, g, b)
             self.statusBar().showMessage(
                 f"WB Load Locked: applying R:{r:.4f}  G:{g:.4f}  B:{b:.4f} to camera…"
