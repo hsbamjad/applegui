@@ -161,9 +161,17 @@ class GradingRecorder:
             for idx in range(3):
                 (session_dir / "raw_frames" / f"ch{idx + 1}").mkdir(parents=True, exist_ok=True)
 
+        # NOTE: We know session_dir already, so we don't need to block on the
+        # worker.  Use a short timeout purely to flush any preceding commands
+        # (e.g. a leftover "stop") before we mark the session active.  This
+        # call runs on the GUI thread so it MUST NOT block indefinitely.
         done = threading.Event()
         self._cmd_q.put(("start", session_dir, done))
-        done.wait()
+        if not done.wait(timeout=2.0):
+            log.warning(
+                "GradingRecorder.start_session: worker did not ack within 2 s - "
+                "continuing anyway (session_dir already created on disk)"
+            )
         self._session_dir = session_dir
         self._saved_images = 0
         self._dropped_batches = 0
@@ -267,10 +275,18 @@ class GradingRecorder:
     def stop_session(self) -> None:
         if not self._active:
             return
+        # Mark inactive immediately so no new frames are submitted while the
+        # worker drains.  The worker finishes any in-progress batch on its own.
+        self._active = False
         done = threading.Event()
         self._cmd_q.put(("stop", done))
-        done.wait()
-        self._active = False
+        # 5-second timeout: generous for flushing CSVs, but never blocks the
+        # GUI thread indefinitely (the worker may still be encoding a frame).
+        if not done.wait(timeout=5.0):
+            log.warning(
+                "GradingRecorder.stop_session: worker did not finish within 5 s - "
+                "some data may still be flushing in the background"
+            )
         log.info(
             "GradingRecorder stopped - %d images saved (%d batches dropped)",
             self._saved_images, self._dropped_batches,
