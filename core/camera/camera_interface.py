@@ -34,8 +34,9 @@ from __future__ import annotations
 import queue
 import time
 import os
-from core.log import get_logger
 import threading
+import concurrent.futures
+from core.log import get_logger
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -270,6 +271,11 @@ class JAICamera:
         self._last_grab_time: float = 0.0   # updated every successful frame
         # ── AWB side-thread coordination ──────────────────────────────────────
         self._awb_lock = threading.Lock()   # serialise concurrent AWB requests
+        # ── Per-source grab executor ──────────────────────────────────────────
+        # RetrieveNextBuffer() has an advisory timeout but can deadlock in bad
+        # network conditions.  We submit each call to a persistent thread pool
+        # and apply a hard wall-clock deadline so the grab loop never stalls.
+        self._grab_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
 
     @property
     def grab_fps(self) -> float:
@@ -404,6 +410,12 @@ class JAICamera:
         log.info("JAICamera: drained %s - ready", counts)
 
         self._running = True
+        # One persistent thread per source so eBUS calls are never shared.
+        # max_workers = len(sources) (3); each thread owns exactly one source.
+        self._grab_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(self._sources),
+            thread_name_prefix="JAI-buf",
+        )
         self._grab_thread = threading.Thread(
             target=self._grab_loop, daemon=True, name="JAI-grab"
         )
@@ -491,8 +503,34 @@ class JAICamera:
                 bids = []
                 ok   = True
 
-                for src in self._sources:
-                    raw, bid = src.grab(timeout_ms=150)
+                # ── Hard-timeout grab from all sources concurrently ────────────
+                # RetrieveNextBuffer(150) is advisory: the eBUS SDK can deadlock
+                # if the GEV stream gets corrupted. We submit each call to a
+                # dedicated worker thread and wait at most 1.0 s wall-clock.
+                # If any call exceeds that, we break out of the grab loop so
+                # the CameraWorker watchdog can fire and reconnect cleanly.
+                HARD_GRAB_TIMEOUT_S = 1.0  # > 150 ms advisory, < 5 s watchdog
+                futures = {
+                    self._grab_executor.submit(src.grab, 150): src
+                    for src in self._sources
+                }
+                for fut, src in futures.items():
+                    try:
+                        raw, bid = fut.result(timeout=HARD_GRAB_TIMEOUT_S)
+                    except concurrent.futures.TimeoutError:
+                        log.error(
+                            "JAI-grab: RetrieveNextBuffer HARD TIMEOUT on %s "
+                            "(eBUS pipeline deadlocked) - stopping grab loop",
+                            src._source_name,
+                        )
+                        self._running = False
+                        ok = False
+                        break
+                    except Exception as exc:
+                        log.error("JAI-grab: grab exception on %s: %s",
+                                  src._source_name, exc)
+                        ok = False
+                        break
                     if raw is None:
                         ok = False
                         break
@@ -1668,6 +1706,11 @@ class JAICamera:
     def disconnect(self) -> None:
         import eBUS as eb
         self._running = False
+        # Shut down the grab executor before closing sources so any in-flight
+        # RetrieveNextBuffer futures are cancelled rather than waited on.
+        if self._grab_executor is not None:
+            self._grab_executor.shutdown(wait=False, cancel_futures=True)
+            self._grab_executor = None
         for src in self._sources:
             src.stop_acquisition()
         for src in self._sources:
@@ -1678,6 +1721,7 @@ class JAICamera:
             eb.PvDevice.Free(self._device)
             self._device = None
         log.info("JAICamera: disconnected")
+
 
 
 # ── Unified CameraInterface ───────────────────────────────────────────────────
