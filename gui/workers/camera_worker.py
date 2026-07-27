@@ -4,17 +4,26 @@ gui/workers/camera_worker.py
 QThread camera worker - drives the real JAI camera or mock backend.
 
 Signals:
-  sig_frame(ch1, ch2, ch3, fps)  - new hardware-synchronized frame triplet
-  sig_status(message, is_error)  - connection / error events
+  sig_frame(ch1, ch2, ch3, fps)        - new hardware-synchronized frame triplet
+  sig_status(message, is_error)        - connection / error events
+  sig_grab_timeout()                   - emitted when the grab thread appears frozen
+                                         (no new frame for > JAICamera.GRAB_TIMEOUT_S).
+                                         The GUI should disconnect and offer reconnect.
 
-Mode is controlled by config["mode"]:
-  "mock" → synthetic frames (works without camera hardware)
-  "jai"  → real JAI FS-3200T via eBUS Python SDK
+Thread safety
+-------------
+All camera control calls (set_exposure, set_fps, set_gain … etc.) are forwarded
+directly to CameraInterface, which internally routes them through the grab thread's
+command queue.  These methods are safe to call from the GUI thread.
+
+AWB (trigger_awb) is special: it polls firmware for up to 3 s.  It runs on a
+dedicated daemon thread so neither the GUI thread nor the grab thread stalls.
 """
 
 from __future__ import annotations
 
 import os
+import threading
 import time
 from core.log import get_logger
 import ctypes
@@ -46,10 +55,17 @@ def _set_timer_resolution(period_ms: int) -> None:
 
 
 class CameraWorker(QThread):
-    """Background QThread: grabs synchronized frame triplets, emits to GUI."""
+    """Background QThread: grabs synchronized frame triplets, emits to GUI.
+
+    Watchdog
+    --------
+    If the JAI grab thread hangs (no new frame for GRAB_TIMEOUT_S seconds),
+    sig_grab_timeout is emitted.  The GUI should disconnect and reconnect.
+    """
 
     sig_frame                 = pyqtSignal(object, object, object, float)  # ch1, ch2, ch3, display_fps
     sig_status                = pyqtSignal(str, bool)                       # message, is_error
+    sig_grab_timeout          = pyqtSignal()                                 # grab thread frozen
     sig_exposure_readback     = pyqtSignal(int, int, int)    # actual CH1/CH2/CH3 exposures in µs
     sig_gains_readback        = pyqtSignal(float, float, float)  # actual CH1/CH2/CH3 gains in dB
     sig_cam_fps               = pyqtSignal(float)            # actual camera acquisition FPS (grab thread)
@@ -58,6 +74,8 @@ class CameraWorker(QThread):
     sig_black_level_readback  = pyqtSignal(float, float, float)  # actual CH1/CH2/CH3 black levels DN
     sig_roi_readback          = pyqtSignal(int, int, int, int)   # actual x, y, w, h after apply
 
+    # Seconds without a new frame before the watchdog fires.
+    _WATCHDOG_S = 5.0
 
     def __init__(self, config: dict, display_fps: int = 30) -> None:
         super().__init__()
@@ -65,13 +83,13 @@ class CameraWorker(QThread):
         self._display_fps = display_fps
         self._running     = False
         self._camera: CameraInterface | None = None  # set during run()
+        self._awb_thread: threading.Thread | None = None
 
     def run(self) -> None:
         mode = self._config.get("mode", "mock")
         self.sig_status.emit(f"Connecting … (mode={mode})", False)
 
         # Set Windows timer to 1ms resolution so time.sleep() is precise.
-        # Default is 15.625ms (1/64s) which causes FPS to snap to 64 or 32.
         _set_timer_resolution(1)
 
         self._camera = CameraInterface(self._config)
@@ -91,9 +109,11 @@ class CameraWorker(QThread):
         fps_start      = time.perf_counter()
         fps            = 0.0
         last_frame_idx = -1
-        cam_fps_t      = time.perf_counter()
-        # min_interval is computed each loop iteration from self._display_fps
-        # so set_fps() takes effect immediately without restarting the thread.
+
+        # Watchdog: track when we last received a new frame from the JAI grab
+        # thread.  If it stops advancing, the grab thread has likely crashed.
+        watchdog_start: float = time.perf_counter()
+        watchdog_armed = (actual_mode == "jai")   # only watch the real camera
 
         while self._running:
             t0           = time.perf_counter()
@@ -102,11 +122,25 @@ class CameraWorker(QThread):
             triplet = self._camera.grab()
 
             if triplet is None or triplet.frame_idx == last_frame_idx:
+                # ── Watchdog check ──────────────────────────────────────────
+                if watchdog_armed:
+                    idle = time.perf_counter() - watchdog_start
+                    if idle > self._WATCHDOG_S:
+                        log.error(
+                            "CameraWorker: no new frame for %.1f s - grab thread appears "
+                            "frozen (last_frame_idx=%d). Emitting sig_grab_timeout.",
+                            idle, last_frame_idx,
+                        )
+                        self._running = False
+                        self.sig_grab_timeout.emit()
+                        break
                 sleep = min_interval - (time.perf_counter() - t0)
                 if sleep > 0:
                     time.sleep(sleep)
                 continue
 
+            # Got a new frame - reset watchdog
+            watchdog_start = time.perf_counter()
             last_frame_idx = triplet.frame_idx
             frame_count   += 1
             elapsed = time.perf_counter() - fps_start
@@ -140,6 +174,10 @@ class CameraWorker(QThread):
         self.wait(5000)   # allow up to 5s for clean shutdown (warmup + drain)
 
     # ── Live camera controls (called from GUI main thread via Qt signal) ───────
+    #
+    # All camera writes are serialized through JAICamera's internal command
+    # queue, so these calls are safe to make from the GUI thread even while
+    # the grab thread is running.
 
     def set_exposure(self, exposure_us: int) -> None:
         """
@@ -178,19 +216,22 @@ class CameraWorker(QThread):
         if self._camera is not None:
             self._camera.set_fps(fps)
             log.info("CameraWorker: hardware=%.0f FPS, display target=%.0f FPS", fps, fps)
-            # Read back independent exposures - firmware may have clamped them at new FPS
-            actuals = self._camera.get_exposures_per_source()
-            if actuals and len(actuals) >= 1:
-                while len(actuals) < 3:
-                    actuals.append(actuals[-1])
-                self.sig_exposure_readback.emit(actuals[0], actuals[1], actuals[2])
+            # Exposure readback is now async via the grab thread - no blocking read here.
         else:
             log.warning("set_fps ignored - camera not connected")
 
     def get_exposure(self) -> int:
-        """Read current ExposureTime from firmware. Returns -1 if not connected."""
+        """Read current ExposureTime from firmware. Returns -1 if not connected.
+        NOTE: this blocks briefly on the grab thread via _enqueue_ctrl.
+        Use sparingly; prefer sig_exposure_readback for non-blocking updates."""
         if self._camera is not None:
-            return self._camera.get_exposure()
+            cam = self._camera
+            if hasattr(cam, "_backend") and cam._backend is not None:
+                return cam._backend._enqueue_ctrl(
+                    "get_exposure",
+                    lambda: cam._backend.get_exposure(),
+                    timeout=0.5,
+                ) or -1
         return -1
 
     def set_gain(self, gain_db: float) -> None:
@@ -225,15 +266,36 @@ class CameraWorker(QThread):
     def trigger_awb(self) -> None:
         """
         Trigger One-Push Auto White Balance on Source0 (Color CH1 only).
-        Saves pre-AWB ratios internally for Revert.
-        Emits sig_wb_readback(success, r, g, b) when calibration completes.
+
+        IMPORTANT: The AWB polling loop can block for up to 3.5 s.
+        This method spawns a daemon side-thread so neither the GUI thread
+        nor the grab thread stalls.  sig_wb_readback is emitted when done.
         """
-        if self._camera is not None:
-            success, r, g, b = self._camera.trigger_auto_white_balance()
-            self.sig_wb_readback.emit(success, r, g, b)
-        else:
+        if self._camera is None:
             log.warning("trigger_awb ignored - camera not connected")
             self.sig_wb_readback.emit(False, 1.0, 1.0, 1.0)
+            return
+
+        # Guard: don't start a second AWB if one is already running
+        if self._awb_thread is not None and self._awb_thread.is_alive():
+            log.warning("trigger_awb: AWB already in progress - ignoring duplicate request")
+            return
+
+        camera = self._camera   # capture for thread closure
+
+        def _awb_worker():
+            try:
+                success, r, g, b = camera.trigger_auto_white_balance()
+                self.sig_wb_readback.emit(success, r, g, b)
+            except Exception as exc:
+                log.error("AWB side-thread exception: %s", exc, exc_info=True)
+                self.sig_wb_readback.emit(False, 1.0, 1.0, 1.0)
+
+        self._awb_thread = threading.Thread(
+            target=_awb_worker, daemon=True, name="JAI-awb"
+        )
+        self._awb_thread.start()
+        log.info("CameraWorker: AWB side-thread started")
 
     def set_white_balance(self, r: float, g: float, b: float) -> None:
         """

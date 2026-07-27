@@ -14,18 +14,30 @@ Frame triplet format:
     ch3: np.ndarray shape (1536, 2048)    dtype uint8  - NIR2 ~900nm (Mono8, normalized)
 
 Threading:
-  CameraInterface is NOT thread-safe on its own.
-  Use CameraWorker (gui/workers/camera_worker.py) to wrap it in a QThread.
+  ALL eBUS GenICam parameter writes are serialized through a command queue
+  drained exclusively inside _grab_loop (the JAI-grab daemon thread).
+  The GUI thread NEVER calls GetParameters() or any camera write directly
+  while the grab thread is running - this eliminates eBUS concurrent-access
+  races that caused random session drops.
+
+  Public API methods (set_exposure, set_fps, set_gain, set_roi …) enqueue a
+  command and return immediately.  The grab thread drains the queue between
+  each frame grab and executes the write on behalf of the caller.
+
+  AWB (trigger_auto_white_balance) is special: it blocks for up to 3 seconds
+  while polling firmware.  It runs on its own short-lived side-thread so
+  neither the GUI thread nor the grab thread stalls.
 """
 
 from __future__ import annotations
 
+import queue
 import time
 import os
 from core.log import get_logger
 import threading
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import cv2
@@ -212,10 +224,27 @@ class JAICamera:
     """
     Real JAI FS-3200T camera backend using eBUS Python SDK.
     Simultaneous 3-source MultiSource acquisition with hardware sync.
+
+    Thread safety
+    -------------
+    Only the "JAI-grab" daemon thread may call eBUS parameter read/write
+    methods.  All camera controls (exposure, gain, fps, ROI …) are enqueued
+    via ``_ctrl_queue`` and executed inside ``_grab_loop``.
+
+    The GUI thread calls the public API methods below.  Each method enqueues
+    a ``(kind, args, result_event, result_holder)`` tuple and returns
+    immediately. Callers that need the actual readback value (e.g. readback
+    after an exposure apply) can wait on ``result_event`` with a short timeout
+    - the grab thread sets the event once the write is done.  GUI slots must
+    not block indefinitely on these events; they should use a QTimer or
+    simply accept that the readback will arrive asynchronously.
     """
 
     WARMUP_S     = 2.0
     DRAIN_FRAMES = 30
+
+    # Watchdog: if no new frame arrives for this many seconds, declare hang.
+    GRAB_TIMEOUT_S = 5.0
 
     def __init__(self, config: dict) -> None:
         self._cfg          = config
@@ -232,11 +261,25 @@ class JAICamera:
         self._grab_fps_t    = 0.0
         # Saved WB ratios for Revert (set just before One-Push AWB is triggered)
         self._saved_wb: Optional[tuple[float, float, float]] = None
+        # ── Command queue: GUI → grab thread ──────────────────────────────────
+        # Each item: (kind: str, fn: Callable, done: threading.Event, result: list)
+        # The grab thread calls fn() on the device, stores the return value in
+        # result[0], and sets done so the caller can read it if needed.
+        self._ctrl_queue: queue.SimpleQueue = queue.SimpleQueue()
+        # ── Liveness tracking ─────────────────────────────────────────────────
+        self._last_grab_time: float = 0.0   # updated every successful frame
+        # ── AWB side-thread coordination ──────────────────────────────────────
+        self._awb_lock = threading.Lock()   # serialise concurrent AWB requests
 
     @property
     def grab_fps(self) -> float:
         """Actual camera acquisition FPS measured in the background grab thread."""
         return self._grab_fps
+
+    @property
+    def last_grab_time(self) -> float:
+        """Epoch time of the most recent successful frame grab (for watchdog)."""
+        return self._last_grab_time
 
     def connect(self) -> bool:
         try:
@@ -370,11 +413,63 @@ class JAICamera:
 
     # ── Background grab loop ──────────────────────────────────────────────────
 
+    def _drain_ctrl_queue(self) -> None:
+        """
+        Execute all pending control commands from the queue.
+        Called at the start of every grab loop iteration so that camera
+        writes (exposure, gain, fps, ROI …) run exclusively on the grab
+        thread, never racing with buffer retrieval.
+        """
+        while True:
+            try:
+                kind, fn, done, result = self._ctrl_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                ret = fn()
+                result.append(ret)
+            except Exception as exc:
+                log.error("ctrl-queue command '%s' raised: %s", kind, exc, exc_info=True)
+                result.append(None)
+            finally:
+                done.set()
+
+    def _enqueue_ctrl(
+        self,
+        kind: str,
+        fn: Callable,
+        timeout: float = 0.0,
+    ):
+        """
+        Enqueue a control command for the grab thread and optionally wait.
+
+        Args:
+            kind:    Short string label used in log messages.
+            fn:      Zero-argument callable that performs the eBUS write and
+                     returns the result value.  Must not block for long.
+            timeout: Seconds to wait for the result (0 = fire-and-forget).
+
+        Returns the result value if timeout > 0 and the command finished in
+        time, otherwise None.
+        """
+        done   = threading.Event()
+        result: list = []
+        self._ctrl_queue.put((kind, fn, done, result))
+        if timeout > 0:
+            done.wait(timeout=timeout)
+            return result[0] if result else None
+        return None
+
     def _grab_loop(self) -> None:
         """
         Runs in a daemon thread at camera acquisition speed.
         Measures actual grab FPS independently of display FPS.
         Always stores the latest processed triplet in self._latest.
+
+        At the top of every iteration the control queue is drained so that
+        camera parameter writes (exposure, gain, fps, ROI …) execute here on
+        the grab thread, not on the GUI thread.  This eliminates all concurrent
+        eBUS device access.
 
         Block ID validation: all 3 sources must report the same GEV block ID
         for a triplet to be considered synchronized. If they diverge (e.g.
@@ -382,9 +477,16 @@ class JAICamera:
         lagging source(s) until they catch up to the most advanced block ID.
         This recovers sync within 1-3 frames without requiring a full restart.
         """
-        self._grab_fps_t = time.time()
+        self._grab_fps_t   = time.time()
+        self._last_grab_time = time.time()
         try:
             while self._running:
+                # ── Drain pending control commands first ───────────────────
+                self._drain_ctrl_queue()
+
+                if not self._running:
+                    break
+
                 raws = []
                 bids = []
                 ok   = True
@@ -430,18 +532,20 @@ class JAICamera:
                 block_id = bids[0]
 
                 # ── Track actual camera FPS ────────────────────────────────
-                self._grab_count += 1
-                elapsed = time.time() - self._grab_fps_t
+                self._grab_count  += 1
+                self._last_grab_time = time.time()
+                elapsed = self._last_grab_time - self._grab_fps_t
                 if elapsed >= 1.0:
                     self._grab_fps   = self._grab_count / elapsed
                     self._grab_count = 0
-                    self._grab_fps_t = time.time()
+                    self._grab_fps_t = self._last_grab_time
 
                 triplet = self._process_raws(raws, block_id)
                 with self._latest_lock:
                     self._latest = triplet
         except Exception as e:
             log.error("JAI grab thread crashed: %s", e, exc_info=True)
+            self._running = False   # signal CameraWorker watchdog
 
     def _process_raws(
         self,
@@ -505,9 +609,17 @@ class JAICamera:
             return self._latest
 
     # ── Live camera controls ──────────────────────────────────────────────────
+    #
+    # All methods below that write to the eBUS device use _enqueue_ctrl() so
+    # that the actual GenICam writes happen exclusively on the grab thread.
+    # Methods with "get_" prefix read camera state and are only safe to call
+    # from the grab thread (they are invoked from within _exec lambdas).
 
     def _write_exposure_direct_to_source(self, src, value_us: int) -> int:
-        """Helper to write exposure time directly to one specific source."""
+        """
+        Write exposure time to one source.  Must only be called from the
+        grab thread (i.e. inside an _exec lambda passed to _enqueue_ctrl).
+        """
         try:
             import eBUS as eb
             nm = self._device.GetParameters()
@@ -532,8 +644,8 @@ class JAICamera:
 
     def _apply_exposure_loop(self, target_exposures: list[int]) -> list[int]:
         """
-        Ramps target exposures simultaneously and incrementally on all open sources.
-        Pads shorter ramping paths to complete in unison, preventing sync loss.
+        Ramp exposures simultaneously across all sources in small steps to
+        avoid sync loss.  Must only be called from the grab thread.
         """
         currents = self.get_exposures_per_source()
         if not currents or len(currents) < len(self._sources):
@@ -547,7 +659,7 @@ class JAICamera:
             tgt = target_exposures[i] if i < len(target_exposures) else target_exposures[0]
             curr = currents[i]
 
-            ch_steps = []
+            ch_steps: list[int] = []
             diff = tgt - curr
             if abs(diff) <= max_step:
                 ch_steps = [tgt]
@@ -565,12 +677,11 @@ class JAICamera:
 
         max_steps_len = max(len(s) for s in steps_list)
 
-        # Pad shorter sequences at the start so all ramps conclude at the same time
+        # Pad shorter sequences at the start so all ramps finish at the same time
         for s in steps_list:
             while len(s) < max_steps_len:
                 s.insert(0, s[0])
 
-        # Execute synchronized steps
         actuals = [-1] * len(self._sources)
         for step_idx in range(max_steps_len):
             for i, src in enumerate(self._sources):
@@ -585,20 +696,28 @@ class JAICamera:
 
     def set_exposure(self, exposure_us: int) -> int:
         """
-        Set same exposure on ALL 3 sources. Returns actual readback from Source0.
-        Used for global exposure controls and Reset.
+        Set same exposure on ALL 3 sources.
+
+        Thread-safe: enqueues the write on the grab thread and waits up to
+        2 s for the readback.  Returns actual readback from Source0.
         """
         if self._device is None:
             log.warning("set_exposure: no device connected")
             return exposure_us
-        try:
-            actuals = self._apply_exposure_loop([exposure_us] * len(self._sources))
-            readback = actuals[0] if actuals else exposure_us
-            log.info("Camera: ExposureTime = %d µs (all), readback = %d µs", exposure_us, readback)
-            return readback
-        except Exception as e:
-            log.error("set_exposure exception: %s", e)
-            return exposure_us
+
+        def _exec():
+            try:
+                actuals  = self._apply_exposure_loop([exposure_us] * len(self._sources))
+                readback = actuals[0] if actuals else exposure_us
+                log.info("Camera: ExposureTime = %d µs (all), readback = %d µs",
+                         exposure_us, readback)
+                return readback
+            except Exception as e:
+                log.error("set_exposure exception: %s", e)
+                return exposure_us
+
+        result = self._enqueue_ctrl("set_exposure", _exec, timeout=2.0)
+        return result if result is not None else exposure_us
 
     def set_exposures_per_source(self, exposures: list[int]) -> list[int]:
         """
@@ -606,21 +725,32 @@ class JAICamera:
         exposures[0] → Source0 (Color / CH1)
         exposures[1] → Source1 (NIR1  / CH2)
         exposures[2] → Source2 (NIR2  / CH3)
-        Returns list of actual readback values from firmware.
+
+        Thread-safe: enqueues write on grab thread; waits up to 2 s for readback.
+        Returns list of actual firmware-accepted values.
         """
         if self._device is None:
             log.warning("set_exposures_per_source: no device connected")
             return exposures
-        try:
-            actuals = self._apply_exposure_loop(exposures)
-            log.info("Camera: Per-source exposure req=%s actual=%s", exposures, actuals)
-            return actuals
-        except Exception as e:
-            log.error("set_exposures_per_source exception: %s", e)
-            return exposures
+
+        def _exec():
+            try:
+                actuals = self._apply_exposure_loop(exposures)
+                log.info("Camera: Per-source exposure req=%s actual=%s", exposures, actuals)
+                return actuals
+            except Exception as e:
+                log.error("set_exposures_per_source exception: %s", e)
+                return exposures
+
+        result = self._enqueue_ctrl("set_exposures_per_source", _exec, timeout=2.0)
+        return result if result is not None else exposures
 
     def get_exposure(self) -> int:
-        """Read actual ExposureTime from Source0. Returns -1 on failure."""
+        """
+        Read actual ExposureTime from Source0.
+        MUST be called from the grab thread only (no queue guard here).
+        Returns -1 on failure.
+        """
         if self._device is None:
             return -1
         try:
@@ -641,6 +771,7 @@ class JAICamera:
     def get_exposures_per_source(self) -> list[int]:
         """
         Read current ExposureTime (µs) from ALL sources independently.
+        MUST be called from the grab thread only.
         Returns list of microsecond values (one per source), or [] on failure.
         """
         if self._device is None:
@@ -667,6 +798,8 @@ class JAICamera:
         """
         Set acquisition frame rate while streaming.
 
+        Thread-safe: enqueues write on grab thread; waits up to 1 s.
+
         Changing FPS has one important side-effect:
           Max allowed exposure shrinks: max_exp_us = 1,000,000 / fps
           (firmware enforces this - any existing exposure above the new limit
@@ -675,59 +808,54 @@ class JAICamera:
         The FS-3200T supports 1-107 FPS at full 2048×1536 resolution.
         Lower FPS → more light per frame → brighter NIR. Useful in dark conditions.
         Higher FPS → faster throughput → shorter max exposure.
-
-        Args:
-            fps: Desired frame rate in frames per second. Range: 1-107.
-
-        Returns:
-            True on success, False on failure.
         """
         if self._device is None:
             log.warning("set_fps: no device connected")
             return False
-        try:
-            nm    = self._device.GetParameters()
-            # Some firmware versions require this enable flag before FPS can be written.
-            # Returns None if the parameter doesn't exist (e.g. Shuttle PC unit) - safe to skip.
-            enable = nm.GetBoolean("AcquisitionFrameRateEnable")
-            if enable:
-                enable.SetValue(True)
 
-            param = nm.GetFloat("AcquisitionFrameRate")
-            if param is None:
-                log.error("set_fps: AcquisitionFrameRate not found on device")
+        def _exec():
+            try:
+                nm    = self._device.GetParameters()
+                enable = nm.GetBoolean("AcquisitionFrameRateEnable")
+                if enable:
+                    enable.SetValue(True)
+
+                param = nm.GetFloat("AcquisitionFrameRate")
+                if param is None:
+                    log.error("set_fps: AcquisitionFrameRate not found on device")
+                    return False
+
+                fps_local = fps
+                try:
+                    _, min_fps = param.GetMin()
+                    _, max_fps = param.GetMax()
+                    clamped = float(max(float(min_fps), min(float(max_fps), fps_local)))
+                    if abs(clamped - fps_local) > 0.01:
+                        log.warning(
+                            "set_fps: %.1f FPS outside camera range [%.2f, %.2f] - clamping to %.2f",
+                            fps_local, float(min_fps), float(max_fps), clamped,
+                        )
+                    fps_local = clamped
+                except Exception as ce:
+                    log.debug("set_fps: could not read min/max - %s", ce)
+
+                r = param.SetValue(fps_local)
+                if r.IsOK():
+                    _, actual = param.GetValue()
+                    log.info(
+                        "Camera: AcquisitionFrameRate = %.2f FPS (max exposure now %.0f µs)",
+                        float(actual), 1_000_000 / max(float(actual), 1),
+                    )
+                    return True
+                log.error("set_fps: camera rejected %.1f FPS: %s",
+                          fps_local, str(r.GetCodeString()))
+                return False
+            except Exception as e:
+                log.error("set_fps exception: %s", e)
                 return False
 
-            # Clamp requested FPS to camera's actual min/max.
-            # The FS-3200T in MultiSource mode has a firmware-enforced max FPS
-            # (typically ~27.6 at full 2048x1536 with 3 simultaneous sources).
-            # Requesting above this results in GENERIC_ERROR.
-            try:
-                _, min_fps = param.GetMin()
-                _, max_fps = param.GetMax()
-                clamped = float(max(float(min_fps), min(float(max_fps), fps)))
-                if abs(clamped - fps) > 0.01:
-                    log.warning(
-                        "set_fps: %.1f FPS outside camera range [%.2f, %.2f] - clamping to %.2f",
-                        fps, float(min_fps), float(max_fps), clamped,
-                    )
-                fps = clamped
-            except Exception as ce:
-                log.debug("set_fps: could not read min/max - %s", ce)
-
-            r = param.SetValue(fps)
-            if r.IsOK():
-                _, actual = param.GetValue()
-                log.info(
-                    "Camera: AcquisitionFrameRate = %.2f FPS (max exposure now %.0f µs)",
-                    float(actual), 1_000_000 / max(float(actual), 1),
-                )
-                return True
-            log.error("set_fps: camera rejected %.1f FPS: %s", fps, str(r.GetCodeString()))
-            return False
-        except Exception as e:
-            log.error("set_fps exception: %s", e)
-            return False
+        result = self._enqueue_ctrl("set_fps", _exec, timeout=1.0)
+        return bool(result) if result is not None else False
 
     # ── Gain helpers ──────────────────────────────────────────────────────────
 
@@ -813,20 +941,26 @@ class JAICamera:
 
     def set_gain(self, gain_db: float) -> float:
         """
-        Set same gain on ALL 3 sources. Returns actual readback from Source0.
-        Used for global gain and Reset.
+        Set same gain on ALL 3 sources.
+        Thread-safe: enqueues write on grab thread; waits up to 1 s for readback.
+        Returns actual readback from Source0.
         """
         if self._device is None:
             log.warning("set_gain: no device connected")
             return gain_db
-        try:
-            actuals  = self._apply_gain_loop([gain_db] * len(self._sources))
-            readback = actuals[0] if actuals else gain_db
-            log.info("Camera: Gain=%.1f dB (all), readback=%.1f dB", gain_db, readback)
-            return readback
-        except Exception as e:
-            log.error("set_gain exception: %s", e)
-            return gain_db
+
+        def _exec():
+            try:
+                actuals  = self._apply_gain_loop([gain_db] * len(self._sources))
+                readback = actuals[0] if actuals else gain_db
+                log.info("Camera: Gain=%.1f dB (all), readback=%.1f dB", gain_db, readback)
+                return readback
+            except Exception as e:
+                log.error("set_gain exception: %s", e)
+                return gain_db
+
+        result = self._enqueue_ctrl("set_gain", _exec, timeout=1.0)
+        return float(result) if result is not None else gain_db
 
     def set_gain_per_source(self, gains: list[float]) -> list[float]:
         """
@@ -834,20 +968,26 @@ class JAICamera:
         gains[0] → Source0 (Color / CH1)
         gains[1] → Source1 (NIR1  / CH2)
         gains[2] → Source2 (NIR2  / CH3)
+        Thread-safe: enqueues write on grab thread; waits up to 1 s for readback.
         Returns list of actual readback values from firmware.
         """
         if self._device is None:
             log.warning("set_gain_per_source: no device connected")
             return gains
-        try:
-            actuals = self._apply_gain_loop(gains)
-            log.info("Camera: Per-source gain req=%s actual=%s",
-                     [f"{g:.1f}" for g in gains],
-                     [f"{a:.1f}" for a in actuals])
-            return actuals
-        except Exception as e:
-            log.error("set_gain_per_source exception: %s", e)
-            return gains
+
+        def _exec():
+            try:
+                actuals = self._apply_gain_loop(gains)
+                log.info("Camera: Per-source gain req=%s actual=%s",
+                         [f"{g:.1f}" for g in gains],
+                         [f"{a:.1f}" for a in actuals])
+                return actuals
+            except Exception as e:
+                log.error("set_gain_per_source exception: %s", e)
+                return gains
+
+        result = self._enqueue_ctrl("set_gain_per_source", _exec, timeout=1.0)
+        return result if result is not None else gains
 
     def get_gains_per_source(self) -> list[float]:
         """
@@ -989,74 +1129,86 @@ class JAICamera:
     def set_white_balance_ratios(self, r: float, g: float, b: float) -> tuple:
         """
         Write explicit R/G/B WB ratios to Source0 GenICam registers.
-        - Scopes to Source0 only via PvGenStateStack
-        - Disables BalanceWhiteAuto first (sets to Off)
-        - Enumerates GainSelector, writes Gain for Red/Green/Blue entries
-        - Returns actual readback (r, g, b)
+        Thread-safe: enqueues write on grab thread; waits up to 1 s for readback.
+        Returns actual readback (r, g, b).
         """
         if self._device is None or not self._sources:
             return (r, g, b)
-        try:
-            import eBUS as eb
-            nm    = self._device.GetParameters()
-            stack = eb.PvGenStateStack(nm)
-            stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
 
-            # Disable auto WB before manual write
-            bwa = nm.GetEnum("BalanceWhiteAuto")
-            if bwa:
-                bwa.SetValue("Off")
+        def _exec():
+            try:
+                import eBUS as eb
+                nm    = self._device.GetParameters()
+                stack = eb.PvGenStateStack(nm)
+                stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
 
-            wb_names = self._get_wb_selector_names(nm)
-            if not wb_names:
-                log.warning("set_white_balance_ratios: no R/G/B GainSelector entries found")
+                bwa = nm.GetEnum("BalanceWhiteAuto")
+                if bwa:
+                    bwa.SetValue("Off")
+
+                wb_names = self._get_wb_selector_names(nm)
+                if not wb_names:
+                    log.warning("set_white_balance_ratios: no R/G/B GainSelector entries found")
+                    return (r, g, b)
+
+                gs      = nm.GetEnum("GainSelector")
+                targets = {"red": r, "green": g, "blue": b}
+                actuals: dict = {"red": r, "green": g, "blue": b}
+
+                for role, sel_name in wb_names.items():
+                    r_sel = gs.SetValue(sel_name)
+                    if not r_sel.IsOK():
+                        log.warning("set_wb: GainSelector.SetValue(%s) failed", sel_name)
+                        continue
+                    param = nm.GetFloat("Gain")
+                    if param is None:
+                        continue
+                    try:
+                        _, g_min = param.GetMin()
+                        _, g_max = param.GetMax()
+                        clamped  = float(max(g_min, min(g_max, targets[role])))
+                    except Exception:
+                        clamped = float(targets[role])
+                    r_write = param.SetValue(clamped)
+                    if r_write.IsOK():
+                        _, v = param.GetValue()
+                        actuals[role] = float(v)
+                        log.debug("WB Source0 [%s]: req=%.4f actual=%.4f",
+                                  sel_name, targets[role], actuals[role])
+                    else:
+                        log.warning("set_wb: Gain.SetValue(%s, %.4f) failed: %s",
+                                    sel_name, clamped, r_write.GetCodeString())
+
+                log.info("WB written Source0: R=%.4f G=%.4f B=%.4f",
+                         actuals["red"], actuals["green"], actuals["blue"])
+                return (actuals["red"], actuals["green"], actuals["blue"])
+            except Exception as exc:
+                log.error("set_white_balance_ratios exception: %s", exc)
                 return (r, g, b)
 
-            gs      = nm.GetEnum("GainSelector")
-            targets = {"red": r, "green": g, "blue": b}
-            actuals: dict = {"red": r, "green": g, "blue": b}
+        result = self._enqueue_ctrl("set_wb_ratios", _exec, timeout=1.0)
+        return result if result is not None else (r, g, b)
 
-            for role, sel_name in wb_names.items():
-                r_sel = gs.SetValue(sel_name)
-                if not r_sel.IsOK():
-                    log.warning("set_wb: GainSelector.SetValue(%s) failed", sel_name)
-                    continue
-                param = nm.GetFloat("Gain")
-                if param is None:
-                    continue
-                try:
-                    _, g_min = param.GetMin()
-                    _, g_max = param.GetMax()
-                    clamped  = float(max(g_min, min(g_max, targets[role])))
-                except Exception:
-                    clamped = float(targets[role])
-                r_write = param.SetValue(clamped)
-                if r_write.IsOK():
-                    _, v = param.GetValue()
-                    actuals[role] = float(v)
-                    log.debug("WB Source0 [%s]: req=%.4f actual=%.4f",
-                              sel_name, targets[role], actuals[role])
-                else:
-                    log.warning("set_wb: Gain.SetValue(%s, %.4f) failed: %s",
-                                sel_name, clamped, r_write.GetCodeString())
-
-            log.info("WB written Source0: R=%.4f G=%.4f B=%.4f",
-                     actuals["red"], actuals["green"], actuals["blue"])
-            return (actuals["red"], actuals["green"], actuals["blue"])
-        except Exception as e:
-            log.error("set_white_balance_ratios exception: %s", e)
-            return (r, g, b)
-
-    def trigger_auto_white_balance(self) -> tuple:
+    def trigger_auto_white_balance(self, callback=None) -> tuple:
         """
         Trigger One-Push Auto White Balance on Source0 (Color CH1 only).
+
+        The polling loop can take up to 3 s to complete.  To avoid blocking
+        either the GUI thread or the grab thread:
+          - If ``callback`` is None: runs synchronously (caller must be a
+            non-GUI, non-grab thread - e.g. a dedicated AWB thread).  This
+            is the mode used by CameraWorker.trigger_awb().
+          - If ``callback`` is provided: not used; kept for API compat.
 
         Steps:
           1. Save current R/G/B ratios as revert target (self._saved_wb)
           2. Set BalanceWhiteAuto = Once  (hardware calibration starts)
           3. Poll BalanceWhiteAuto every 50 ms until it returns 'Off'
-             (firmware auto-reverts when calibration is complete)
           4. Read back resulting R/G/B ratios from firmware
+
+        ALL eBUS calls here happen via _enqueue_ctrl so the grab thread
+        executes them; this method may block waiting for each step but never
+        touches the device directly.
 
         Returns:
           (success: bool, r: float, g: float, b: float)
@@ -1064,66 +1216,85 @@ class JAICamera:
         if self._device is None or not self._sources:
             log.warning("trigger_auto_white_balance: no device / no sources")
             return (False, 1.0, 1.0, 1.0)
-        try:
-            import eBUS as eb
 
-            # 1. Save current ratios as revert target - only on the FIRST AWB run.
-            # Subsequent AWB clicks must NOT overwrite this snapshot; Revert should
-            # always return to the state before *any* AWB was applied this session.
-            if self._saved_wb is None:
-                self._saved_wb = self.get_white_balance_ratios()
-            log.info("AWB: saved pre-calibration WB = R=%.4f G=%.4f B=%.4f",
-                     *self._saved_wb)
+        with self._awb_lock:   # only one AWB at a time
+            try:
+                # Step 1: save pre-AWB ratios (enqueue read on grab thread)
+                if self._saved_wb is None:
+                    saved = self._enqueue_ctrl(
+                        "awb_save_ratios",
+                        lambda: self.get_white_balance_ratios(),
+                        timeout=1.0,
+                    )
+                    self._saved_wb = saved if saved else (1.0, 1.0, 1.0)
+                log.info("AWB: saved pre-calibration WB = R=%.4f G=%.4f B=%.4f",
+                         *self._saved_wb)
 
-            nm    = self._device.GetParameters()
-            stack = eb.PvGenStateStack(nm)
-            stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
+                # Step 2: set BalanceWhiteAuto = Once  (fast write, enqueued)
+                def _set_once():
+                    import eBUS as eb
+                    nm    = self._device.GetParameters()
+                    stack = eb.PvGenStateStack(nm)
+                    stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
+                    bwa = nm.GetEnum("BalanceWhiteAuto")
+                    if bwa is None:
+                        return "no_param"
+                    r_set = bwa.SetValue("Once")
+                    return "ok" if r_set.IsOK() else r_set.GetCodeString()
 
-            bwa = nm.GetEnum("BalanceWhiteAuto")
-            if bwa is None:
-                log.error("AWB: BalanceWhiteAuto parameter not found on Source0")
+                result = self._enqueue_ctrl("awb_set_once", _set_once, timeout=1.0)
+                if result != "ok":
+                    log.error("AWB: BalanceWhiteAuto.SetValue('Once') failed: %s", result)
+                    return (False, 1.0, 1.0, 1.0)
+                log.info("AWB: BalanceWhiteAuto = Once - calibrating…")
+
+                # Step 3: poll until firmware reverts flag to 'Off'
+                # Polling runs on THIS thread (the AWB side-thread from CameraWorker)
+                # but each read is enqueued on the grab thread to keep eBUS access serial.
+                deadline = time.time() + 3.5
+                done_flag = False
+                while time.time() < deadline:
+                    time.sleep(0.06)
+
+                    def _read_bwa():
+                        import eBUS as eb
+                        nm    = self._device.GetParameters()
+                        stack = eb.PvGenStateStack(nm)
+                        stack.SetEnumValue("SourceSelector", self._sources[0]._source_name)
+                        bwa = nm.GetEnum("BalanceWhiteAuto")
+                        if bwa is None:
+                            return ""
+                        try:
+                            _, cur = bwa.GetValueString()
+                        except AttributeError:
+                            try:
+                                _, cur = bwa.GetValue()
+                                cur = str(cur)
+                            except Exception:
+                                cur = ""
+                        return cur.lower()
+
+                    cur_str = self._enqueue_ctrl("awb_poll", _read_bwa, timeout=0.5)
+                    if cur_str and ("off" in cur_str or cur_str == "0"):
+                        done_flag = True
+                        break
+                    log.debug("AWB: BalanceWhiteAuto still = %s …", cur_str)
+
+                if not done_flag:
+                    log.warning("AWB: timed out waiting for BalanceWhiteAuto to return Off")
+
+                # Step 4: read back resulting ratios
+                ratios = self._enqueue_ctrl(
+                    "awb_readback",
+                    lambda: self.get_white_balance_ratios(),
+                    timeout=1.0,
+                ) or (1.0, 1.0, 1.0)
+                log.info("AWB complete: R=%.4f G=%.4f B=%.4f", *ratios)
+                return (True, ratios[0], ratios[1], ratios[2])
+
+            except Exception as e:
+                log.error("trigger_auto_white_balance exception: %s", e)
                 return (False, 1.0, 1.0, 1.0)
-
-            # 2. Trigger One-Push
-            r_set = bwa.SetValue("Once")
-            if not r_set.IsOK():
-                log.error("AWB: BalanceWhiteAuto.SetValue('Once') failed: %s",
-                          r_set.GetCodeString())
-                return (False, 1.0, 1.0, 1.0)
-            log.info("AWB: BalanceWhiteAuto = Once - calibrating…")
-
-            # 3. Poll until firmware reverts flag to 'Off' (max 3 s)
-            deadline = time.time() + 3.0
-            poll_interval = 0.05
-            done = False
-            while time.time() < deadline:
-                time.sleep(poll_interval)
-                try:
-                    # PvGenEnum uses GetValueString() in the eBUS Python SDK
-                    _, cur_str = bwa.GetValueString()
-                except AttributeError:
-                    try:
-                        _, cur_str = bwa.GetValue()
-                        cur_str = str(cur_str)
-                    except Exception:
-                        cur_str = ""
-                cur_str = cur_str.lower()
-                if "off" in cur_str or cur_str == "0":
-                    done = True
-                    break
-                log.debug("AWB: BalanceWhiteAuto still = %s …", cur_str)
-
-            if not done:
-                log.warning("AWB: timed out waiting for BalanceWhiteAuto to return Off")
-
-            # 4. Read back resulting ratios
-            ratios = self.get_white_balance_ratios()
-            log.info("AWB complete: R=%.4f G=%.4f B=%.4f", *ratios)
-            return (True, ratios[0], ratios[1], ratios[2])
-
-        except Exception as e:
-            log.error("trigger_auto_white_balance exception: %s", e)
-            return (False, 1.0, 1.0, 1.0)
 
     def revert_white_balance(self) -> tuple:
         """
@@ -1138,8 +1309,7 @@ class JAICamera:
         r, g, b = self._saved_wb
         log.info("AWB revert: restoring R=%.4f G=%.4f B=%.4f", r, g, b)
         actual = self.set_white_balance_ratios(r, g, b)
-        # Clear the save-point so the next AWB run captures the post-revert state
-        # as its new baseline, keeping Revert semantics consistent across cycles.
+        # Clear the save-point so the next AWB run captures the post-revert state.
         self._saved_wb = None
         return (True, actual[0], actual[1], actual[2])
 
@@ -1224,18 +1394,24 @@ class JAICamera:
         levels[0] → Source0 (Color / CH1)
         levels[1] → Source1 (NIR1  / CH2)
         levels[2] → Source2 (NIR2  / CH3)
+        Thread-safe: enqueues write on grab thread; waits up to 1 s.
         Returns list of actual firmware-accepted values.
         """
         if self._device is None:
             log.warning("set_black_levels_per_source: no device connected")
             return levels
-        try:
-            actuals = self._apply_black_level_loop(levels)
-            log.info("Camera: BlackLevel per-source req=%s actual=%s", levels, actuals)
-            return actuals
-        except Exception as e:
-            log.error("set_black_levels_per_source exception: %s", e)
-            return levels
+
+        def _exec():
+            try:
+                actuals = self._apply_black_level_loop(levels)
+                log.info("Camera: BlackLevel per-source req=%s actual=%s", levels, actuals)
+                return actuals
+            except Exception as e:
+                log.error("set_black_levels_per_source exception: %s", e)
+                return levels
+
+        result = self._enqueue_ctrl("set_black_levels", _exec, timeout=1.0)
+        return result if result is not None else levels
 
     def get_black_levels_per_source(self) -> list[float]:
         """
@@ -1330,152 +1506,128 @@ class JAICamera:
         """
         Apply ROI to ALL sources (they share the same physical FOV).
 
-        IMPORTANT: Width/Height/OffsetX/OffsetY are locked while streaming.
-        We must stop acquisition on all sources, write the registers, then
-        restart acquisition. This causes a ~0.5s frame gap - acceptable for
-        a deliberate calibration action.
+        Thread-safe: the entire stop/write/restart sequence is enqueued and
+        runs exclusively on the grab thread via _enqueue_ctrl, so there is no
+        concurrent eBUS access.  Waits up to 8 s for completion.
 
-        Safe write order per source:
-          1. Stop acquisition
-          2. Reset offsets to 0 (so Width/Height can expand to full sensor)
-          3. Set Width/Height to max (clear any previous crop)
-          4. Set new OffsetX, OffsetY
-          5. Set new Width, Height
-          6. Restart acquisition
+        This causes a ~0.5s frame gap - acceptable for a deliberate calibration
+        action.
 
         Returns (actual_x, actual_y, actual_w, actual_h) read back from Source0.
         """
         if self._device is None:
             log.warning("set_roi: no device connected")
             return (offset_x, offset_y, width, height)
-        try:
-            import eBUS as eb
-            limits = self.get_roi_limits()
-            mw = limits["max_width"]
-            mh = limits["max_height"]
-            xs = limits["offset_x_step"]
-            ys = limits["offset_y_step"]
-            ws = limits["width_step"]
-            hs = limits["height_step"]
 
-            # Align all values to firmware step requirements
-            ox = self._align(max(0, offset_x), xs)
-            oy = self._align(max(0, offset_y), ys)
-            w  = self._align(max(ws, min(width,  mw - ox)), ws)
-            h  = self._align(max(hs, min(height, mh - oy)), hs)
-
-            log.info("ROI: stopping acquisition to apply OffsetX=%d OffsetY=%d "
-                     "Width=%d Height=%d …", ox, oy, w, h)
-
-            # ── Step 1: Stop all acquisitions ──────────────────────────────
-            for src in self._sources:
-                try:
-                    src.stop_acquisition()
-                except Exception as e:
-                    log.warning("ROI: stop_acquisition failed on %s: %s",
-                                src._source_name, e)
-
-            # ── Step 1b: Drain stale pipeline buffers ───────────────────────
-            # After AcquisitionStop, up to BUFFER_COUNT (16) pre-ROI frames
-            # remain queued in each source's PvPipeline. If not flushed they
-            # mix with post-restart frames → block ID mismatch.
-            log.info("ROI: draining pipeline buffers …")
-            for src in self._sources:
-                drained = 0
-                while True:
-                    r, buf, op = src.pipeline.RetrieveNextBuffer(20)  # 20 ms
-                    if r.IsFailure():
-                        break
-                    src.pipeline.ReleaseBuffer(buf)
-                    drained += 1
-                log.debug("ROI: drained %d stale frames from %s",
-                          drained, src._source_name)
-
-            # ── Step 2: Write ROI to each source ───────────────────────────
-            nm = self._device.GetParameters()
-            for src in self._sources:
-                stack = eb.PvGenStateStack(nm)
-                stack.SetEnumValue("SourceSelector", src._source_name)
-
-                p_ox = nm.GetInteger("OffsetX")
-                p_oy = nm.GetInteger("OffsetY")
-                p_w  = nm.GetInteger("Width")
-                p_h  = nm.GetInteger("Height")
-
-                if p_ox and p_oy and p_w and p_h:
-                    # GenICam SFNC write order - CRITICAL:
-                    # Constraint: OffsetX + Width  <= MaxWidth  (2048)
-                    #             OffsetY + Height <= MaxHeight (1536)
-                    #
-                    # Step 1: Reset both offsets to 0 so size can expand freely
-                    p_ox.SetValue(0)
-                    p_oy.SetValue(0)
-                    # Step 2: Reset size to full sensor (clear any previous crop)
-                    p_w.SetValue(mw)
-                    p_h.SetValue(mh)
-                    # Step 3: Set target WIDTH and HEIGHT *first*
-                    #   e.g. Width=1648 -> 0+1648=1648 <= 2048 (ok)
-                    r_w = p_w.SetValue(w)
-                    r_h = p_h.SetValue(h)
-                    # Step 4: Now set OffsetX/OffsetY (size already reduced to fit)
-                    #   e.g. OffsetX=400 -> 400+1648=2048 <= 2048 (ok)
-                    r_ox = p_ox.SetValue(ox)
-                    r_oy = p_oy.SetValue(oy)
-                    if not r_w.IsOK():
-                        log.warning("ROI: Width.SetValue(%d) failed on %s: %s",
-                                    w, src._source_name, r_w.GetCodeString())
-                    if not r_h.IsOK():
-                        log.warning("ROI: Height.SetValue(%d) failed on %s: %s",
-                                    h, src._source_name, r_h.GetCodeString())
-                    if not r_ox.IsOK():
-                        log.warning("ROI: OffsetX.SetValue(%d) failed on %s: %s",
-                                    ox, src._source_name, r_ox.GetCodeString())
-                    if not r_oy.IsOK():
-                        log.warning("ROI: OffsetY.SetValue(%d) failed on %s: %s",
-                                    oy, src._source_name, r_oy.GetCodeString())
-                else:
-                    log.warning("ROI: integer params not found on %s", src._source_name)
-                # stack destroyed → SourceSelector reverts
-
-            # ── Step 3: Restart all acquisitions ───────────────────────────
-            for src in self._sources:
-                try:
-                    src.start_acquisition()
-                except Exception as e:
-                    log.warning("ROI: start_acquisition failed on %s: %s",
-                                src._source_name, e)
-
-            # ── Step 3b: Post-restart mini-drain ───────────────────────────
-            # Sources restart sequentially so Source0 produces 1-2 frames
-            # before Source2 even starts. Discard the first 5 frames from
-            # each source so the grab loop begins with all sources at the
-            # same frame number, avoiding block ID divergence.
-            log.info("ROI: post-restart stabilisation drain …")
-            time.sleep(0.05)   # 50 ms - let all sources begin transmitting
-            for _ in range(5):
-                for src in self._sources:
-                    r, buf, op = src.pipeline.RetrieveNextBuffer(100)
-                    if r.IsOK():
-                        src.pipeline.ReleaseBuffer(buf)
-            log.info("ROI: pipeline stabilised - resuming grab")
-
-            # ── Step 4: Read back actual values from Source0 ────────────────
-            actual = self.get_roi()
-            log.info("ROI confirmed: OffsetX=%d OffsetY=%d Width=%d Height=%d",
-                     *actual)
-            log.debug("ROI applied: (%d, %d) %dx%d px",
-                      actual[0], actual[1], actual[2], actual[3])
-            return actual
-
-        except Exception as e:
-            log.error("set_roi exception: %s", e)
-            # Best-effort: try to restart acquisition if we stopped it
+        def _exec():
             try:
+                import eBUS as eb
+                limits = self.get_roi_limits()
+                mw = limits["max_width"]
+                mh = limits["max_height"]
+                xs = limits["offset_x_step"]
+                ys = limits["offset_y_step"]
+                ws = limits["width_step"]
+                hs = limits["height_step"]
+
+                ox = self._align(max(0, offset_x), xs)
+                oy = self._align(max(0, offset_y), ys)
+                w  = self._align(max(ws, min(width,  mw - ox)), ws)
+                h  = self._align(max(hs, min(height, mh - oy)), hs)
+
+                log.info("ROI: stopping acquisition to apply OffsetX=%d OffsetY=%d "
+                         "Width=%d Height=%d …", ox, oy, w, h)
+
+                # Step 1: Stop all acquisitions
                 for src in self._sources:
-                    src.start_acquisition()
-            except Exception:
-                pass
-            return (offset_x, offset_y, width, height)
+                    try:
+                        src.stop_acquisition()
+                    except Exception as e:
+                        log.warning("ROI: stop_acquisition failed on %s: %s",
+                                    src._source_name, e)
+
+                # Step 1b: Drain stale pipeline buffers
+                log.info("ROI: draining pipeline buffers …")
+                for src in self._sources:
+                    drained = 0
+                    while True:
+                        r, buf, op = src.pipeline.RetrieveNextBuffer(20)
+                        if r.IsFailure():
+                            break
+                        src.pipeline.ReleaseBuffer(buf)
+                        drained += 1
+                    log.debug("ROI: drained %d stale frames from %s",
+                              drained, src._source_name)
+
+                # Step 2: Write ROI to each source
+                nm = self._device.GetParameters()
+                for src in self._sources:
+                    stack = eb.PvGenStateStack(nm)
+                    stack.SetEnumValue("SourceSelector", src._source_name)
+
+                    p_ox = nm.GetInteger("OffsetX")
+                    p_oy = nm.GetInteger("OffsetY")
+                    p_w  = nm.GetInteger("Width")
+                    p_h  = nm.GetInteger("Height")
+
+                    if p_ox and p_oy and p_w and p_h:
+                        p_ox.SetValue(0)
+                        p_oy.SetValue(0)
+                        p_w.SetValue(mw)
+                        p_h.SetValue(mh)
+                        r_w  = p_w.SetValue(w)
+                        r_h  = p_h.SetValue(h)
+                        r_ox = p_ox.SetValue(ox)
+                        r_oy = p_oy.SetValue(oy)
+                        if not r_w.IsOK():
+                            log.warning("ROI: Width.SetValue(%d) failed on %s: %s",
+                                        w, src._source_name, r_w.GetCodeString())
+                        if not r_h.IsOK():
+                            log.warning("ROI: Height.SetValue(%d) failed on %s: %s",
+                                        h, src._source_name, r_h.GetCodeString())
+                        if not r_ox.IsOK():
+                            log.warning("ROI: OffsetX.SetValue(%d) failed on %s: %s",
+                                        ox, src._source_name, r_ox.GetCodeString())
+                        if not r_oy.IsOK():
+                            log.warning("ROI: OffsetY.SetValue(%d) failed on %s: %s",
+                                        oy, src._source_name, r_oy.GetCodeString())
+                    else:
+                        log.warning("ROI: integer params not found on %s", src._source_name)
+
+                # Step 3: Restart all acquisitions
+                for src in self._sources:
+                    try:
+                        src.start_acquisition()
+                    except Exception as e:
+                        log.warning("ROI: start_acquisition failed on %s: %s",
+                                    src._source_name, e)
+
+                # Step 3b: Post-restart mini-drain
+                log.info("ROI: post-restart stabilisation drain …")
+                time.sleep(0.05)
+                for _ in range(5):
+                    for src in self._sources:
+                        r, buf, op = src.pipeline.RetrieveNextBuffer(100)
+                        if r.IsOK():
+                            src.pipeline.ReleaseBuffer(buf)
+                log.info("ROI: pipeline stabilised - resuming grab")
+
+                actual = self.get_roi()
+                log.info("ROI confirmed: OffsetX=%d OffsetY=%d Width=%d Height=%d",
+                         *actual)
+                return actual
+
+            except Exception as e:
+                log.error("set_roi exception: %s", e)
+                try:
+                    for src in self._sources:
+                        src.start_acquisition()
+                except Exception:
+                    pass
+                return (offset_x, offset_y, width, height)
+
+        result = self._enqueue_ctrl("set_roi", _exec, timeout=8.0)
+        return result if result is not None else (offset_x, offset_y, width, height)
 
     def get_roi(self) -> tuple:
         """

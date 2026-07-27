@@ -614,6 +614,7 @@ class MainWindow(QMainWindow):
             self._cam_w.sig_wb_readback.connect(self._on_wb_readback)
             self._cam_w.sig_black_level_readback.connect(self._on_black_level_readback)
             self._cam_w.sig_roi_readback.connect(self._on_roi_readback)
+            self._cam_w.sig_grab_timeout.connect(self._on_grab_timeout)
 
         self._cam_w.sig_frame.connect(self._on_frame)
         self._cam_w.sig_status.connect(self._on_cam_status)
@@ -886,6 +887,25 @@ class MainWindow(QMainWindow):
             self._header.set_mode("jai")
         elif "MOCK" in msg.upper() and not is_error:
             self._header.set_mode("mock")
+
+    @pyqtSlot()
+    def _on_grab_timeout(self) -> None:
+        """
+        Called when the JAI grab thread stops producing frames for > 5 s.
+
+        The grab thread has already set _running=False and stopped itself.
+        We stop the pipeline cleanly and show a recoverable error so the user
+        can press Connect again to reconnect without restarting the GUI.
+        """
+        log.error("MainWindow: grab timeout - stopping pipeline for reconnect")
+        msg = (
+            "Camera grab thread frozen - disconnected automatically. "
+            "Press Connect to reconnect."
+        )
+        self._right.status_group.set_status("Camera", "offline", msg)
+        self.statusBar().showMessage(msg)
+        # Stop the pipeline - this disconnects camera and cleans up workers
+        self._stop_pipeline()
 
 
     @pyqtSlot(int, int, str, float, str)
