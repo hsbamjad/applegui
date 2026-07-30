@@ -20,6 +20,8 @@ Output layout::
 from __future__ import annotations
 
 import csv
+import ctypes
+import os
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
