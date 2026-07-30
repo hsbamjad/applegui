@@ -883,10 +883,13 @@ class MainWindow(QMainWindow):
         else:
             self._center.channel_display.update_frames(ch1, ch2, ch3, fps)
 
-        # A newer frame arrived while we were processing - apply it once more.
+        # If a newer frame arrived while we were processing, schedule one more
+        # pass - but with a 1 ms yield so other Qt events (repaints, signals)
+        # get a chance to run.  Without the yield, singleShot(0) re-posts
+        # before the event loop can breathe and starves the entire UI.
         if self._pending_frame is not pf:
             self._frame_coalesce_pending = True
-            QTimer.singleShot(0, self._apply_pending_frame)
+            QTimer.singleShot(1, self._apply_pending_frame)
 
     def _wire_infer_logging(self) -> None:
         if self._infer_w is None:
