@@ -392,6 +392,11 @@ class CenterPanel(QWidget):
 class MainWindow(QMainWindow):
     """Apple Sorting GUI - fully wired demo pipeline."""
 
+    # Emitted by the recorder-setup daemon thread once GradingRecorder is ready.
+    # Qt delivers this via a queued connection to the GUI thread regardless of
+    # which thread emits it - the correct cross-thread callback mechanism.
+    _sig_recorder_ready = pyqtSignal(object, object, object)  # rec, session_dir, app_root
+
     def __init__(self) -> None:
         super().__init__()
         self._cfg    = _load_config()
@@ -505,6 +510,7 @@ class MainWindow(QMainWindow):
         self._left.sig_unload_model.connect(self._on_unload_model)
         self._left.sig_sorter_toggled.connect(self._on_sorter_toggle)
         self._left.sig_save_mode_changed.connect(self._on_save_mode_changed)
+        self._sig_recorder_ready.connect(self._on_recorder_ready)
         self._left.sig_detect_mode_changed.connect(self._on_detect_mode_changed)
         self._left.sig_logging_options.connect(self._on_logging_options)
         self._left.sig_save_path_changed.connect(self._on_save_path_changed)
@@ -738,8 +744,10 @@ class MainWindow(QMainWindow):
             # take tens-to-hundreds of ms on first call or slow paths.
             rec = GradingRecorder(**kwargs)
             session_dir = rec.start_session(base_dir)
-            # Hand back to GUI thread via zero-delay timer (thread-safe).
-            QTimer.singleShot(0, lambda: self._on_recorder_ready(rec, session_dir, app_root))
+            # Emit signal to GUI thread.  Qt automatically delivers cross-thread
+            # signal emissions via the receiver's event loop (queued connection),
+            # so this is safe from any plain Python thread.
+            self._sig_recorder_ready.emit(rec, session_dir, app_root)
 
         threading.Thread(target=_setup, daemon=True, name="recorder-setup").start()
         self._right.status_group.set_status("Logger", "warning", "Arming…")
@@ -758,8 +766,9 @@ class MainWindow(QMainWindow):
         else:
             self._right.status_group.set_status("Logger", "idle", "Off")
 
+    @pyqtSlot(object, object, object)
     def _on_recorder_ready(self, rec: GradingRecorder, session_dir: Path, app_root: Path) -> None:
-        """Called on the GUI thread once the background recorder-setup thread finishes.
+        """Delivered on the GUI thread via _sig_recorder_ready (queued connection).
 
         Guards handle two races:
         - User turned Save off while setup was running  → stop the orphaned recorder.
