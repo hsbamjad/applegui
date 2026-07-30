@@ -97,6 +97,23 @@ class _WriteJob:
     jpeg_bytes: bytes
 
 
+def _set_low_priority() -> None:
+    """Set current thread priority to BELOW_NORMAL on Windows so camera grab is never starved."""
+    if os.name == "nt":
+        try:
+            handle = ctypes.windll.kernel32.GetCurrentThread()
+            # THREAD_PRIORITY_BELOW_NORMAL = -1
+            ctypes.windll.kernel32.SetThreadPriority(handle, -1)
+        except Exception:
+            pass
+
+# Cap OpenCV thread pool for image encoding to prevent 100% CPU usage across all cores
+try:
+    cv2.setNumThreads(2)
+except Exception:
+    pass
+
+
 class GradingRecorder:
     """
     Ordered command queue: every ``submit_batch`` is processed before the
@@ -142,7 +159,11 @@ class GradingRecorder:
         self._batch_slots = threading.Semaphore(max_pending_batches)
         self._raw_slots  = threading.Semaphore(6)   # cap in-flight full-res raw encodes
         self._cmd_q: queue.SimpleQueue = queue.SimpleQueue()
-        self._write_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="log-wr")
+        self._write_pool = ThreadPoolExecutor(
+            max_workers=4,
+            thread_name_prefix="log-wr",
+            initializer=_set_low_priority,
+        )
         self._worker = threading.Thread(target=self._run_worker, daemon=True)
         self._worker.start()
 
@@ -282,6 +303,7 @@ class GradingRecorder:
     # ── Worker (single ordered loop) ──────────────────────────────────────────
 
     def _run_worker(self) -> None:
+        _set_low_priority()
         while True:
             cmd = self._cmd_q.get()
             kind = cmd[0]
@@ -480,6 +502,25 @@ class GradingRecorder:
         )
         return writes
 
+    def _encode_and_save_raw_channel(
+        self,
+        path: Path,
+        frame: np.ndarray,
+    ) -> None:
+        try:
+            img = _normalize_to_bgr(frame)
+            if img is None:
+                return
+            img = _downscale_max_dim(img, self._save_max_dim)
+            ok, buf = cv2.imencode(
+                f".{self._image_ext}", img,
+                [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
+            )
+            if ok:
+                self._write_jpeg(path, buf.tobytes())
+        except Exception as e:
+            log.warning("Raw channel save error for %s: %s", path, e)
+
     def _on_raw_frame(
         self,
         ch1: np.ndarray | None,
@@ -487,8 +528,8 @@ class GradingRecorder:
         ch3: np.ndarray | None,
     ) -> None:
         """
-        Encode and schedule disk writes for full-resolution raw frames.
-        Called on the worker thread - cv2.imencode releases the GIL.
+        Schedule async normalization, encoding, and disk writes for full-resolution raw frames.
+        Offloaded to write_pool so the recorder queue thread returns in microseconds.
         Output: {session}/raw_frames/ch1/, ch2/, ch3/
         """
         if self._session_dir is None:
@@ -499,17 +540,8 @@ class GradingRecorder:
         for ch_name, frame in (("ch1", ch1), ("ch2", ch2), ("ch3", ch3)):
             if frame is None:
                 continue
-            img = _normalize_to_bgr(frame)
-            if img is None:
-                continue
-            img = _downscale_max_dim(img, self._save_max_dim)
-            ok, buf = cv2.imencode(
-                f".{self._image_ext}", img,
-                [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
-            )
-            if ok:
-                path = self._session_dir / "raw_frames" / ch_name / fname
-                self._write_pool.submit(self._write_jpeg, path, buf.tobytes())
+            path = self._session_dir / "raw_frames" / ch_name / fname
+            self._write_pool.submit(self._encode_and_save_raw_channel, path, frame)
 
     def _flush_writes(self, jobs: list[_WriteJob]) -> None:
         for job in jobs:
@@ -584,9 +616,10 @@ class GradingRecorder:
 
     def _ensure_dir(self, path: Path) -> None:
         parent = path.parent
-        if parent not in self._dirs_made:
-            parent.mkdir(parents=True, exist_ok=True)
-            self._dirs_made.add(parent)
+        with self._lock:
+            if parent not in self._dirs_made:
+                parent.mkdir(parents=True, exist_ok=True)
+                self._dirs_made.add(parent)
 
     def _write_jpeg(self, path: Path, jpeg_bytes: bytes) -> None:
         self._ensure_dir(path)

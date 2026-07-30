@@ -509,9 +509,9 @@ class JAICamera:
                 # dedicated worker thread and wait at most 1.0 s wall-clock.
                 # If any call exceeds that, we break out of the grab loop so
                 # the CameraWorker watchdog can fire and reconnect cleanly.
-                HARD_GRAB_TIMEOUT_S = 1.0  # > 150 ms advisory, < 5 s watchdog
+                HARD_GRAB_TIMEOUT_S = 2.0  # > 250 ms advisory, < 5 s watchdog
                 futures = {
-                    self._grab_executor.submit(src.grab, 150): src
+                    self._grab_executor.submit(src.grab, 250): src
                     for src in self._sources
                 }
                 for fut, src in futures.items():
@@ -550,7 +550,7 @@ class JAICamera:
                     for i, src in enumerate(self._sources):
                         attempts = 0
                         while bids[i] < max_bid and self._running and attempts < 16:
-                            raw, bid = src.grab(timeout_ms=150)
+                            raw, bid = src.grab(timeout_ms=250)
                             if raw is None:
                                 ok = False
                                 break
