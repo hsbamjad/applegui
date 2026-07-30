@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QLabel, QStatusBar, QSizePolicy, QFrame,
 )
-from PyQt6.QtCore import Qt, pyqtSlot, QTimer
+from PyQt6.QtCore import Qt, pyqtSlot, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QColor, QPainter, QLinearGradient
 
 from gui.styles import (
