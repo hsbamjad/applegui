@@ -695,12 +695,19 @@ class MainWindow(QMainWindow):
             self._start_grading_session()
 
     def _start_grading_session(self) -> None:
-        """Create GradingRecorder and a timestamped session folder."""
+        """Create GradingRecorder and a timestamped session folder.
+
+        Heavy work (GradingRecorder.__init__ which spawns threads + ThreadPoolExecutor,
+        and session_dir mkdir which can be slow on network paths) is run on a daemon
+        thread so the GUI event loop - and the camera frame pipeline - is never blocked.
+        Once the recorder is ready, a QTimer.singleShot(0) posts '_on_recorder_ready'
+        back onto the GUI thread to wire up state safely.
+        """
         from utils.paths import APP_ROOT, SESSIONS_DIR
 
         log_cfg = self._cfg.get("logging", {})
 
-        # Prefer the operator-selected custom path over config default
+        # Resolve base_dir on the GUI thread (fast, no I/O)
         if self._custom_save_path:
             base_dir = Path(self._custom_save_path)
         else:
@@ -709,26 +716,33 @@ class MainWindow(QMainWindow):
             if not base_dir.exists():
                 base_dir = SESSIONS_DIR
 
-        self._grading_recorder = GradingRecorder(
-            image_format          = log_cfg.get("image_format", "jpg"),
-            jpeg_quality          = int(log_cfg.get("jpeg_quality", 92)),
-            save_detected_crops   = self._log_detected,
-            crop_padding_frac     = float(log_cfg.get("crop_padding_frac", 0.20)),
-            raw_frame_stride      = self._left.get_save_interval(),
-            save_max_dim          = self._left.get_save_max_dim(),
-            save_raw_full_frames  = self._log_raw,
-            max_pending_batches   = int(log_cfg.get("max_pending_batches", 2)),
-            max_crops_per_batch   = int(log_cfg.get("max_crops_per_batch", 8)),
-            heavy_threshold       = int(log_cfg.get("heavy_threshold", 12)),
+        # Snapshot all needed config values before leaving the GUI thread
+        kwargs = dict(
+            image_format         = log_cfg.get("image_format", "jpg"),
+            jpeg_quality         = int(log_cfg.get("jpeg_quality", 92)),
+            save_detected_crops  = self._log_detected,
+            crop_padding_frac    = float(log_cfg.get("crop_padding_frac", 0.20)),
+            raw_frame_stride     = self._left.get_save_interval(),
+            save_max_dim         = self._left.get_save_max_dim(),
+            save_raw_full_frames = self._log_raw,
+            max_pending_batches  = int(log_cfg.get("max_pending_batches", 2)),
+            max_crops_per_batch  = int(log_cfg.get("max_crops_per_batch", 8)),
+            heavy_threshold      = int(log_cfg.get("heavy_threshold", 12)),
         )
-        session_dir = self._grading_recorder.start_session(base_dir)
-        self._wire_infer_logging()
-        try:
-            rel = session_dir.relative_to(APP_ROOT)
-        except ValueError:
-            rel = session_dir
-        self._left.set_logging_path(str(rel))
-        self._right.status_group.set_status("Logger", "online", "Recording")
+        app_root = APP_ROOT  # capture for the closure below
+
+        def _setup():
+            # Runs on a daemon thread - no GUI access here.
+            # GradingRecorder.__init__ spawns a ThreadPoolExecutor and a worker
+            # thread; start_session() creates directories on disk.  Both can
+            # take tens-to-hundreds of ms on first call or slow paths.
+            rec = GradingRecorder(**kwargs)
+            session_dir = rec.start_session(base_dir)
+            # Hand back to GUI thread via zero-delay timer (thread-safe).
+            QTimer.singleShot(0, lambda: self._on_recorder_ready(rec, session_dir, app_root))
+
+        threading.Thread(target=_setup, daemon=True, name="recorder-setup").start()
+        self._right.status_group.set_status("Logger", "warning", "Arming…")
 
     def _stop_grading_session(self) -> None:
         """Flush and tear down the grading recorder."""
@@ -743,6 +757,34 @@ class MainWindow(QMainWindow):
             self._right.status_group.set_status("Logger", "idle", "Armed")
         else:
             self._right.status_group.set_status("Logger", "idle", "Off")
+
+    def _on_recorder_ready(self, rec: GradingRecorder, session_dir: Path, app_root: Path) -> None:
+        """Called on the GUI thread once the background recorder-setup thread finishes.
+
+        Guards handle two races:
+        - User turned Save off while setup was running  → stop the orphaned recorder.
+        - Camera was disconnected while setup was running → same.
+        """
+        if not self._save_mode or self._cam_w is None:
+            # Save was cancelled or camera was disconnected while we were setting up.
+            rec.stop_session()
+            log.info("_on_recorder_ready: save cancelled before recorder was ready - discarding")
+            return
+        if self._grading_recorder is not None:
+            # A second click came in and already created a recorder - discard this one.
+            rec.stop_session()
+            log.warning("_on_recorder_ready: duplicate recorder discarded")
+            return
+        self._grading_recorder = rec
+        self._wire_infer_logging()
+        try:
+            rel = session_dir.relative_to(app_root)
+        except ValueError:
+            rel = session_dir
+        self._left.set_logging_path(str(rel))
+        self._right.status_group.set_status("Logger", "online", "Recording")
+        log.info("GradingRecorder wired - session: %s", session_dir)
+
 
     def _stop_pipeline(self) -> None:
         self._preview_timer.stop()
