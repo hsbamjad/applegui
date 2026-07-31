@@ -717,23 +717,39 @@ class MainWindow(QMainWindow):
             if not base_dir.exists():
                 base_dir = SESSIONS_DIR
 
+        # ── Capture ALL Qt widget state HERE on the GUI thread ─────────────
+        # The background thread must NOT touch any Qt objects (QSpinBox.value(),
+        # QRadioButton.isChecked(), etc.) - doing so from a non-GUI thread is
+        # undefined behaviour in Qt and can return garbage or crash silently.
+        snap_log_raw      = self._log_raw
+        snap_log_detected = self._log_detected
+        snap_interval     = self._left.get_save_interval()   # reads QSpinBox - GUI thread only
+        snap_max_dim      = self._left.get_save_max_dim()    # reads QRadioButton - GUI thread only
+        snap_img_format   = log_cfg.get("image_format", "jpg")
+        snap_jpeg_quality = int(log_cfg.get("jpeg_quality", 92))
+        snap_crop_pad     = float(log_cfg.get("crop_padding_frac", 0.20))
+        snap_max_batches  = int(log_cfg.get("max_pending_batches", 2))
+        snap_max_crops    = int(log_cfg.get("max_crops_per_batch", 8))
+        snap_heavy        = int(log_cfg.get("heavy_threshold", 12))
+
         # Give immediate feedback before the background thread finishes.
         self._right.status_group.set_status("Logger", "idle", "Starting\u2026")
 
         def _bg_init() -> None:
-            """Heavy work: create threads + mkdir - runs off the GUI thread."""
+            """Heavy work: create threads + mkdir - runs off the GUI thread.
+            Only plain Python values are used here - no Qt objects."""
             try:
                 rec = GradingRecorder(
-                    image_format         = log_cfg.get("image_format", "jpg"),
-                    jpeg_quality         = int(log_cfg.get("jpeg_quality", 92)),
-                    save_detected_crops  = self._log_detected,
-                    crop_padding_frac    = float(log_cfg.get("crop_padding_frac", 0.20)),
-                    raw_frame_stride     = self._left.get_save_interval(),
-                    save_max_dim         = self._left.get_save_max_dim(),
-                    save_raw_full_frames = self._log_raw,
-                    max_pending_batches  = int(log_cfg.get("max_pending_batches", 2)),
-                    max_crops_per_batch  = int(log_cfg.get("max_crops_per_batch", 8)),
-                    heavy_threshold      = int(log_cfg.get("heavy_threshold", 12)),
+                    image_format         = snap_img_format,
+                    jpeg_quality         = snap_jpeg_quality,
+                    save_detected_crops  = snap_log_detected,
+                    crop_padding_frac    = snap_crop_pad,
+                    raw_frame_stride     = snap_interval,
+                    save_max_dim         = snap_max_dim,
+                    save_raw_full_frames = snap_log_raw,
+                    max_pending_batches  = snap_max_batches,
+                    max_crops_per_batch  = snap_max_crops,
+                    heavy_threshold      = snap_heavy,
                 )
                 session_dir = rec.start_session(base_dir)
             except Exception as exc:
