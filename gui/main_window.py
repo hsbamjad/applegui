@@ -696,7 +696,15 @@ class MainWindow(QMainWindow):
             self._start_grading_session()
 
     def _start_grading_session(self) -> None:
-        """Create GradingRecorder and a timestamped session folder synchronously."""
+        """
+        Create GradingRecorder and a timestamped session folder.
+
+        ALL blocking work (ThreadPoolExecutor creation, thread starts,
+        mkdir calls) runs on a short-lived daemon thread so the GUI event
+        loop is never stalled and the camera / sync-ID display keeps
+        updating smoothly.  Once ready, _apply_grading_session() is
+        posted back to the GUI thread via QTimer.singleShot.
+        """
         from utils.paths import APP_ROOT, SESSIONS_DIR
 
         log_cfg = self._cfg.get("logging", {})
@@ -709,23 +717,52 @@ class MainWindow(QMainWindow):
             if not base_dir.exists():
                 base_dir = SESSIONS_DIR
 
-        self._grading_recorder = GradingRecorder(
-            image_format         = log_cfg.get("image_format", "jpg"),
-            jpeg_quality         = int(log_cfg.get("jpeg_quality", 92)),
-            save_detected_crops  = self._log_detected,
-            crop_padding_frac    = float(log_cfg.get("crop_padding_frac", 0.20)),
-            raw_frame_stride     = self._left.get_save_interval(),
-            save_max_dim         = self._left.get_save_max_dim(),
-            save_raw_full_frames = self._log_raw,
-            max_pending_batches  = int(log_cfg.get("max_pending_batches", 2)),
-            max_crops_per_batch  = int(log_cfg.get("max_crops_per_batch", 8)),
-            heavy_threshold      = int(log_cfg.get("heavy_threshold", 12)),
-        )
-        session_dir = self._grading_recorder.start_session(base_dir)
+        # Give immediate feedback before the background thread finishes.
+        self._right.status_group.set_status("Logger", "idle", "Starting\u2026")
+
+        def _bg_init() -> None:
+            """Heavy work: create threads + mkdir - runs off the GUI thread."""
+            try:
+                rec = GradingRecorder(
+                    image_format         = log_cfg.get("image_format", "jpg"),
+                    jpeg_quality         = int(log_cfg.get("jpeg_quality", 92)),
+                    save_detected_crops  = self._log_detected,
+                    crop_padding_frac    = float(log_cfg.get("crop_padding_frac", 0.20)),
+                    raw_frame_stride     = self._left.get_save_interval(),
+                    save_max_dim         = self._left.get_save_max_dim(),
+                    save_raw_full_frames = self._log_raw,
+                    max_pending_batches  = int(log_cfg.get("max_pending_batches", 2)),
+                    max_crops_per_batch  = int(log_cfg.get("max_crops_per_batch", 8)),
+                    heavy_threshold      = int(log_cfg.get("heavy_threshold", 12)),
+                )
+                session_dir = rec.start_session(base_dir)
+            except Exception as exc:
+                log.exception("GradingRecorder init failed: %s", exc)
+                QTimer.singleShot(0, lambda: self._right.status_group.set_status(
+                    "Logger", "offline", "Error"
+                ))
+                return
+            # Marshal back to the GUI thread - safe to touch Qt objects here.
+            QTimer.singleShot(
+                0, lambda r=rec, sd=session_dir, ar=APP_ROOT:
+                    self._apply_grading_session(r, sd, ar)
+            )
+
+        threading.Thread(target=_bg_init, daemon=True, name="rec-init").start()
+
+    def _apply_grading_session(
+        self, rec: GradingRecorder, session_dir: Path, app_root: Path
+    ) -> None:
+        """Called on the GUI thread once background init completes."""
+        # If save mode was turned off while we were initialising, discard quietly.
+        if not self._save_mode:
+            rec.stop_session()
+            return
+        self._grading_recorder = rec
         self._wire_infer_logging()
 
         try:
-            rel = session_dir.relative_to(APP_ROOT)
+            rel = session_dir.relative_to(app_root)
         except ValueError:
             rel = session_dir
         self._left.set_logging_path(str(rel))
