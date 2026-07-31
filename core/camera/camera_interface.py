@@ -491,6 +491,7 @@ class JAICamera:
         """
         self._grab_fps_t   = time.time()
         self._last_grab_time = time.time()
+        _none_streak = 0   # consecutive iterations where every source returned raw=None
         try:
             while self._running:
                 # ── Drain pending control commands first ───────────────────
@@ -532,6 +533,20 @@ class JAICamera:
                         ok = False
                         break
                     if raw is None:
+                        _none_streak += 1
+                        if _none_streak == 1:
+                            log.warning(
+                                "JAI-grab: raw=None from %s - camera has stopped "
+                                "delivering frames (streak #1)",
+                                src._source_name,
+                            )
+                        elif _none_streak % 10 == 0:
+                            log.warning(
+                                "JAI-grab: still raw=None from %s (streak #%d, "
+                                "%.1f s without a frame)",
+                                src._source_name, _none_streak,
+                                _none_streak * 0.250,
+                            )
                         ok = False
                         break
                     raws.append((raw, src.pixel_format, bid))
@@ -570,6 +585,12 @@ class JAICamera:
                 block_id = bids[0]
 
                 # ── Track actual camera FPS ────────────────────────────────
+                if _none_streak > 0:
+                    log.info(
+                        "JAI-grab: frames resumed after %d × 250ms (%.1f s)",
+                        _none_streak, _none_streak * 0.250,
+                    )
+                    _none_streak = 0
                 self._grab_count  += 1
                 self._last_grab_time = time.time()
                 elapsed = self._last_grab_time - self._grab_fps_t

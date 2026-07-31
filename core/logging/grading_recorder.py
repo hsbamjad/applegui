@@ -745,28 +745,31 @@ def _downscale_max_dim(img: np.ndarray, max_dim: int) -> np.ndarray:
 
 def _normalize_to_bgr(frame: np.ndarray) -> np.ndarray | None:
     """
-    Convert any input frame to a uint8 BGR array suitable for JPEG encoding.
+    Prepare any input frame for JPEG encoding.
     Handles:  grayscale, BGRA, float / uint16 (normalized to 0-255).
     Returns None if the input is None or has 0 area.
 
-    IMPORTANT: uses ONLY pure numpy - no OpenCV calls - so write pool threads
-    never contend for OpenCV's TBB/OpenMP thread pool workers.  The JAI-grab
-    thread's cv2.cvtColor(BayerBG2BGR) owns all OpenCV worker threads without
-    interference from the write path.
+    Grayscale (ndim==2) frames are returned as-is.  cv2.imencode('.jpg', arr)
+    handles 2-D uint8 arrays natively, producing a grayscale JPEG without any
+    extra channel allocation.  This avoids the previous np.stack([g,g,g]) call
+    which was allocating a 9 MB 3-channel copy of every 3 MB Mono8 NIR frame.
+
+    Uses only pure numpy - no OpenCV calls - so write pool threads never
+    contend for OpenCV's parallel backend workers.
     """
     if frame is None:
         return None
     if frame.size == 0:
         return None
-    # Normalize non-uint8 dtypes (float32, uint16, …) to 0-255 using numpy
+    # Normalize non-uint8 dtypes (float32, uint16, …) to 0-255
     if frame.dtype != np.uint8:
         arr = frame.astype(np.float32)
         mn, mx = float(arr.min()), float(arr.max())
         rng = mx - mn if mx > mn else 1.0
         frame = ((arr - mn) * (255.0 / rng)).clip(0.0, 255.0).astype(np.uint8)
-    # Ensure 3-channel BGR using pure numpy (avoids cv2.cvtColor thread pool)
+    # Grayscale: return as-is (cv2.imencode handles 2-D uint8 as grayscale JPEG)
     if frame.ndim == 2:
-        frame = np.stack([frame, frame, frame], axis=-1)  # GRAY → BGR
+        return frame
     elif frame.ndim == 3 and frame.shape[2] == 4:
         frame = frame[:, :, :3]  # strip alpha (BGRA → BGR)
     return frame
