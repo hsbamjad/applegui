@@ -829,6 +829,17 @@ class MainWindow(QMainWindow):
             and self._grading_recorder._active
         ):
             self._grading_recorder.submit_raw_frame(ch1, ch2, ch3)
+        else:
+            # Log once so we can diagnose empty-folder issues
+            if self._save_mode and not getattr(self, "_raw_diag_logged", False):
+                self._raw_diag_logged = True
+                log.warning(
+                    "[DIAG] NOT submitting raw frame - "
+                    "save_mode=%s log_raw=%s recorder=%s active=%s",
+                    self._save_mode, self._log_raw,
+                    self._grading_recorder is not None,
+                    getattr(self._grading_recorder, "_active", "N/A"),
+                )
 
         if self._infer_w is not None and self._infer_w.isRunning():
             self._infer_w.enqueue(ch1, ch2, ch3)

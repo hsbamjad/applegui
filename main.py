@@ -12,7 +12,7 @@ import sys
 from PyQt6.QtWidgets import QApplication
 
 from core.log import get_logger, configure_root
-configure_root()
+configure_root(log_file="apple_gui_debug.log")
 logger = get_logger(__name__)
 
 try:
