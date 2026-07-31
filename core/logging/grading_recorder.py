@@ -109,14 +109,17 @@ def _set_low_priority() -> None:
         except Exception:
             pass
 
-# Disable OpenCV's global thread pool entirely so the write pool threads never
-# spawn TBB/OpenMP worker threads that compete with the JAI-grab cvtColor loop.
-# cv2.imencode (libjpeg-turbo) is single-threaded per caller; cv2.normalize and
-# cv2.cvtColor in the write pool have been replaced with pure numpy below.
-try:
-    cv2.setNumThreads(1)
-except Exception:
-    pass
+# NOTE on OpenCV threading (Concurrency/PPL backend on this system):
+# - cv2.setNumThreads() affects only functions that use parallel_for_, e.g.
+#   cv2.cvtColor(BayerRG→BGR) in the JAI-grab thread.
+# - cv2.imencode is internally sequential (libjpeg is single-threaded) and
+#   is NOT affected by setNumThreads regardless of value.
+# - The write pool threads use only pure-numpy ops + imencode, so they do
+#   NOT benefit from nor compete for OpenCV parallel workers.
+# We intentionally do NOT call setNumThreads here.  Leaving it at the system
+# default (8 threads on this machine) makes the BayerRG→BGR demosaic in the
+# JAI-grab thread faster (~5 ms vs ~20 ms), keeping the grab loop at ≥26 FPS
+# so pipeline buffers accumulate more slowly and block-ID sync drift is rarer.
 
 
 class GradingRecorder:

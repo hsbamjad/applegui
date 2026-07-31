@@ -558,13 +558,15 @@ class JAICamera:
                 # ── Block ID validation ────────────────────────────────────
                 # All 3 bids must match. After ROI restart, sources may be
                 # 1-2 frames out of phase - advance lagging ones to recover.
+                # Increased from 16 to 32 attempts to handle larger gaps
+                # that arise when the grab loop runs slower than the camera.
                 if not (bids[0] == bids[1] == bids[2]):
                     max_bid  = max(bids)
                     log.debug("Sync mismatch bids=%s - re-syncing to bid=%d",
                               bids, max_bid)
                     for i, src in enumerate(self._sources):
                         attempts = 0
-                        while bids[i] < max_bid and self._running and attempts < 16:
+                        while bids[i] < max_bid and self._running and attempts < 32:
                             raw, bid = src.grab(timeout_ms=250)
                             if raw is None:
                                 ok = False
@@ -576,8 +578,22 @@ class JAICamera:
                             break
 
                     if not ok or not (bids[0] == bids[1] == bids[2]):
-                        # Could not recover - skip and try next iteration
-                        log.debug("Sync recovery incomplete bids=%s - skipping", bids)
+                        # Attempts exhausted - sources too far apart to converge.
+                        # Drain ALL sources to clear stale buffered frames so the
+                        # next iteration sees a fresh synchronized frame from the
+                        # camera instead of looping here indefinitely.
+                        log.warning(
+                            "JAI-grab: sync recovery exhausted (bids=%s, "
+                            "target=%d) - draining all pipelines for fresh start",
+                            bids, max_bid,
+                        )
+                        for drain_src in self._sources:
+                            drained = 0
+                            while drained < 64:
+                                raw_d, _ = drain_src.grab(timeout_ms=1)
+                                if raw_d is None:
+                                    break
+                                drained += 1
                         continue
 
                     log.debug("Sync recovered - bids=%s", bids)
