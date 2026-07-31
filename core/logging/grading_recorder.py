@@ -294,29 +294,21 @@ class GradingRecorder:
         # Mark inactive immediately so no new frames are submitted while the
         # worker drains.  The worker finishes any in-progress batch on its own.
         # Do NOT block the GUI thread here - enqueue the stop command and
-        # return immediately.  The background worker will flush CSVs/images.
+        # return immediately.  The background worker will flush CSVs/images and
+        # then shut down the write pool itself.
+        #
+        # IMPORTANT: do NOT call _write_pool.shutdown() here.  After shutdown()
+        # any _write_pool.submit() call (in _on_raw_frame / _flush_writes) raises
+        # RuntimeError, silently dropping all in-flight writes.  The pool is only
+        # shut down by the worker thread after it finishes draining the command queue.
+        # The GC-thread-blocking issue is avoided by _stop_grading_session() which
+        # discards the recorder reference on a short-lived daemon thread.
         self._active = False
-        # Eagerly mark the pool as shutting down (non-blocking) so that Python's
-        # garbage collector cannot call ThreadPoolExecutor.__del__ → shutdown(wait=True)
-        # on the GUI thread when the caller sets _grading_recorder = None.  The
-        # worker thread will call shutdown() again after flushing CSVs - that is
-        # safe because shutdown() is idempotent once already called with wait=False.
-        try:
-            self._write_pool.shutdown(wait=False, cancel_futures=False)
-        except Exception:
-            pass
         self._cmd_q.put(("stop",))
         log.info(
             "GradingRecorder stop enqueued - %d images saved so far (%d batches dropped)",
             self._saved_images, self._dropped_batches,
         )
-
-    def __del__(self) -> None:
-        """Safety net: ensure the thread pool never blocks the GC caller's thread."""
-        try:
-            self._write_pool.shutdown(wait=False, cancel_futures=False)
-        except Exception:
-            pass
 
     # ── Worker (single ordered loop) ──────────────────────────────────────────
 
@@ -349,12 +341,11 @@ class GradingRecorder:
                     with self._lock:
                         writes.extend(self._on_stop())
                     self._flush_writes(writes)
-                    # shutdown() may have already been called by stop_session() to
-                    # prevent GUI-thread GC blocking.  Calling it again is safe.
-                    try:
-                        self._write_pool.shutdown(wait=False, cancel_futures=False)
-                    except Exception:
-                        pass
+                    # Pool shutdown happens here - AFTER all pending writes are
+                    # submitted.  This is the only correct place to shut down
+                    # the pool; doing it earlier (e.g. in stop_session()) would
+                    # cause RuntimeError on any submit() still queued up.
+                    self._write_pool.shutdown(wait=False, cancel_futures=False)
                     log.info(
                         "GradingRecorder stopped - %d images saved (%d batches dropped)",
                         self._saved_images, self._dropped_batches,
