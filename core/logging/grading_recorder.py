@@ -114,7 +114,7 @@ def _set_low_priority() -> None:
 # cv2.imencode (libjpeg-turbo) is single-threaded per caller; cv2.normalize and
 # cv2.cvtColor in the write pool have been replaced with pure numpy below.
 try:
-    cv2.setNumThreads(0)
+    cv2.setNumThreads(1)
 except Exception:
     pass
 
