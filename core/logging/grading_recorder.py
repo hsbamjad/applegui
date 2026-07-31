@@ -109,9 +109,12 @@ def _set_low_priority() -> None:
         except Exception:
             pass
 
-# Cap OpenCV thread pool for image encoding to prevent 100% CPU usage across all cores
+# Disable OpenCV's global thread pool entirely so the write pool threads never
+# spawn TBB/OpenMP worker threads that compete with the JAI-grab cvtColor loop.
+# cv2.imencode (libjpeg-turbo) is single-threaded per caller; cv2.normalize and
+# cv2.cvtColor in the write pool have been replaced with pure numpy below.
 try:
-    cv2.setNumThreads(2)
+    cv2.setNumThreads(0)
 except Exception:
     pass
 
@@ -159,14 +162,13 @@ class GradingRecorder:
         self._dropped_batches = 0
 
         self._batch_slots = threading.Semaphore(max_pending_batches)
-        self._raw_slots  = threading.Semaphore(4)   # cap in-flight full-res raw encodes
+        self._raw_slots  = threading.Semaphore(6)   # cap in-flight full-res raw encodes
         self._cmd_q: queue.SimpleQueue = queue.SimpleQueue()
-        # One serial write worker.  Encoding 2048x1536 JPEGs with multiple
-        # parallel threads saturates the CPU/disk subsystem and starves the
-        # eBUS GigE Vision receive path, causing grab timeouts on the JAI camera.
-        # A single writer leaves CPU headroom for the eBUS network stack.
+        # 4 write workers: safe now that _normalize_to_bgr uses pure numpy
+        # (no OpenCV thread pool calls from the write path that could compete
+        # with the JAI-grab loop's cv2.cvtColor(BayerBG2BGR)).
         self._write_pool = ThreadPoolExecutor(
-            max_workers=1,
+            max_workers=4,
             thread_name_prefix="log-wr",
             initializer=_set_low_priority,
         )
@@ -708,18 +710,26 @@ def _normalize_to_bgr(frame: np.ndarray) -> np.ndarray | None:
     Convert any input frame to a uint8 BGR array suitable for JPEG encoding.
     Handles:  grayscale, BGRA, float / uint16 (normalized to 0-255).
     Returns None if the input is None or has 0 area.
+
+    IMPORTANT: uses ONLY pure numpy - no OpenCV calls - so write pool threads
+    never contend for OpenCV's TBB/OpenMP thread pool workers.  The JAI-grab
+    thread's cv2.cvtColor(BayerBG2BGR) owns all OpenCV worker threads without
+    interference from the write path.
     """
     if frame is None:
         return None
     if frame.size == 0:
         return None
-    # Normalize non-uint8 dtypes (float32, uint16, …) to 0-255 range
+    # Normalize non-uint8 dtypes (float32, uint16, …) to 0-255 using numpy
     if frame.dtype != np.uint8:
-        frame = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
-    # Ensure 3-channel BGR
+        arr = frame.astype(np.float32)
+        mn, mx = float(arr.min()), float(arr.max())
+        rng = mx - mn if mx > mn else 1.0
+        frame = ((arr - mn) * (255.0 / rng)).clip(0.0, 255.0).astype(np.uint8)
+    # Ensure 3-channel BGR using pure numpy (avoids cv2.cvtColor thread pool)
     if frame.ndim == 2:
-        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        frame = np.stack([frame, frame, frame], axis=-1)  # GRAY → BGR
     elif frame.ndim == 3 and frame.shape[2] == 4:
-        frame = frame[:, :, :3]  # strip alpha
+        frame = frame[:, :, :3]  # strip alpha (BGRA → BGR)
     return frame
 
