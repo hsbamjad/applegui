@@ -392,6 +392,11 @@ class CenterPanel(QWidget):
 class MainWindow(QMainWindow):
     """Apple Sorting GUI - fully wired demo pipeline."""
 
+    # Posted from 'rec-init' bg thread to GUI thread once GradingRecorder is ready.
+    # pyqtSignal is the only correct cross-thread callback mechanism in Qt/PyQt6;
+    # QTimer.singleShot() called from a non-GUI thread does NOT post to the GUI
+    # thread when no event loop is running on the caller's thread.
+    _sig_recorder_ready = pyqtSignal(object, object, object)  # rec, session_dir, app_root
 
     def __init__(self) -> None:
         super().__init__()
@@ -441,6 +446,8 @@ class MainWindow(QMainWindow):
         self._setup_window()
         self._build_ui()
         self._connect_signals()
+        # Wire the cross-thread recorder-ready signal (bg rec-init → GUI thread)
+        self._sig_recorder_ready.connect(self._apply_grading_session)
         self._post_init()
 
     # ── Setup ─────────────────────────────────────────────────────────────────
@@ -759,13 +766,10 @@ class MainWindow(QMainWindow):
                     "Logger", "offline", "Error"
                 ))
                 return
-            # Post result back to the GUI thread via a queued timer event.
-            # QTimer.singleShot with a plain callable posts to the main-thread
-            # event loop regardless of which thread calls it.
-            QTimer.singleShot(
-                0, lambda r=rec, sd=session_dir, ar=APP_ROOT:
-                    self._apply_grading_session(r, sd, ar)
-            )
+            # Emit signal to deliver result to the GUI thread.
+            # Qt queued connection guarantees delivery to the receiver's thread
+            # regardless of which thread emits the signal.
+            self._sig_recorder_ready.emit(rec, session_dir, APP_ROOT)
 
         threading.Thread(target=_bg_init, daemon=True, name="rec-init").start()
 
