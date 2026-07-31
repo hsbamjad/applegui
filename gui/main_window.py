@@ -736,7 +736,18 @@ class MainWindow(QMainWindow):
         """Flush and tear down the grading recorder."""
         if self._grading_recorder is not None:
             self._grading_recorder.stop_session()
+            # Drop the reference off the GUI thread so that Python's GC (and
+            # ThreadPoolExecutor.__del__) can never block the event loop even
+            # in edge cases where the write pool has lingering futures.
+            _old = self._grading_recorder
             self._grading_recorder = None
+            import threading as _threading
+            _threading.Thread(
+                target=lambda r=_old: None,   # let r go out of scope on a bg thread
+                daemon=True,
+                name="rec-gc",
+            ).start()
+            del _old
         self._wire_infer_logging()
         log_cfg = self._cfg.get("logging", {})
         raw_out = log_cfg.get("output_dir", "data/sessions")

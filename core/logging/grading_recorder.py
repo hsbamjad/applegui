@@ -296,11 +296,27 @@ class GradingRecorder:
         # Do NOT block the GUI thread here - enqueue the stop command and
         # return immediately.  The background worker will flush CSVs/images.
         self._active = False
+        # Eagerly mark the pool as shutting down (non-blocking) so that Python's
+        # garbage collector cannot call ThreadPoolExecutor.__del__ → shutdown(wait=True)
+        # on the GUI thread when the caller sets _grading_recorder = None.  The
+        # worker thread will call shutdown() again after flushing CSVs - that is
+        # safe because shutdown() is idempotent once already called with wait=False.
+        try:
+            self._write_pool.shutdown(wait=False, cancel_futures=False)
+        except Exception:
+            pass
         self._cmd_q.put(("stop",))
         log.info(
             "GradingRecorder stop enqueued - %d images saved so far (%d batches dropped)",
             self._saved_images, self._dropped_batches,
         )
+
+    def __del__(self) -> None:
+        """Safety net: ensure the thread pool never blocks the GC caller's thread."""
+        try:
+            self._write_pool.shutdown(wait=False, cancel_futures=False)
+        except Exception:
+            pass
 
     # ── Worker (single ordered loop) ──────────────────────────────────────────
 
@@ -333,7 +349,12 @@ class GradingRecorder:
                     with self._lock:
                         writes.extend(self._on_stop())
                     self._flush_writes(writes)
-                    self._write_pool.shutdown(wait=False)
+                    # shutdown() may have already been called by stop_session() to
+                    # prevent GUI-thread GC blocking.  Calling it again is safe.
+                    try:
+                        self._write_pool.shutdown(wait=False, cancel_futures=False)
+                    except Exception:
+                        pass
                     log.info(
                         "GradingRecorder stopped - %d images saved (%d batches dropped)",
                         self._saved_images, self._dropped_batches,
