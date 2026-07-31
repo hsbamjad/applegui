@@ -501,28 +501,28 @@ class GradingRecorder:
         )
         return writes
 
-    def _encode_and_save_raw_channel(
+    def _encode_and_save_raw_batch(
         self,
-        path: Path,
-        frame: np.ndarray,
-        is_last_channel: bool = False,
+        batch: list[tuple[Path, np.ndarray]],
     ) -> None:
         try:
-            img = _normalize_to_bgr(frame)
-            if img is None:
-                return
-            img = _downscale_max_dim(img, self._save_max_dim)
-            ok, buf = cv2.imencode(
-                f".{self._image_ext}", img,
-                [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
-            )
-            if ok:
-                self._write_jpeg(path, buf.tobytes())
+            for path, frame in batch:
+                if frame is None:
+                    continue
+                img = _normalize_to_bgr(frame)
+                if img is None:
+                    continue
+                img = _downscale_max_dim(img, self._save_max_dim)
+                ok, buf = cv2.imencode(
+                    f".{self._image_ext}", img,
+                    [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
+                )
+                if ok:
+                    self._write_jpeg(path, buf.tobytes())
         except Exception as e:
-            log.warning("Raw channel save error for %s: %s", path, e)
+            log.warning("Raw batch save error: %s", e)
         finally:
-            if is_last_channel:
-                self._raw_slots.release()
+            self._raw_slots.release()
 
     def _on_raw_frame(
         self,
@@ -546,10 +546,11 @@ class GradingRecorder:
         self._raw_full_frame_counter += 1
         n = self._raw_full_frame_counter
         fname = f"frame_{n:06d}.{self._image_ext}"
-        for idx, (ch_name, frame) in enumerate(valid_channels):
-            path = self._session_dir / "raw_frames" / ch_name / fname
-            is_last = (idx == len(valid_channels) - 1)
-            self._write_pool.submit(self._encode_and_save_raw_channel, path, frame, is_last)
+        batch = [
+            (self._session_dir / "raw_frames" / ch_name / fname, frame)
+            for ch_name, frame in valid_channels
+        ]
+        self._write_pool.submit(self._encode_and_save_raw_batch, batch)
 
     def _flush_writes(self, jobs: list[_WriteJob]) -> None:
         for job in jobs:
