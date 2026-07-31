@@ -696,15 +696,7 @@ class MainWindow(QMainWindow):
             self._start_grading_session()
 
     def _start_grading_session(self) -> None:
-        """
-        Create GradingRecorder and a timestamped session folder.
-
-        ALL blocking work (ThreadPoolExecutor creation, thread starts,
-        mkdir calls) runs on a short-lived daemon thread so the GUI event
-        loop is never stalled and the camera / sync-ID display keeps
-        updating smoothly.  Once ready, _apply_grading_session() is
-        posted back to the GUI thread via QTimer.singleShot.
-        """
+        """Create GradingRecorder and a timestamped session folder synchronously."""
         from utils.paths import APP_ROOT, SESSIONS_DIR
 
         log_cfg = self._cfg.get("logging", {})
@@ -717,68 +709,23 @@ class MainWindow(QMainWindow):
             if not base_dir.exists():
                 base_dir = SESSIONS_DIR
 
-        # ── Capture ALL Qt widget state HERE on the GUI thread ─────────────
-        # The background thread must NOT touch any Qt objects (QSpinBox.value(),
-        # QRadioButton.isChecked(), etc.) - doing so from a non-GUI thread is
-        # undefined behaviour in Qt and can return garbage or crash silently.
-        snap_log_raw      = self._log_raw
-        snap_log_detected = self._log_detected
-        snap_interval     = self._left.get_save_interval()   # reads QSpinBox - GUI thread only
-        snap_max_dim      = self._left.get_save_max_dim()    # reads QRadioButton - GUI thread only
-        snap_img_format   = log_cfg.get("image_format", "jpg")
-        snap_jpeg_quality = int(log_cfg.get("jpeg_quality", 92))
-        snap_crop_pad     = float(log_cfg.get("crop_padding_frac", 0.20))
-        snap_max_batches  = int(log_cfg.get("max_pending_batches", 2))
-        snap_max_crops    = int(log_cfg.get("max_crops_per_batch", 8))
-        snap_heavy        = int(log_cfg.get("heavy_threshold", 12))
-
-        # Give immediate feedback before the background thread finishes.
-        self._right.status_group.set_status("Logger", "idle", "Starting\u2026")
-
-        def _bg_init() -> None:
-            """Heavy work: create threads + mkdir - runs off the GUI thread.
-            Only plain Python values are used here - no Qt objects."""
-            try:
-                rec = GradingRecorder(
-                    image_format         = snap_img_format,
-                    jpeg_quality         = snap_jpeg_quality,
-                    save_detected_crops  = snap_log_detected,
-                    crop_padding_frac    = snap_crop_pad,
-                    raw_frame_stride     = snap_interval,
-                    save_max_dim         = snap_max_dim,
-                    save_raw_full_frames = snap_log_raw,
-                    max_pending_batches  = snap_max_batches,
-                    max_crops_per_batch  = snap_max_crops,
-                    heavy_threshold      = snap_heavy,
-                )
-                session_dir = rec.start_session(base_dir)
-            except Exception as exc:
-                log.exception("GradingRecorder init failed: %s", exc)
-                QTimer.singleShot(0, lambda: self._right.status_group.set_status(
-                    "Logger", "offline", "Error"
-                ))
-                return
-            # Marshal back to the GUI thread - safe to touch Qt objects here.
-            QTimer.singleShot(
-                0, lambda r=rec, sd=session_dir, ar=APP_ROOT:
-                    self._apply_grading_session(r, sd, ar)
-            )
-
-        threading.Thread(target=_bg_init, daemon=True, name="rec-init").start()
-
-    def _apply_grading_session(
-        self, rec: GradingRecorder, session_dir: Path, app_root: Path
-    ) -> None:
-        """Called on the GUI thread once background init completes."""
-        # If save mode was turned off while we were initialising, discard quietly.
-        if not self._save_mode:
-            rec.stop_session()
-            return
-        self._grading_recorder = rec
+        self._grading_recorder = GradingRecorder(
+            image_format         = log_cfg.get("image_format", "jpg"),
+            jpeg_quality         = int(log_cfg.get("jpeg_quality", 92)),
+            save_detected_crops  = self._log_detected,
+            crop_padding_frac    = float(log_cfg.get("crop_padding_frac", 0.20)),
+            raw_frame_stride     = self._left.get_save_interval(),
+            save_max_dim         = self._left.get_save_max_dim(),
+            save_raw_full_frames = self._log_raw,
+            max_pending_batches  = int(log_cfg.get("max_pending_batches", 2)),
+            max_crops_per_batch  = int(log_cfg.get("max_crops_per_batch", 8)),
+            heavy_threshold      = int(log_cfg.get("heavy_threshold", 12)),
+        )
+        session_dir = self._grading_recorder.start_session(base_dir)
         self._wire_infer_logging()
 
         try:
-            rel = session_dir.relative_to(app_root)
+            rel = session_dir.relative_to(APP_ROOT)
         except ValueError:
             rel = session_dir
         self._left.set_logging_path(str(rel))
@@ -789,18 +736,7 @@ class MainWindow(QMainWindow):
         """Flush and tear down the grading recorder."""
         if self._grading_recorder is not None:
             self._grading_recorder.stop_session()
-            # Drop the reference off the GUI thread so that Python's GC (and
-            # ThreadPoolExecutor.__del__) can never block the event loop even
-            # in edge cases where the write pool has lingering futures.
-            _old = self._grading_recorder
             self._grading_recorder = None
-            import threading as _threading
-            _threading.Thread(
-                target=lambda r=_old: None,   # let r go out of scope on a bg thread
-                daemon=True,
-                name="rec-gc",
-            ).start()
-            del _old
         self._wire_infer_logging()
         log_cfg = self._cfg.get("logging", {})
         raw_out = log_cfg.get("output_dir", "data/sessions")
