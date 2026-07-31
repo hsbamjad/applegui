@@ -806,9 +806,13 @@ class MainWindow(QMainWindow):
             _old = self._grading_recorder
             self._grading_recorder = None
             class _GcTask(QRunnable):
+                """Holds the old recorder ref until run() returns on a pool thread."""
+                def __init__(self_task, rec):  # noqa: N805
+                    super().__init__()
+                    self_task._rec = rec
                 def run(self_task) -> None:  # noqa: N805
-                    del _old  # reference drops on pool thread
-            QThreadPool.globalInstance().start(_GcTask())
+                    pass  # self_task._rec drops out of scope here on the pool thread
+            QThreadPool.globalInstance().start(_GcTask(_old))
         self._wire_infer_logging()
         log_cfg = self._cfg.get("logging", {})
         raw_out = log_cfg.get("output_dir", "data/sessions")

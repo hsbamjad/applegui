@@ -159,10 +159,14 @@ class GradingRecorder:
         self._dropped_batches = 0
 
         self._batch_slots = threading.Semaphore(max_pending_batches)
-        self._raw_slots  = threading.Semaphore(6)   # cap in-flight full-res raw encodes
+        self._raw_slots  = threading.Semaphore(4)   # cap in-flight full-res raw encodes
         self._cmd_q: queue.SimpleQueue = queue.SimpleQueue()
+        # One serial write worker.  Encoding 2048x1536 JPEGs with multiple
+        # parallel threads saturates the CPU/disk subsystem and starves the
+        # eBUS GigE Vision receive path, causing grab timeouts on the JAI camera.
+        # A single writer leaves CPU headroom for the eBUS network stack.
         self._write_pool = ThreadPoolExecutor(
-            max_workers=4,
+            max_workers=1,
             thread_name_prefix="log-wr",
             initializer=_set_low_priority,
         )
