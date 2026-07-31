@@ -333,22 +333,19 @@ class GradingRecorder:
                     with self._lock:
                         writes.extend(self._on_stop())
                     self._flush_writes(writes)
+                    self._write_pool.shutdown(wait=False)
                     log.info(
                         "GradingRecorder stopped - %d images saved (%d batches dropped)",
                         self._saved_images, self._dropped_batches,
                     )
+                    break
                 elif kind == "raw_frame":
                     _, c1, c2, c3 = cmd
-                    try:
-                        self._on_raw_frame(c1, c2, c3)
-                    finally:
-                        self._raw_slots.release()
+                    self._on_raw_frame(c1, c2, c3)
             except Exception:
                 log.exception("GradingRecorder worker error on %s", kind)
                 if kind == "batch":
                     self._batch_slots.release()
-                elif kind == "raw_frame":
-                    self._raw_slots.release()
 
     def _on_batch(
         self,
@@ -508,6 +505,7 @@ class GradingRecorder:
         self,
         path: Path,
         frame: np.ndarray,
+        is_last_channel: bool = False,
     ) -> None:
         try:
             img = _normalize_to_bgr(frame)
@@ -522,6 +520,9 @@ class GradingRecorder:
                 self._write_jpeg(path, buf.tobytes())
         except Exception as e:
             log.warning("Raw channel save error for %s: %s", path, e)
+        finally:
+            if is_last_channel:
+                self._raw_slots.release()
 
     def _on_raw_frame(
         self,
@@ -535,15 +536,20 @@ class GradingRecorder:
         Output: {session}/raw_frames/ch1/, ch2/, ch3/
         """
         if self._session_dir is None:
+            self._raw_slots.release()
             return
+        valid_channels = [(ch_name, frame) for ch_name, frame in (("ch1", ch1), ("ch2", ch2), ("ch3", ch3)) if frame is not None]
+        if not valid_channels:
+            self._raw_slots.release()
+            return
+
         self._raw_full_frame_counter += 1
-        n    = self._raw_full_frame_counter
+        n = self._raw_full_frame_counter
         fname = f"frame_{n:06d}.{self._image_ext}"
-        for ch_name, frame in (("ch1", ch1), ("ch2", ch2), ("ch3", ch3)):
-            if frame is None:
-                continue
+        for idx, (ch_name, frame) in enumerate(valid_channels):
             path = self._session_dir / "raw_frames" / ch_name / fname
-            self._write_pool.submit(self._encode_and_save_raw_channel, path, frame)
+            is_last = (idx == len(valid_channels) - 1)
+            self._write_pool.submit(self._encode_and_save_raw_channel, path, frame, is_last)
 
     def _flush_writes(self, jobs: list[_WriteJob]) -> None:
         for job in jobs:
