@@ -160,6 +160,11 @@ class GradingRecorder:
         self._active = False
         self._saved_images = 0
         self._dropped_batches = 0
+        # In-memory JPEG buffer: encoded during recording, written to disk after stop.
+        # Keeps ALL disk I/O off the camera streaming path so GigE Vision DPCs
+        # are never delayed by disk write DPCs competing at DISPATCH_LEVEL.
+        self._write_buffer: list[tuple[Path, bytes]] = []
+        self._write_buffer_lock = threading.Lock()
 
         self._batch_slots = threading.Semaphore(max_pending_batches)
         self._raw_slots  = threading.Semaphore(6)   # cap in-flight full-res raw encodes
@@ -341,7 +346,13 @@ class GradingRecorder:
                     with self._lock:
                         writes.extend(self._on_stop())
                     self._flush_writes(writes)
-                    self._write_pool.shutdown(wait=False)
+                    # Wait for all encode tasks to finish (they buffer to RAM)
+                    self._write_pool.shutdown(wait=True)
+                    # Now flush all buffered JPEG bytes to disk.
+                    # This runs on the worker thread (already off the GUI thread)
+                    # AFTER the camera stream has been stopped, so zero DPC
+                    # competition with GigE Vision.
+                    self._flush_write_buffer_to_disk()
                     log.info(
                         "GradingRecorder stopped - %d images saved (%d batches dropped)",
                         self._saved_images, self._dropped_batches,
@@ -639,9 +650,36 @@ class GradingRecorder:
                 self._dirs_made.add(parent)
 
     def _write_jpeg(self, path: Path, jpeg_bytes: bytes) -> None:
-        self._ensure_dir(path)
-        path.write_bytes(jpeg_bytes)
+        # Buffer in RAM - NO disk I/O while the camera is streaming.
+        # Disk writes happen only in _flush_write_buffer_to_disk() after stop.
+        with self._write_buffer_lock:
+            self._write_buffer.append((path, jpeg_bytes))
         self._saved_images += 1
+
+    def _flush_write_buffer_to_disk(self) -> None:
+        """Write all buffered (path, jpeg_bytes) pairs to disk.
+        Called from the worker thread after stop, never during streaming.
+        """
+        with self._write_buffer_lock:
+            buf, self._write_buffer = self._write_buffer, []
+        if not buf:
+            return
+        log.info("GradingRecorder: writing %d buffered images to disk …", len(buf))
+        import time as _time
+        t0 = _time.perf_counter()
+        errors = 0
+        for path, jpeg_bytes in buf:
+            try:
+                self._ensure_dir(path)
+                path.write_bytes(jpeg_bytes)
+            except Exception as exc:
+                log.warning("Buffer flush write error for %s: %s", path, exc)
+                errors += 1
+        dt = _time.perf_counter() - t0
+        log.info(
+            "GradingRecorder: disk flush done — %d files written, %d errors (%.1f s)",
+            len(buf) - errors, errors, dt,
+        )
 
     def _write_csv(
         self,
