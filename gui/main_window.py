@@ -392,10 +392,6 @@ class CenterPanel(QWidget):
 class MainWindow(QMainWindow):
     """Apple Sorting GUI - fully wired demo pipeline."""
 
-    # Emitted by the recorder-setup daemon thread once GradingRecorder is ready.
-    # Qt delivers this via a queued connection to the GUI thread regardless of
-    # which thread emits it - the correct cross-thread callback mechanism.
-    _sig_recorder_ready = pyqtSignal(object, object, object)  # rec, session_dir, app_root
 
     def __init__(self) -> None:
         super().__init__()
@@ -510,7 +506,6 @@ class MainWindow(QMainWindow):
         self._left.sig_unload_model.connect(self._on_unload_model)
         self._left.sig_sorter_toggled.connect(self._on_sorter_toggle)
         self._left.sig_save_mode_changed.connect(self._on_save_mode_changed)
-        self._sig_recorder_ready.connect(self._on_recorder_ready)
         self._left.sig_detect_mode_changed.connect(self._on_detect_mode_changed)
         self._left.sig_logging_options.connect(self._on_logging_options)
         self._left.sig_save_path_changed.connect(self._on_save_path_changed)
@@ -701,19 +696,11 @@ class MainWindow(QMainWindow):
             self._start_grading_session()
 
     def _start_grading_session(self) -> None:
-        """Create GradingRecorder and a timestamped session folder.
-
-        Heavy work (GradingRecorder.__init__ which spawns threads + ThreadPoolExecutor,
-        and session_dir mkdir which can be slow on network paths) is run on a daemon
-        thread so the GUI event loop - and the camera frame pipeline - is never blocked.
-        Once the recorder is ready, a QTimer.singleShot(0) posts '_on_recorder_ready'
-        back onto the GUI thread to wire up state safely.
-        """
+        """Create GradingRecorder and a timestamped session folder synchronously."""
         from utils.paths import APP_ROOT, SESSIONS_DIR
 
         log_cfg = self._cfg.get("logging", {})
 
-        # Resolve base_dir on the GUI thread (fast, no I/O)
         if self._custom_save_path:
             base_dir = Path(self._custom_save_path)
         else:
@@ -722,8 +709,7 @@ class MainWindow(QMainWindow):
             if not base_dir.exists():
                 base_dir = SESSIONS_DIR
 
-        # Snapshot all needed config values before leaving the GUI thread
-        kwargs = dict(
+        self._grading_recorder = GradingRecorder(
             image_format         = log_cfg.get("image_format", "jpg"),
             jpeg_quality         = int(log_cfg.get("jpeg_quality", 92)),
             save_detected_crops  = self._log_detected,
@@ -735,22 +721,16 @@ class MainWindow(QMainWindow):
             max_crops_per_batch  = int(log_cfg.get("max_crops_per_batch", 8)),
             heavy_threshold      = int(log_cfg.get("heavy_threshold", 12)),
         )
-        app_root = APP_ROOT  # capture for the closure below
+        session_dir = self._grading_recorder.start_session(base_dir)
+        self._wire_infer_logging()
 
-        def _setup():
-            # Runs on a daemon thread - no GUI access here.
-            # GradingRecorder.__init__ spawns a ThreadPoolExecutor and a worker
-            # thread; start_session() creates directories on disk.  Both can
-            # take tens-to-hundreds of ms on first call or slow paths.
-            rec = GradingRecorder(**kwargs)
-            session_dir = rec.start_session(base_dir)
-            # Emit signal to GUI thread.  Qt automatically delivers cross-thread
-            # signal emissions via the receiver's event loop (queued connection),
-            # so this is safe from any plain Python thread.
-            self._sig_recorder_ready.emit(rec, session_dir, app_root)
-
-        threading.Thread(target=_setup, daemon=True, name="recorder-setup").start()
-        self._right.status_group.set_status("Logger", "warning", "Arming…")
+        try:
+            rel = session_dir.relative_to(APP_ROOT)
+        except ValueError:
+            rel = session_dir
+        self._left.set_logging_path(str(rel))
+        self._right.status_group.set_status("Logger", "online", "Recording")
+        log.info("GradingRecorder session started: %s", session_dir)
 
     def _stop_grading_session(self) -> None:
         """Flush and tear down the grading recorder."""
@@ -765,34 +745,6 @@ class MainWindow(QMainWindow):
             self._right.status_group.set_status("Logger", "idle", "Armed")
         else:
             self._right.status_group.set_status("Logger", "idle", "Off")
-
-    @pyqtSlot(object, object, object)
-    def _on_recorder_ready(self, rec: GradingRecorder, session_dir: Path, app_root: Path) -> None:
-        """Delivered on the GUI thread via _sig_recorder_ready (queued connection).
-
-        Guards handle two races:
-        - User turned Save off while setup was running  → stop the orphaned recorder.
-        - Camera was disconnected while setup was running → same.
-        """
-        if not self._save_mode or self._cam_w is None:
-            # Save was cancelled or camera was disconnected while we were setting up.
-            rec.stop_session()
-            log.info("_on_recorder_ready: save cancelled before recorder was ready - discarding")
-            return
-        if self._grading_recorder is not None:
-            # A second click came in and already created a recorder - discard this one.
-            rec.stop_session()
-            log.warning("_on_recorder_ready: duplicate recorder discarded")
-            return
-        self._grading_recorder = rec
-        self._wire_infer_logging()
-        try:
-            rel = session_dir.relative_to(app_root)
-        except ValueError:
-            rel = session_dir
-        self._left.set_logging_path(str(rel))
-        self._right.status_group.set_status("Logger", "online", "Recording")
-        log.info("GradingRecorder wired - session: %s", session_dir)
 
 
     def _stop_pipeline(self) -> None:
