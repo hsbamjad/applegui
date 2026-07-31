@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QLabel, QStatusBar, QSizePolicy, QFrame,
 )
-from PyQt6.QtCore import Qt, pyqtSlot, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, pyqtSlot, pyqtSignal, QTimer, QRunnable, QThreadPool
 from PyQt6.QtGui import QFont, QColor, QPainter, QLinearGradient
 
 from gui.styles import (
@@ -742,41 +742,45 @@ class MainWindow(QMainWindow):
         snap_max_crops    = int(log_cfg.get("max_crops_per_batch", 8))
         snap_heavy        = int(log_cfg.get("heavy_threshold", 12))
 
-        self._right.status_group.set_status("Logger", "idle", "Starting\u2026")
+        # Use Qt's global thread pool so we NEVER create a new OS thread on
+        # the GUI thread.  threading.Thread().start() is a synchronous OS
+        # syscall (5-50 ms on Windows) that blocks the event loop and can
+        # disrupt eBUS packet delivery even for a brief window.
+        # QThreadPool.globalInstance().start() is O(1) non-blocking - it
+        # just enqueues the task onto an already-running pool thread.
+        _win = self   # capture for inner class closure
+        class _InitTask(QRunnable):
+            def run(self) -> None:
+                try:
+                    rec = GradingRecorder(
+                        image_format         = snap_img_fmt,
+                        jpeg_quality         = snap_jpeg_qual,
+                        save_detected_crops  = snap_log_detected,
+                        crop_padding_frac    = snap_crop_pad,
+                        raw_frame_stride     = snap_interval,
+                        save_max_dim         = snap_max_dim,
+                        save_raw_full_frames = snap_log_raw,
+                        max_pending_batches  = snap_max_batches,
+                        max_crops_per_batch  = snap_max_crops,
+                        heavy_threshold      = snap_heavy,
+                    )
+                    session_dir = rec.start_session(base_dir)
+                except Exception as exc:
+                    log.exception("GradingRecorder init failed: %s", exc)
+                    _win._sig_recorder_ready.emit(None, None, None)
+                    return
+                _win._sig_recorder_ready.emit(rec, session_dir, APP_ROOT)
 
-        def _bg_init() -> None:
-            """Runs off the GUI thread.  Only plain Python values used here."""
-            try:
-                rec = GradingRecorder(
-                    image_format         = snap_img_fmt,
-                    jpeg_quality         = snap_jpeg_qual,
-                    save_detected_crops  = snap_log_detected,
-                    crop_padding_frac    = snap_crop_pad,
-                    raw_frame_stride     = snap_interval,
-                    save_max_dim         = snap_max_dim,
-                    save_raw_full_frames = snap_log_raw,
-                    max_pending_batches  = snap_max_batches,
-                    max_crops_per_batch  = snap_max_crops,
-                    heavy_threshold      = snap_heavy,
-                )
-                session_dir = rec.start_session(base_dir)
-            except Exception as exc:
-                log.exception("GradingRecorder init failed: %s", exc)
-                QTimer.singleShot(0, lambda: self._right.status_group.set_status(
-                    "Logger", "offline", "Error"
-                ))
-                return
-            # Emit signal to deliver result to the GUI thread.
-            # Qt queued connection guarantees delivery to the receiver's thread
-            # regardless of which thread emits the signal.
-            self._sig_recorder_ready.emit(rec, session_dir, APP_ROOT)
-
-        threading.Thread(target=_bg_init, daemon=True, name="rec-init").start()
+        QThreadPool.globalInstance().start(_InitTask())
 
     def _apply_grading_session(
         self, rec: GradingRecorder, session_dir: Path, app_root: Path
     ) -> None:
         """Runs on the GUI thread once bg recorder init completes."""
+        if rec is None:
+            # Init failed - error already logged; update status and bail.
+            self._right.status_group.set_status("Logger", "offline", "Error")
+            return
         # If save mode was toggled off while init was in progress, discard quietly.
         if not self._save_mode:
             rec.stop_session()
@@ -796,15 +800,15 @@ class MainWindow(QMainWindow):
         """Flush and tear down the grading recorder."""
         if self._grading_recorder is not None:
             self._grading_recorder.stop_session()
-            # Drop the old reference on a bg thread so that Python's GC
-            # (which calls ThreadPoolExecutor.__del__ -> shutdown(wait=False))
-            # never runs on the GUI thread and can't stall the event loop.
+            # Drop the old recorder reference via QThreadPool so Python's GC
+            # (ThreadPoolExecutor.__del__ -> shutdown()) never runs on the GUI
+            # thread.  QThreadPool.start() is O(1) non-blocking.
             _old = self._grading_recorder
             self._grading_recorder = None
-            threading.Thread(
-                target=lambda r=_old: None,  # r goes out of scope on bg thread
-                daemon=True, name="rec-gc",
-            ).start()
+            class _GcTask(QRunnable):
+                def run(self_task) -> None:  # noqa: N805
+                    del _old  # reference drops on pool thread
+            QThreadPool.globalInstance().start(_GcTask())
         self._wire_infer_logging()
         log_cfg = self._cfg.get("logging", {})
         raw_out = log_cfg.get("output_dir", "data/sessions")

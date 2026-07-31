@@ -193,12 +193,7 @@ class GradingRecorder:
         self._dropped_raw_frames = 0
         self._active = True
         self._cmd_q.put(("start", session_dir))
-        log.info(
-            "[DIAG] GradingRecorder session started: %s  "
-            "save_raw=%s save_crops=%s stride=%d max_dim=%d",
-            session_dir, self._save_raw_full_frames, self._save_detected_crops,
-            self._raw_frame_stride, self._save_max_dim,
-        )
+        log.info("GradingRecorder session started: %s", session_dir)
         return session_dir
 
     def acquire_batch_slot(self) -> bool:
@@ -251,10 +246,8 @@ class GradingRecorder:
             {session}/raw_frames/ch3/frame_000001.jpg
         """
         if not self._active:
-            log.debug("[DIAG] submit_raw_frame: skipped - not active")
             return
         if not self._save_raw_full_frames:
-            log.debug("[DIAG] submit_raw_frame: skipped - save_raw_full_frames=False")
             return
         self._raw_frame_tick += 1
         if self._raw_frame_tick % self._raw_frame_stride != 0:
@@ -267,7 +260,6 @@ class GradingRecorder:
                     self._dropped_raw_frames,
                 )
             return
-        log.debug("[DIAG] submit_raw_frame: enqueuing frame #%d", self._raw_frame_tick)
         # Pass references - caller must NOT mutate arrays after this call.
         # VideoWorker and mock camera create new arrays each frame, so this is safe.
         self._cmd_q.put(("raw_frame", ch1, ch2, ch3))
@@ -518,11 +510,9 @@ class GradingRecorder:
         try:
             for path, frame in batch:
                 if frame is None:
-                    log.debug("[DIAG] _encode_and_save_raw_batch: frame is None for %s", path)
                     continue
                 img = _normalize_to_bgr(frame)
                 if img is None:
-                    log.debug("[DIAG] _encode_and_save_raw_batch: _normalize_to_bgr returned None for %s", path)
                     continue
                 img = _downscale_max_dim(img, self._save_max_dim)
                 ok, buf = cv2.imencode(
@@ -530,10 +520,7 @@ class GradingRecorder:
                     [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
                 )
                 if ok:
-                    log.debug("[DIAG] _encode_and_save_raw_batch: writing %s (%d bytes)", path, len(buf))
                     self._write_jpeg(path, buf.tobytes())
-                else:
-                    log.warning("[DIAG] _encode_and_save_raw_batch: cv2.imencode failed for %s", path)
         except Exception as e:
             log.warning("Raw batch save error: %s", e, exc_info=True)
         finally:
@@ -551,12 +538,10 @@ class GradingRecorder:
         Output: {session}/raw_frames/ch1/, ch2/, ch3/
         """
         if self._session_dir is None:
-            log.warning("[DIAG] _on_raw_frame: session_dir is None - dropping frame")
             self._raw_slots.release()
             return
         valid_channels = [(ch_name, frame) for ch_name, frame in (("ch1", ch1), ("ch2", ch2), ("ch3", ch3)) if frame is not None]
         if not valid_channels:
-            log.warning("[DIAG] _on_raw_frame: all channels are None - dropping frame")
             self._raw_slots.release()
             return
 
@@ -567,7 +552,6 @@ class GradingRecorder:
             (self._session_dir / "raw_frames" / ch_name / fname, frame)
             for ch_name, frame in valid_channels
         ]
-        log.debug("[DIAG] _on_raw_frame: submitting frame #%d to write pool", n)
         self._write_pool.submit(self._encode_and_save_raw_batch, batch)
 
     def _flush_writes(self, jobs: list[_WriteJob]) -> None:
