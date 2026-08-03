@@ -184,20 +184,26 @@ class _JAISource:
         return True
 
     def start_acquisition(self) -> None:
+        """Enable this source stream. Device AcquisitionStart is separate."""
         import eBUS as eb
         nm    = self._device.GetParameters()
         stack = eb.PvGenStateStack(nm)
         stack.SetEnumValue("SourceSelector", self._source_name)
         self._device.StreamEnable()
-        nm.Get("AcquisitionStart").Execute()
 
     def stop_acquisition(self) -> None:
         import eBUS as eb
         nm    = self._device.GetParameters()
         stack = eb.PvGenStateStack(nm)
         stack.SetEnumValue("SourceSelector", self._source_name)
-        nm.Get("AcquisitionStop").Execute()
-        self._device.StreamDisable()
+        try:
+            nm.Get("AcquisitionStop").Execute()
+        except Exception:
+            pass
+        try:
+            self._device.StreamDisable()
+        except Exception:
+            pass
 
     def grab(self, timeout_ms: int = 500) -> tuple[Optional[np.ndarray], int]:
         """
@@ -394,20 +400,53 @@ class JAICamera:
         log.info("JAICamera: %d streams open simultaneously", len(self._sources))
 
         # ── Start acquisition + warmup + drain ────────────────────
+        # Enable every source stream first, then ONE device AcquisitionStart.
+        # Calling AcquisitionStart per-source can leave the camera producing
+        # nothing (drain counts all 0) on some firmware / unclean reconnects.
         for src in self._sources:
             src.start_acquisition()
+        try:
+            self._device.GetParameters().Get("AcquisitionStart").Execute()
+            log.info("JAICamera: AcquisitionStart (device-wide)")
+        except Exception as exc:
+            log.error("JAICamera: AcquisitionStart failed: %s", exc)
+            self._cleanup_failed_connect()
+            return False
 
         log.info("JAICamera: warming up %.1fs …", self.WARMUP_S)
         time.sleep(self.WARMUP_S)
 
-        counts = {src._source_name: 0 for src in self._sources}
-        for _ in range(self.DRAIN_FRAMES):
-            for src in self._sources:
-                r, buf, op = src.pipeline.RetrieveNextBuffer(200)
-                if r.IsOK():
-                    src.pipeline.ReleaseBuffer(buf)
-                    counts[src._source_name] += 1
+        counts = self._drain_pipelines()
         log.info("JAICamera: drained %s - ready", counts)
+
+        # Drain of 0 on every source means acquisition never produced frames.
+        if sum(counts.values()) == 0:
+            log.warning(
+                "JAICamera: drain got 0 frames - stop/start acquisition retry …"
+            )
+            try:
+                self._device.GetParameters().Get("AcquisitionStop").Execute()
+            except Exception:
+                pass
+            time.sleep(0.3)
+            for src in self._sources:
+                src.start_acquisition()
+            try:
+                self._device.GetParameters().Get("AcquisitionStart").Execute()
+            except Exception as exc:
+                log.error("JAICamera: AcquisitionStart retry failed: %s", exc)
+                self._cleanup_failed_connect()
+                return False
+            time.sleep(self.WARMUP_S)
+            counts = self._drain_pipelines()
+            log.info("JAICamera: re-drain %s", counts)
+            if sum(counts.values()) == 0:
+                log.error(
+                    "JAICamera: still no frames after retry - "
+                    "close eBUS Player / other apps, check 10GigE link, retry"
+                )
+                self._cleanup_failed_connect()
+                return False
 
         self._running = True
         # One persistent thread per source so eBUS calls are never shared.
@@ -422,6 +461,37 @@ class JAICamera:
         self._grab_thread.start()
         log.info("JAICamera: background grab thread started - ready")
         return True
+
+    def _drain_pipelines(self) -> dict:
+        counts = {src._source_name: 0 for src in self._sources}
+        for _ in range(self.DRAIN_FRAMES):
+            for src in self._sources:
+                r, buf, op = src.pipeline.RetrieveNextBuffer(200)
+                if r.IsOK():
+                    src.pipeline.ReleaseBuffer(buf)
+                    counts[src._source_name] += 1
+        return counts
+
+    def _cleanup_failed_connect(self) -> None:
+        """Tear down streams/device after a failed connect (no grab thread yet)."""
+        import eBUS as eb
+        for src in self._sources:
+            try:
+                src.stop_acquisition()
+            except Exception:
+                pass
+            try:
+                src.close()
+            except Exception:
+                pass
+        self._sources.clear()
+        if self._device is not None:
+            try:
+                self._device.Disconnect()
+                eb.PvDevice.Free(self._device)
+            except Exception:
+                pass
+            self._device = None
 
     # ── Background grab loop ──────────────────────────────────────────────────
 
@@ -505,33 +575,49 @@ class JAICamera:
                 ok   = True
 
                 # ── Hard-timeout grab from all sources concurrently ────────────
-                # RetrieveNextBuffer(150) is advisory: the eBUS SDK can deadlock
-                # if the GEV stream gets corrupted. We submit each call to a
-                # dedicated worker thread and wait at most 1.0 s wall-clock.
-                # If any call exceeds that, we break out of the grab loop so
-                # the CameraWorker watchdog can fire and reconnect cleanly.
+                # RetrieveNextBuffer(250) is advisory: the eBUS SDK can deadlock
+                # if the GEV stream gets corrupted. We submit each call to the
+                # pool and wait at most HARD_GRAB_TIMEOUT_S wall-clock.
+                #
+                # CRITICAL: always wait for EVERY submitted future before the
+                # next iteration.  Breaking early on raw=None used to leave
+                # Source1/Source2 grabs running, then the next iteration would
+                # submit overlapping RetrieveNextBuffer calls on the same
+                # pipeline (pool threads are not pinned to sources).  That race
+                # is what turns a brief CPU hiccup (e.g. Save-mode JPEG encode)
+                # into a permanent stream death.
                 HARD_GRAB_TIMEOUT_S = 2.0  # > 250 ms advisory, < 5 s watchdog
-                futures = {
-                    self._grab_executor.submit(src.grab, 250): src
+                futures = [
+                    (src, self._grab_executor.submit(src.grab, 250))
                     for src in self._sources
-                }
-                for fut, src in futures.items():
+                ]
+                results: list[tuple] = []
+                hard_fail = False
+                for src, fut in futures:
                     try:
                         raw, bid = fut.result(timeout=HARD_GRAB_TIMEOUT_S)
+                        results.append((src, raw, bid))
                     except concurrent.futures.TimeoutError:
                         log.error(
                             "JAI-grab: RetrieveNextBuffer HARD TIMEOUT on %s "
                             "(eBUS pipeline deadlocked) - stopping grab loop",
                             src._source_name,
                         )
-                        self._running = False
-                        ok = False
-                        break
+                        hard_fail = True
+                        results.append((src, None, -1))
+                        # Still drain sibling futures below so pool threads free up
                     except Exception as exc:
                         log.error("JAI-grab: grab exception on %s: %s",
                                   src._source_name, exc)
-                        ok = False
-                        break
+                        results.append((src, None, -1))
+
+                if hard_fail:
+                    # Abandon remaining in-flight grabs without blocking forever;
+                    # the watchdog will reconnect.
+                    self._running = False
+                    break
+
+                for src, raw, bid in results:
                     if raw is None:
                         _none_streak += 1
                         if _none_streak == 1:
@@ -1676,6 +1762,10 @@ class JAICamera:
                     except Exception as e:
                         log.warning("ROI: start_acquisition failed on %s: %s",
                                     src._source_name, e)
+                try:
+                    self._device.GetParameters().Get("AcquisitionStart").Execute()
+                except Exception as e:
+                    log.warning("ROI: AcquisitionStart failed: %s", e)
 
                 # Step 3b: Post-restart mini-drain
                 log.info("ROI: post-restart stabilisation drain …")
@@ -1697,6 +1787,7 @@ class JAICamera:
                 try:
                     for src in self._sources:
                         src.start_acquisition()
+                    self._device.GetParameters().Get("AcquisitionStart").Execute()
                 except Exception:
                     pass
                 return (offset_x, offset_y, width, height)

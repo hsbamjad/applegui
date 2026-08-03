@@ -12,6 +12,9 @@ build/
 .conda/
 conda-meta/
 
+data/
+videos/
+
 # Runtime data - generated during operation, not source code
 data/logs/
 data/images/

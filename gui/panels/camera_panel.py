@@ -1067,9 +1067,10 @@ class LeftControlPanel(QWidget):
         self._btn_save_mode.setCheckable(True)
         self._btn_save_mode.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_save_mode.setToolTip(
-            "Enable Save mode - record frames to disk.\n"
-            "Raw Frames are saved by default.\n"
-            "Configure options in Data Logging below."
+            "Enable Save mode - full-res frames stream to disk while live.\n"
+            "No frame-count cap; if the disk writer falls behind, extras are dropped.\n"
+            "JPEG conversion runs after the camera disconnects.\n"
+            "Raw Frames on by default. Configure options in Data Logging."
         )
         self._btn_save_mode.setStyleSheet(f"""
             QPushButton {{

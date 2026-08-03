@@ -3,15 +3,21 @@ core/logging/grading_recorder.py
 ================================
 Per-apple grading export - cropped patches + CSV.
 
-OpenCV encode and disk I/O run off the GUI thread.  The inference hot path
-only enqueues lightweight track snapshots; under load, pending batches are
-capped so logging never starves the tracker.
+Raw full-frame path (critical for live JAI / 10GigE)
+----------------------------------------------------
+Full-res JPEG encode while streaming kills GigE.  During Save we append each
+triplet into per-channel ``stream.raw`` files (buffered sequential I/O) on a
+BELOW_NORMAL writer with a bounded queue.  No 90-frame hard cap — sessions run
+as long as you leave Save on; if the writer falls behind, frames are dropped
+and logged.  JPEG conversion from the raw streams runs only after disconnect.
+
+Detected-crop encodes are small and still run live (capped by batch slots).
 
 Output layout::
 
-    {session}/raw_frames/ch1/frame_XXXXXX.jpg   # full-res raw ch1 (Color) - no annotation
-    {session}/raw_frames/ch2/frame_XXXXXX.jpg   # full-res raw ch2 (NIR1)  - no annotation
-    {session}/raw_frames/ch3/frame_XXXXXX.jpg   # full-res raw ch3 (NIR2)  - no annotation
+    {session}/raw_frames/ch1/frame_XXXXXX.jpg   # raw ch1 (Color) - no annotation
+    {session}/raw_frames/ch2/frame_XXXXXX.jpg   # raw ch2 (NIR1)  - no annotation
+    {session}/raw_frames/ch3/frame_XXXXXX.jpg   # raw ch3 (NIR2)  - no annotation
 
     {session}/Lane{L}/Apple{N}/frame_XXX.jpg       # composite YOLO crop + boxes
     {session}/Lane{L}/Apple{N}.csv                          # per-apple detection CSV
@@ -21,9 +27,11 @@ from __future__ import annotations
 
 import csv
 import ctypes
+import json
 import os
 import queue
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -48,6 +56,33 @@ _CLASS_COLORS = [
 _MAX_PENDING_BATCHES = 2
 _DEFAULT_MAX_CROPS = 8
 _DEFAULT_HEAVY_THRESHOLD = 12
+# Live spill queue depth.  Each slot ≈ 15 MB @ 2048×1536.  Depth 24 ≈ 360 MB
+# worst-case RAM - enough burst to absorb disk hiccups without the old hard
+# cap of 90 frames, and without multi-GB piles that kill GigE.
+_MAX_RAW_SPILL_QUEUE = 24
+# 16 MiB stdio buffer per channel stream - sequential appends, not per-frame files.
+_RAW_FILE_BUFFER = 16 * 1024 * 1024
+
+
+def _set_spill_priority() -> None:
+    """Spill must nearly keep up with the camera - BELOW_NORMAL, not IDLE."""
+    if os.name == "nt":
+        try:
+            handle = ctypes.windll.kernel32.GetCurrentThread()
+            # THREAD_PRIORITY_BELOW_NORMAL = -1
+            ctypes.windll.kernel32.SetThreadPriority(handle, -1)
+        except Exception:
+            pass
+
+
+def _set_low_priority() -> None:
+    """IDLE priority for JPEG convert / crop writers (camera already down or small work)."""
+    if os.name == "nt":
+        try:
+            handle = ctypes.windll.kernel32.GetCurrentThread()
+            ctypes.windll.kernel32.SetThreadPriority(handle, -15)  # IDLE
+        except Exception:
+            pass
 
 
 def _tracks_for_logging(active: list[dict], max_n: int) -> list[dict]:
@@ -99,27 +134,11 @@ class _WriteJob:
     jpeg_bytes: bytes
 
 
-def _set_low_priority() -> None:
-    """Set current thread priority to BELOW_NORMAL on Windows so camera grab is never starved."""
-    if os.name == "nt":
-        try:
-            handle = ctypes.windll.kernel32.GetCurrentThread()
-            # THREAD_PRIORITY_BELOW_NORMAL = -1
-            ctypes.windll.kernel32.SetThreadPriority(handle, -1)
-        except Exception:
-            pass
-
 # NOTE on OpenCV threading (Concurrency/PPL backend on this system):
-# - cv2.setNumThreads() affects only functions that use parallel_for_, e.g.
-#   cv2.cvtColor(BayerRG→BGR) in the JAI-grab thread.
-# - cv2.imencode is internally sequential (libjpeg is single-threaded) and
-#   is NOT affected by setNumThreads regardless of value.
-# - The write pool threads use only pure-numpy ops + imencode, so they do
-#   NOT benefit from nor compete for OpenCV parallel workers.
-# We intentionally do NOT call setNumThreads here.  Leaving it at the system
-# default (8 threads on this machine) makes the BayerRG→BGR demosaic in the
-# JAI-grab thread faster (~5 ms vs ~20 ms), keeping the grab loop at ≥26 FPS
-# so pipeline buffers accumulate more slowly and block-ID sync drift is rarer.
+# - cv2.setNumThreads() is process-global - NEVER call it from encode workers
+#   or Bayer demosaic on the JAI-grab thread drops from ~5 ms to ~20 ms.
+# - Raw full-frame JPEG must NOT run while the camera streams (see module doc).
+# - Detected-crop imencode is small; keep it live but batch-capped.
 
 
 class GradingRecorder:
@@ -170,18 +189,27 @@ class GradingRecorder:
         self._write_buffer_lock = threading.Lock()
 
         self._batch_slots = threading.Semaphore(max_pending_batches)
-        self._raw_slots  = threading.Semaphore(6)   # cap in-flight full-res raw encodes
+        # Live raw path: bounded queue → sequential stream.raw appends.
+        self._spill_q: queue.Queue = queue.Queue(maxsize=_MAX_RAW_SPILL_QUEUE)
+        self._spill_thread = threading.Thread(
+            target=self._spill_loop, daemon=True, name="log-raw-spill",
+        )
+        self._spill_stop = threading.Event()
+        self._raw_written = 0
+        self._raw_files: dict[str, object] | None = None  # ch → binary file obj
+        self._raw_index_fh = None
         self._cmd_q: queue.SimpleQueue = queue.SimpleQueue()
-        # 4 write workers: safe now that _normalize_to_bgr uses pure numpy
-        # (no OpenCV thread pool calls from the write path that could compete
-        # with the JAI-grab loop's cv2.cvtColor(BayerBG2BGR)).
+        # Write pool only serves detected-crop JPEG buffering (small).
         self._write_pool = ThreadPoolExecutor(
-            max_workers=4,
+            max_workers=1,
             thread_name_prefix="log-wr",
             initializer=_set_low_priority,
         )
         self._worker = threading.Thread(target=self._run_worker, daemon=True)
         self._worker.start()
+        self._spill_thread.start()
+        self._raw_finalized = False
+        self._spill_joined = False
 
     @property
     def session_dir(self) -> Path | None:
@@ -250,14 +278,18 @@ class GradingRecorder:
         ch3: np.ndarray | None,
     ) -> None:
         """
-        Enqueue a full-resolution raw frame save from all 3 camera channels.
-        Non-blocking - drops silently when the worker is backlogged.
-        Thread-safe; may be called from any thread.
+        Enqueue a full-res triplet for sequential ``stream.raw`` spill.
 
-        Output layout::
-            {session}/raw_frames/ch1/frame_000001.jpg
-            {session}/raw_frames/ch2/frame_000001.jpg
-            {session}/raw_frames/ch3/frame_000001.jpg
+        No JPEG during live capture.  Queue is bounded — if the writer falls
+        behind, frames are dropped (camera stays up).  There is no 90-frame cap;
+        a session keeps saving for as long as Save stays on and the writer keeps up.
+
+        Live on-disk layout::
+            {session}/raw_frames/ch1/stream.raw
+            {session}/raw_frames/ch2/stream.raw
+            {session}/raw_frames/ch3/stream.raw
+            {session}/raw_frames/index.jsonl
+        JPEG files are produced later in ``finalize_raw_and_disk``.
         """
         if not self._active:
             return
@@ -266,17 +298,16 @@ class GradingRecorder:
         self._raw_frame_tick += 1
         if self._raw_frame_tick % self._raw_frame_stride != 0:
             return
-        if not self._raw_slots.acquire(blocking=False):
+        try:
+            self._spill_q.put_nowait((ch1, ch2, ch3))
+        except queue.Full:
             self._dropped_raw_frames += 1
-            if self._dropped_raw_frames in (1, 50, 200):
+            if self._dropped_raw_frames in (1, 50, 200, 1000):
                 log.warning(
-                    "GradingRecorder: dropped %d raw-frame batches (encoder backlog)",
-                    self._dropped_raw_frames,
+                    "GradingRecorder: dropped %d raw frames "
+                    "(spill queue full — writer behind; %d written so far)",
+                    self._dropped_raw_frames, self._raw_written,
                 )
-            return
-        # Pass references - caller must NOT mutate arrays after this call.
-        # VideoWorker and mock camera create new arrays each frame, so this is safe.
-        self._cmd_q.put(("raw_frame", ch1, ch2, ch3))
 
     def set_save_options(
         self,
@@ -304,18 +335,59 @@ class GradingRecorder:
             return
         self._cmd_q.put(("commit", seq_id, lane, class_name, confidence, track_id))
 
-    def stop_session(self) -> None:
+    def stop_session(self, *, camera_live: bool = False) -> None:
         if not self._active:
             return
-        # Mark inactive immediately so no new frames are submitted while the
-        # worker drains.  The worker finishes any in-progress batch on its own.
-        # Do NOT block the GUI thread here - enqueue the stop command and
-        # return immediately.  The background worker will flush CSVs/images.
         self._active = False
-        self._cmd_q.put(("stop",))
+        self._cmd_q.put(("stop", bool(camera_live)))
         log.info(
-            "GradingRecorder stop enqueued - %d images saved so far (%d batches dropped)",
+            "GradingRecorder stop enqueued - %d raw frames written, "
+            "%d dropped, %d crop images (camera_live=%s)",
+            self._raw_written, self._dropped_raw_frames, self._saved_images,
+            camera_live,
+        )
+
+    @property
+    def buffered_raw_count(self) -> int:
+        """Frames still in the spill queue (not yet on disk)."""
+        return self._spill_q.qsize()
+
+    @property
+    def npy_written(self) -> int:
+        """Backward-compat alias for frames written to stream.raw."""
+        return self._raw_written
+
+    def drain_spill(self, timeout: float = 120.0) -> None:
+        """Block until the live raw spill thread has finished and files are closed."""
+        if self._spill_joined:
+            return
+        self._spill_stop.set()
+        try:
+            self._spill_q.put_nowait(None)
+        except queue.Full:
+            pass
+        self._spill_thread.join(timeout=timeout)
+        self._close_raw_files()
+        self._spill_joined = True
+
+    def finalize_raw_and_disk(self) -> None:
+        """
+        Convert spilled ``stream.raw`` → per-frame JPEGs and flush crop buffer.
+
+        MUST be called only after the GigE camera is fully disconnected.
+        """
+        if self._raw_finalized:
+            return
+        self._raw_finalized = True
+        _set_low_priority()
+        self.drain_spill()
+        self._convert_raw_streams_to_jpeg()
+        self._flush_write_buffer_to_disk()
+        log.info(
+            "GradingRecorder finalize done - %d images saved "
+            "(%d crop batches dropped, %d raw frames dropped, %d raw written)",
             self._saved_images, self._dropped_batches,
+            self._dropped_raw_frames, self._raw_written,
         )
 
     # ── Worker (single ordered loop) ──────────────────────────────────────────
@@ -345,25 +417,31 @@ class GradingRecorder:
                         ))
                     self._flush_writes(writes)
                 elif kind == "stop":
+                    camera_live = bool(cmd[1]) if len(cmd) > 1 else False
                     writes: list[_WriteJob] = []
                     with self._lock:
                         writes.extend(self._on_stop())
                     self._flush_writes(writes)
-                    # Wait for all encode tasks to finish (they buffer to RAM)
                     self._write_pool.shutdown(wait=True)
-                    # Now flush all buffered JPEG bytes to disk.
-                    # This runs on the worker thread (already off the GUI thread)
-                    # AFTER the camera stream has been stopped, so zero DPC
-                    # competition with GigE Vision.
-                    self._flush_write_buffer_to_disk()
-                    log.info(
-                        "GradingRecorder stopped - %d images saved (%d batches dropped)",
-                        self._saved_images, self._dropped_batches,
-                    )
+                    # Drain .npy spill (releases any in-flight array refs).
+                    self.drain_spill()
+                    if camera_live:
+                        log.info(
+                            "GradingRecorder: spill drained (%d raw frames on disk) - "
+                            "JPEG convert deferred until camera disconnect",
+                            self._raw_written,
+                        )
+                    else:
+                        self._convert_raw_streams_to_jpeg()
+                        self._flush_write_buffer_to_disk()
+                        self._raw_finalized = True
+                        log.info(
+                            "GradingRecorder stopped - %d images saved "
+                            "(%d crop batches dropped, %d raw dropped, %d raw written)",
+                            self._saved_images, self._dropped_batches,
+                            self._dropped_raw_frames, self._raw_written,
+                        )
                     break
-                elif kind == "raw_frame":
-                    _, c1, c2, c3 = cmd
-                    self._on_raw_frame(c1, c2, c3)
             except Exception:
                 log.exception("GradingRecorder worker error on %s", kind)
                 if kind == "batch":
@@ -469,6 +547,7 @@ class GradingRecorder:
         self._track_to_apple.clear()
         self._dirs_made.clear()
         self._raw_full_frame_counter = 0
+        self._raw_written = 0
 
     def _on_commit(
         self,
@@ -523,56 +602,231 @@ class GradingRecorder:
         )
         return writes
 
-    def _encode_and_save_raw_batch(
-        self,
-        batch: list[tuple[Path, np.ndarray]],
-    ) -> None:
+    def _spill_loop(self) -> None:
+        """BELOW_NORMAL thread: append full-res triplets to stream.raw files."""
+        _set_spill_priority()
+        while True:
+            if self._spill_stop.is_set() and self._spill_q.empty():
+                return
+            try:
+                item = self._spill_q.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                if item is None:
+                    return
+                ch1, ch2, ch3 = item
+                self._write_raw_triplet(ch1, ch2, ch3)
+            except Exception:
+                log.exception("GradingRecorder spill error")
+            finally:
+                item = None
+
+    def _ensure_raw_files(self) -> bool:
+        """Open per-channel stream.raw + index.jsonl (spill thread only)."""
+        if self._raw_files is not None:
+            return True
+        if self._session_dir is None:
+            return False
+        root = self._session_dir / "raw_frames"
+        files: dict[str, object] = {}
         try:
-            for path, frame in batch:
-                if frame is None:
-                    continue
-                img = _normalize_to_bgr(frame)
+            for ch in ("ch1", "ch2", "ch3"):
+                ch_dir = root / ch
+                ch_dir.mkdir(parents=True, exist_ok=True)
+                files[ch] = open(
+                    ch_dir / "stream.raw", "wb", buffering=_RAW_FILE_BUFFER,
+                )
+            self._raw_index_fh = open(
+                root / "index.jsonl", "w", encoding="utf-8", buffering=1024 * 1024,
+            )
+            self._raw_files = files
+            log.info("GradingRecorder: opened stream.raw files for live spill")
+            return True
+        except Exception:
+            log.exception("GradingRecorder: failed to open stream.raw files")
+            for fh in files.values():
+                try:
+                    fh.close()
+                except Exception:
+                    pass
+            self._raw_files = None
+            self._raw_index_fh = None
+            return False
+
+    def _close_raw_files(self) -> None:
+        if self._raw_files is not None:
+            for fh in self._raw_files.values():
+                try:
+                    fh.flush()
+                    fh.close()
+                except Exception:
+                    pass
+            self._raw_files = None
+        if self._raw_index_fh is not None:
+            try:
+                self._raw_index_fh.flush()
+                self._raw_index_fh.close()
+            except Exception:
+                pass
+            self._raw_index_fh = None
+
+    def _write_raw_triplet(
+        self,
+        ch1: np.ndarray | None,
+        ch2: np.ndarray | None,
+        ch3: np.ndarray | None,
+    ) -> None:
+        if not self._ensure_raw_files():
+            return
+        assert self._raw_files is not None and self._raw_index_fh is not None
+        channels = (("ch1", ch1), ("ch2", ch2), ("ch3", ch3))
+        valid = [(n, f) for n, f in channels if f is not None]
+        if not valid:
+            return
+        self._raw_full_frame_counter += 1
+        n = self._raw_full_frame_counter
+        entry: dict = {"i": n}
+        for ch_name, frame in valid:
+            if not frame.flags["C_CONTIGUOUS"]:
+                frame = np.ascontiguousarray(frame)
+            self._raw_files[ch_name].write(memoryview(frame))
+            entry[ch_name] = {
+                "shape": list(frame.shape),
+                "dtype": str(frame.dtype),
+            }
+        self._raw_index_fh.write(json.dumps(entry, separators=(",", ":")) + "\n")
+        self._raw_written = n
+        if n == 1 or n % 100 == 0:
+            log.info(
+                "GradingRecorder: spilled %d raw frames (%d dropped)",
+                n, self._dropped_raw_frames,
+            )
+
+    def _convert_raw_streams_to_jpeg(self) -> None:
+        """Read stream.raw + index.jsonl → per-frame JPEGs. Camera must be down."""
+        if self._session_dir is None:
+            return
+        root = self._session_dir / "raw_frames"
+        index_path = root / "index.jsonl"
+        if not index_path.exists():
+            # Backward compat: older sessions may have per-frame .npy
+            self._convert_npy_to_jpeg()
+            return
+
+        streams: dict[str, object] = {}
+        try:
+            for ch in ("ch1", "ch2", "ch3"):
+                raw_path = root / ch / "stream.raw"
+                if raw_path.exists():
+                    streams[ch] = open(raw_path, "rb", buffering=_RAW_FILE_BUFFER)
+            if not streams:
+                return
+            log.info(
+                "GradingRecorder: converting stream.raw → JPEG "
+                "(%d frames indexed, camera down) …",
+                self._raw_written,
+            )
+            t0 = time.perf_counter()
+            converted = 0
+            with index_path.open("r", encoding="utf-8") as idx:
+                for line in idx:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    entry = json.loads(line)
+                    n = int(entry["i"])
+                    fname = f"frame_{n:06d}.{self._image_ext}"
+                    for ch in ("ch1", "ch2", "ch3"):
+                        meta = entry.get(ch)
+                        if meta is None or ch not in streams:
+                            continue
+                        shape = tuple(meta["shape"])
+                        dtype = np.dtype(meta["dtype"])
+                        nbytes = int(np.prod(shape) * dtype.itemsize)
+                        buf = streams[ch].read(nbytes)
+                        if len(buf) != nbytes:
+                            log.warning(
+                                "Short read on %s frame %d (%d/%d bytes)",
+                                ch, n, len(buf), nbytes,
+                            )
+                            continue
+                        arr = np.frombuffer(buf, dtype=dtype).reshape(shape)
+                        img = _normalize_to_bgr(arr)
+                        if img is None:
+                            continue
+                        img = _downscale_max_dim(img, self._save_max_dim)
+                        ok, enc = cv2.imencode(
+                            f".{self._image_ext}", img,
+                            [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
+                        )
+                        if ok:
+                            path = root / ch / fname
+                            self._write_jpeg(path, enc.tobytes())
+                            converted += 1
+            log.info(
+                "GradingRecorder: raw→jpeg done — %d files in %.1f s",
+                converted, time.perf_counter() - t0,
+            )
+        finally:
+            for fh in streams.values():
+                try:
+                    fh.close()
+                except Exception:
+                    pass
+            # Remove bulky intermediates after convert
+            for ch in ("ch1", "ch2", "ch3"):
+                raw_path = root / ch / "stream.raw"
+                try:
+                    raw_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            try:
+                index_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    def _convert_npy_to_jpeg(self) -> None:
+        """Legacy: turn per-frame .npy files into JPEGs."""
+        if self._session_dir is None:
+            return
+        root = self._session_dir / "raw_frames"
+        if not root.exists():
+            return
+        npy_files = sorted(root.glob("ch*/frame_*.npy"))
+        if not npy_files:
+            return
+        log.info(
+            "GradingRecorder: converting %d .npy → JPEG (camera down) …",
+            len(npy_files),
+        )
+        t0 = time.perf_counter()
+        converted = 0
+        for npy_path in npy_files:
+            try:
+                arr = np.load(str(npy_path), allow_pickle=False)
+                img = _normalize_to_bgr(arr)
+                del arr
                 if img is None:
+                    npy_path.unlink(missing_ok=True)
                     continue
                 img = _downscale_max_dim(img, self._save_max_dim)
                 ok, buf = cv2.imencode(
                     f".{self._image_ext}", img,
                     [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
                 )
+                del img
                 if ok:
-                    self._write_jpeg(path, buf.tobytes())
-        except Exception as e:
-            log.warning("Raw batch save error: %s", e, exc_info=True)
-        finally:
-            self._raw_slots.release()
-
-    def _on_raw_frame(
-        self,
-        ch1: np.ndarray | None,
-        ch2: np.ndarray | None,
-        ch3: np.ndarray | None,
-    ) -> None:
-        """
-        Schedule async normalization, encoding, and disk writes for full-resolution raw frames.
-        Offloaded to write_pool so the recorder queue thread returns in microseconds.
-        Output: {session}/raw_frames/ch1/, ch2/, ch3/
-        """
-        if self._session_dir is None:
-            self._raw_slots.release()
-            return
-        valid_channels = [(ch_name, frame) for ch_name, frame in (("ch1", ch1), ("ch2", ch2), ("ch3", ch3)) if frame is not None]
-        if not valid_channels:
-            self._raw_slots.release()
-            return
-
-        self._raw_full_frame_counter += 1
-        n = self._raw_full_frame_counter
-        fname = f"frame_{n:06d}.{self._image_ext}"
-        batch = [
-            (self._session_dir / "raw_frames" / ch_name / fname, frame)
-            for ch_name, frame in valid_channels
-        ]
-        self._write_pool.submit(self._encode_and_save_raw_batch, batch)
+                    jpg_path = npy_path.with_suffix(f".{self._image_ext}")
+                    self._write_jpeg(jpg_path, buf.tobytes())
+                    converted += 1
+                npy_path.unlink(missing_ok=True)
+            except Exception as exc:
+                log.warning("npy→jpeg failed for %s: %s", npy_path, exc)
+        log.info(
+            "GradingRecorder: npy→jpeg done — %d files in %.1f s",
+            converted, time.perf_counter() - t0,
+        )
 
     def _flush_writes(self, jobs: list[_WriteJob]) -> None:
         for job in jobs:
@@ -731,7 +985,12 @@ def _snapshot(t: dict) -> dict:
 
 
 def _downscale_max_dim(img: np.ndarray, max_dim: int) -> np.ndarray:
-    """Downscale so the longest side is at most *max_dim* px. 0 = no change."""
+    """
+    Downscale so the longest side is at most *max_dim* px. 0 = no change.
+
+    Uses pure numpy (no cv2.resize) so save-path threads never contend for
+    OpenCV's process-global parallel_for_ pool used by live Bayer demosaic.
+    """
     if max_dim <= 0:
         return img
     h, w = img.shape[:2]
@@ -739,11 +998,13 @@ def _downscale_max_dim(img: np.ndarray, max_dim: int) -> np.ndarray:
     if longest <= max_dim:
         return img
     scale = max_dim / longest
-    return cv2.resize(
-        img,
-        (int(w * scale), int(h * scale)),
-        interpolation=cv2.INTER_AREA,
-    )
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+    # Integer-factor box downsample when possible; otherwise stride sample.
+    # Good enough for logging previews; avoids OpenCV thread-pool contention.
+    y_idx = (np.linspace(0, h - 1, new_h)).astype(np.int32)
+    x_idx = (np.linspace(0, w - 1, new_w)).astype(np.int32)
+    return img[np.ix_(y_idx, x_idx)].copy()
 
 
 def _normalize_to_bgr(frame: np.ndarray) -> np.ndarray | None:

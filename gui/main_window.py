@@ -397,6 +397,7 @@ class MainWindow(QMainWindow):
     # QTimer.singleShot() called from a non-GUI thread does NOT post to the GUI
     # thread when no event loop is running on the caller's thread.
     _sig_recorder_ready = pyqtSignal(object, object, object)  # rec, session_dir, app_root
+    _sig_recorder_finalized = pyqtSignal()  # prior session encode+flush finished
 
     def __init__(self) -> None:
         super().__init__()
@@ -417,6 +418,8 @@ class MainWindow(QMainWindow):
         self._log_detected:    bool                        = False   # log Detected Frames (full-res + boxes)
         self._custom_save_path: str                        = ""      # operator-chosen base dir ("" = use config)
         self._grading_recorder: GradingRecorder | None   = None
+        self._deferred_recorders: list[GradingRecorder]  = []  # Save-off while cam live
+        self._recorder_finalizing: bool                    = False   # True while post-stop encode/flush runs
         self._size_acc = None   # AppleSizeAccumulator - created in _start_pipeline
         self._infer_fps: float = 0.0
         self._loading_model_name: str = ""
@@ -448,6 +451,7 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         # Wire the cross-thread recorder-ready signal (bg rec-init → GUI thread)
         self._sig_recorder_ready.connect(self._apply_grading_session)
+        self._sig_recorder_finalized.connect(self._on_recorder_finalized)
         self._post_init()
 
     # ── Setup ─────────────────────────────────────────────────────────────────
@@ -575,8 +579,21 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Guarantee camera disconnect on window close - releases eBUS device lock."""
+        from PyQt6.QtWidgets import QApplication
+
         log.info("MainWindow closing - stopping pipeline …")
         self._stop_pipeline()
+        # Wait for parked raw frames to finish encoding so files aren't lost.
+        deadline = time.time() + 180.0
+        while self._recorder_finalizing and time.time() < deadline:
+            QApplication.processEvents()
+            time.sleep(0.05)
+        for rec in list(self._deferred_recorders):
+            try:
+                rec.finalize_raw_and_disk()
+            except Exception:
+                log.exception("closeEvent: deferred finalize failed")
+        self._deferred_recorders.clear()
         event.accept()
 
 
@@ -797,35 +814,118 @@ class MainWindow(QMainWindow):
         log.info("GradingRecorder session started: %s", session_dir)
 
     def _stop_grading_session(self) -> None:
-        """Flush and tear down the grading recorder."""
-        if self._grading_recorder is not None:
-            self._grading_recorder.stop_session()
-            # Drop the old recorder reference via QThreadPool so Python's GC
-            # (ThreadPoolExecutor.__del__ -> shutdown()) never runs on the GUI
-            # thread.  QThreadPool.start() is O(1) non-blocking.
-            _old = self._grading_recorder
-            self._grading_recorder = None
-            class _GcTask(QRunnable):
-                """Holds the old recorder ref until run() returns on a pool thread."""
-                def __init__(self_task, rec):  # noqa: N805
-                    super().__init__()
-                    self_task._rec = rec
-                def run(self_task) -> None:  # noqa: N805
-                    pass  # self_task._rec drops out of scope here on the pool thread
-            QThreadPool.globalInstance().start(_GcTask(_old))
+        """
+        Stop accepting frames from the active recorder.
+
+        Live path already spilled full-res frames to ``.npy`` (depth-2 queue).
+        JPEG conversion is deferred until the camera is disconnected.
+        """
+        camera_live = self._cam_w is not None
+        rec = self._grading_recorder
+        self._grading_recorder = None
         self._wire_infer_logging()
+
         log_cfg = self._cfg.get("logging", {})
         raw_out = log_cfg.get("output_dir", "data/sessions")
         self._left.set_logging_path(raw_out)
-        if self._save_mode:
+
+        if rec is None:
+            if not camera_live:
+                self._flush_deferred_recorders_async()
+            elif not self._recorder_finalizing:
+                if self._save_mode:
+                    self._right.status_group.set_status("Logger", "idle", "Armed")
+                else:
+                    self._right.status_group.set_status("Logger", "idle", "Off")
+            return
+
+        rec.stop_session(camera_live=camera_live)
+        self._recorder_finalizing = True
+
+        if camera_live:
+            # Drain spill thread (releases RAM).  Keep recorder for later npy→jpg.
+            self._deferred_recorders.append(rec)
+            self._right.status_group.set_status("Logger", "idle", "Flushing…")
+            log.info(
+                "Save stopped with camera live - draining .npy spill "
+                "(%d session(s) pending JPEG convert on disconnect)",
+                len(self._deferred_recorders),
+            )
+            _win = self
+            class _DrainTask(QRunnable):
+                def run(self_task) -> None:  # noqa: N805
+                    w = getattr(rec, "_worker", None)
+                    if w is not None and w.is_alive():
+                        w.join(timeout=120)  # includes spill drain
+                    _win._sig_recorder_finalized.emit()
+            QThreadPool.globalInstance().start(_DrainTask())
+            return
+
+        # Camera already down - convert npy→jpeg for this + any parked sessions.
+        self._right.status_group.set_status("Logger", "idle", "Writing…")
+        deferred = self._deferred_recorders
+        self._deferred_recorders = []
+        _win = self
+        class _EncodeTask(QRunnable):
+            def run(self_task) -> None:  # noqa: N805
+                w = getattr(rec, "_worker", None)
+                if w is not None and w.is_alive():
+                    w.join(timeout=300)
+                rec.finalize_raw_and_disk()
+                for d in deferred:
+                    d.finalize_raw_and_disk()
+                _win._sig_recorder_finalized.emit()
+        QThreadPool.globalInstance().start(_EncodeTask())
+
+    def _flush_deferred_recorders_async(self) -> None:
+        """Convert spilled .npy → JPEG for sessions parked while camera was live."""
+        if not self._deferred_recorders:
+            if not self._recorder_finalizing:
+                if self._save_mode:
+                    self._right.status_group.set_status("Logger", "idle", "Armed")
+                else:
+                    self._right.status_group.set_status("Logger", "idle", "Off")
+            return
+        deferred = self._deferred_recorders
+        self._deferred_recorders = []
+        self._recorder_finalizing = True
+        self._right.status_group.set_status("Logger", "idle", "Writing…")
+        log.info(
+            "Camera down - converting .npy→JPEG for %d Save session(s) …",
+            len(deferred),
+        )
+        _win = self
+        class _EncodeTask(QRunnable):
+            def run(self_task) -> None:  # noqa: N805
+                for d in deferred:
+                    d.finalize_raw_and_disk()
+                _win._sig_recorder_finalized.emit()
+        QThreadPool.globalInstance().start(_EncodeTask())
+
+    @pyqtSlot()
+    def _on_recorder_finalized(self) -> None:
+        """Spill drain or JPEG convert finished - safe to start a new Save."""
+        self._recorder_finalizing = False
+        if self._cam_w is None and self._deferred_recorders:
+            self._flush_deferred_recorders_async()
+            return
+        if self._save_mode and self._cam_w is not None and self._grading_recorder is None:
+            self._start_grading_session()
+        elif self._save_mode:
             self._right.status_group.set_status("Logger", "idle", "Armed")
         else:
-            self._right.status_group.set_status("Logger", "idle", "Off")
-
+            n_pending = len(self._deferred_recorders)
+            if n_pending:
+                self._right.status_group.set_status(
+                    "Logger", "idle", f"{n_pending} pending JPEG",
+                )
+            else:
+                self._right.status_group.set_status("Logger", "idle", "Off")
 
     def _stop_pipeline(self) -> None:
         self._preview_timer.stop()
-        self._stop_grading_session()
+        # Stop camera BEFORE raw JPEG finalize.  Encoding full-res frames while
+        # 10GigE streams are still open is what kills the grab loop.
         if self._sorter:
             self._sorter.stop()
             self._sorter = None
@@ -850,6 +950,9 @@ class MainWindow(QMainWindow):
         if self._cam_w:
             self._cam_w.stop()
             self._cam_w = None
+
+        # Camera is down - encode active session + any parked Save sessions.
+        self._stop_grading_session()
 
         self._left.set_camera_connected(False)
         self._center.channel_display.reset_all()
@@ -1291,13 +1394,23 @@ class MainWindow(QMainWindow):
         self._save_mode    = enabled
         self._logging_enabled = enabled   # backward-compat alias
         if enabled:
-            if self._cam_w is not None and self._grading_recorder is None:
+            if self._recorder_finalizing:
+                # Spill still draining - auto-start when ready.
+                self._right.status_group.set_status("Logger", "idle", "Flushing…")
+            elif self._cam_w is not None and self._grading_recorder is None:
                 self._start_grading_session()
             elif self._grading_recorder is None:
                 self._right.status_group.set_status("Logger", "idle", "Armed")
         else:
             self._stop_grading_session()
-            self._right.status_group.set_status("Logger", "idle", "Off")
+            if not self._recorder_finalizing:
+                n_pending = len(self._deferred_recorders)
+                if n_pending:
+                    self._right.status_group.set_status(
+                        "Logger", "idle", f"{n_pending} pending JPEG",
+                    )
+                else:
+                    self._right.status_group.set_status("Logger", "idle", "Off")
         self._wire_infer_logging()
 
     @pyqtSlot(bool)
