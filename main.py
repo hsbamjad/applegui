@@ -9,7 +9,7 @@ Usage:
 """
 
 import sys
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QStyleFactory
 
 from core.log import get_logger, configure_root
 configure_root()
@@ -17,6 +17,7 @@ logger = get_logger(__name__)
 
 try:
     from gui.main_window import MainWindow
+    from gui.light_tooltip import install_light_tooltips
 except ImportError:
     logger.error("gui/main_window.py not found.")
     logger.error("This is built in Step A4. Run A4 first, then launch main.py.")
@@ -28,6 +29,13 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("Infield Apple Sorting System")
     app.setOrganizationName("MSU")
+
+    fusion = QStyleFactory.create("Fusion")
+    if fusion is not None:
+        app.setStyle(fusion)
+
+    # Replace native Windows tooltips (often forced black) with light popups
+    install_light_tooltips(app)
 
     window = MainWindow()
     window.show()

@@ -24,6 +24,10 @@ Threading:
   command and return immediately.  The grab thread drains the queue between
   each frame grab and executes the write on behalf of the caller.
 
+  Each GEV stream is read by its own long-lived thread.  RetrieveNextBuffer
+  must not hop across a shared pool — that stalls the pipeline.  Those
+  threads are paused while a GenICam command runs.
+
   AWB (trigger_auto_white_balance) is special: it blocks for up to 3 seconds
   while polling firmware.  It runs on its own short-lived side-thread so
   neither the GUI thread nor the grab thread stalls.
@@ -35,7 +39,7 @@ import queue
 import time
 import os
 import threading
-import concurrent.futures
+from collections import deque
 from core.log import get_logger
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -113,6 +117,7 @@ class _JAISource:
         self.pipeline        = None
         self.source_channel  = 0
         self.pixel_format    = "Mono8"
+        self._op_fail        = 0
 
     @staticmethod
     def _get_p(nm, name: str) -> str:
@@ -209,22 +214,144 @@ class _JAISource:
         """
         Retrieve one frame from the pipeline.
         Returns (raw_array, block_id) or (None, -1) on timeout/error.
+
+        A successful RetrieveNextBuffer owns a pool buffer even when the
+        operational result is a packet error.  That buffer must be released
+        or the pool (BUFFER_COUNT) drains and every later grab times out.
         """
         result, buffer, op_result = self.pipeline.RetrieveNextBuffer(timeout_ms)
-        if result.IsFailure() or not op_result.IsOK():
+        if result.IsFailure():
             return None, -1
 
-        image    = buffer.GetImage()
-        raw      = image.GetDataPointer().copy()
-        block_id = buffer.GetBlockID()
-        self.pipeline.ReleaseBuffer(buffer)
-        return raw, block_id
+        try:
+            if not op_result.IsOK():
+                self._op_fail += 1
+                if self._op_fail == 1 or self._op_fail % 30 == 0:
+                    log.warning(
+                        "%s: incomplete buffer (%s) - released back to pool (count=%d)",
+                        self._source_name,
+                        op_result.GetCodeString(),
+                        self._op_fail,
+                    )
+                return None, -1
+            image    = buffer.GetImage()
+            raw      = image.GetDataPointer().copy()
+            block_id = buffer.GetBlockID()
+            return raw, block_id
+        finally:
+            self.pipeline.ReleaseBuffer(buffer)
 
     def close(self) -> None:
         if self.pipeline:
             self.pipeline.Stop()
         if self.stream:
             self.stream.Close()
+
+
+class _PinnedSourceGrabber(threading.Thread):
+    """
+    One thread, one pipeline, for the life of the connection.
+
+    eBUS RetrieveNextBuffer stalls when the same pipeline is called from
+    whichever ThreadPoolExecutor worker is free.
+    """
+
+    def __init__(self, src: "_JAISource") -> None:
+        super().__init__(daemon=True, name=f"JAI-buf-{src._source_name}")
+        self._src = src
+        # Not named _stop: threading.Thread.join() calls Thread._stop().
+        self._halt = threading.Event()
+        self._gate = threading.Lock()
+        self._pause_requested = False
+        self._qlock = threading.Lock()
+        self._queue: deque = deque(maxlen=8)
+        self._miss_since: Optional[float] = None
+        self._miss_logged = False
+
+    def run(self) -> None:
+        while not self._halt.is_set():
+            if not self._gate.acquire(timeout=0.1):
+                continue
+            raw = None
+            bid = -1
+            failed = False
+            try:
+                if self._pause_requested or self._halt.is_set():
+                    continue
+                try:
+                    raw, bid = self._src.grab(timeout_ms=250)
+                except Exception as exc:
+                    failed = True
+                    log.error(
+                        "JAI-buf %s: grab failed: %s",
+                        self._src._source_name, exc,
+                    )
+                    raw, bid = None, -1
+            finally:
+                self._gate.release()
+
+            if failed:
+                time.sleep(0.05)
+                continue
+
+            if raw is None:
+                now = time.time()
+                if self._miss_since is None:
+                    self._miss_since = now
+                elif not self._miss_logged and now - self._miss_since >= 2.0:
+                    log.warning(
+                        "JAI-buf %s: no complete buffer for %.1f s",
+                        self._src._source_name, now - self._miss_since,
+                    )
+                    self._miss_logged = True
+                continue
+            if self._miss_logged:
+                log.info(
+                    "JAI-buf %s: buffers resumed after %.1f s",
+                    self._src._source_name,
+                    time.time() - (self._miss_since or time.time()),
+                )
+            self._miss_since = None
+            self._miss_logged = False
+            with self._qlock:
+                self._queue.append((raw, bid))
+
+    def hold(self, timeout: float) -> bool:
+        """Block this grabber out of RetrieveNextBuffer. Caller must unhold()."""
+        self._pause_requested = True
+        ok = self._gate.acquire(timeout=timeout)
+        if not ok:
+            self._pause_requested = False
+        return ok
+
+    def unhold(self) -> None:
+        self._pause_requested = False
+        try:
+            self._gate.release()
+        except RuntimeError:
+            pass
+
+    def snapshot(self) -> list:
+        with self._qlock:
+            return list(self._queue)
+
+    def drop_older_than(self, bid: int) -> None:
+        with self._qlock:
+            while self._queue and self._queue[0][1] < bid:
+                self._queue.popleft()
+
+    def drop_through(self, bid: int) -> None:
+        with self._qlock:
+            while self._queue and self._queue[0][1] <= bid:
+                self._queue.popleft()
+
+    def clear(self) -> None:
+        with self._qlock:
+            self._queue.clear()
+
+    def request_stop(self) -> None:
+        self._halt.set()
+        self._pause_requested = False
 
 
 class JAICamera:
@@ -277,11 +404,8 @@ class JAICamera:
         self._last_grab_time: float = 0.0   # updated every successful frame
         # ── AWB side-thread coordination ──────────────────────────────────────
         self._awb_lock = threading.Lock()   # serialise concurrent AWB requests
-        # ── Per-source grab executor ──────────────────────────────────────────
-        # RetrieveNextBuffer() has an advisory timeout but can deadlock in bad
-        # network conditions.  We submit each call to a persistent thread pool
-        # and apply a hard wall-clock deadline so the grab loop never stalls.
-        self._grab_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
+        # One long-lived thread per source.  A shared pool stalls eBUS pipelines.
+        self._grabbers: list[_PinnedSourceGrabber] = []
 
     @property
     def grab_fps(self) -> float:
@@ -449,12 +573,9 @@ class JAICamera:
                 return False
 
         self._running = True
-        # One persistent thread per source so eBUS calls are never shared.
-        # max_workers = len(sources) (3); each thread owns exactly one source.
-        self._grab_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=len(self._sources),
-            thread_name_prefix="JAI-buf",
-        )
+        self._grabbers = [_PinnedSourceGrabber(src) for src in self._sources]
+        for grabber in self._grabbers:
+            grabber.start()
         self._grab_thread = threading.Thread(
             target=self._grab_loop, daemon=True, name="JAI-grab"
         )
@@ -501,20 +622,96 @@ class JAICamera:
         Called at the start of every grab loop iteration so that camera
         writes (exposure, gain, fps, ROI …) run exclusively on the grab
         thread, never racing with buffer retrieval.
+
+        Grabbers are held out of RetrieveNextBuffer for the duration of the
+        batch, then their queues are cleared so pre-command frames cannot
+        be paired with post-command ones.
         """
+        pending = []
         while True:
             try:
-                kind, fn, done, result = self._ctrl_queue.get_nowait()
+                pending.append(self._ctrl_queue.get_nowait())
             except queue.Empty:
                 break
-            try:
-                ret = fn()
-                result.append(ret)
-            except Exception as exc:
-                log.error("ctrl-queue command '%s' raised: %s", kind, exc, exc_info=True)
-                result.append(None)
-            finally:
-                done.set()
+        if not pending:
+            return
+
+        held = self._hold_grabbers()
+        try:
+            if len(held) != len(self._grabbers):
+                log.error(
+                    "JAI-grab: paused %d/%d grabbers - dropping %d control command(s)",
+                    len(held), len(self._grabbers), len(pending),
+                )
+                for _kind, _fn, done, result in pending:
+                    result.append(None)
+                    done.set()
+                return
+            for kind, fn, done, result in pending:
+                try:
+                    ret = fn()
+                    result.append(ret)
+                except Exception as exc:
+                    log.error(
+                        "ctrl-queue command '%s' raised: %s",
+                        kind, exc, exc_info=True,
+                    )
+                    result.append(None)
+                finally:
+                    done.set()
+        finally:
+            for grabber in self._grabbers:
+                grabber.clear()
+            self._unhold_grabbers(held)
+
+    def _hold_grabbers(self) -> list:
+        held = []
+        for grabber in self._grabbers:
+            if grabber.hold(timeout=1.0):
+                held.append(grabber)
+            else:
+                log.error(
+                    "JAI-grab: %s stayed inside RetrieveNextBuffer - "
+                    "skipping pause",
+                    grabber.name,
+                )
+                break
+        return held
+
+    def _unhold_grabbers(self, held: list) -> None:
+        for grabber in reversed(held):
+            grabber.unhold()
+
+    def _match_triplet(self):
+        """
+        Pair the newest block ID present on every source.
+
+        Each grabber keeps its own queue, so a timeout on Source0 does not
+        throw away frames already taken from Source1 and Source2.
+        Returns (raws, block_id) or None when no common block ID is queued.
+        """
+        grabbers = self._grabbers
+        if len(grabbers) < 3 or len(self._sources) < 3:
+            return None
+        snaps = [g.snapshot() for g in grabbers]
+        if any(not snap for snap in snaps):
+            return None
+
+        bid_sets = [{bid for _raw, bid in snap} for snap in snaps]
+        common = set.intersection(*bid_sets)
+        if not common:
+            floor = max(snap[0][1] for snap in snaps)
+            for grabber in grabbers:
+                grabber.drop_older_than(floor)
+            return None
+
+        chosen = max(common)
+        raws = []
+        for grabber, src, snap in zip(grabbers, self._sources, snaps):
+            raw = next(raw for raw, bid in snap if bid == chosen)
+            raws.append((raw, src.pixel_format, chosen))
+            grabber.drop_through(chosen)
+        return raws, chosen
 
     def _enqueue_ctrl(
         self,
@@ -550,154 +747,44 @@ class JAICamera:
 
         At the top of every iteration the control queue is drained so that
         camera parameter writes (exposure, gain, fps, ROI …) execute here on
-        the grab thread, not on the GUI thread.  This eliminates all concurrent
-        eBUS device access.
+        the grab thread.  Grabbers are paused for that write so
+        RetrieveNextBuffer is not in flight on another thread.
 
-        Block ID validation: all 3 sources must report the same GEV block ID
-        for a triplet to be considered synchronized. If they diverge (e.g.
-        after an ROI stop/start), the loop self-corrects by advancing the
-        lagging source(s) until they catch up to the most advanced block ID.
-        This recovers sync within 1-3 frames without requiring a full restart.
+        Frames are paired by GEV block ID from the per-source queues.  A miss
+        on one source leaves the other sources' frames queued for the next match.
         """
-        self._grab_fps_t   = time.time()
+        self._grab_fps_t = time.time()
         self._last_grab_time = time.time()
-        _none_streak = 0   # consecutive iterations where every source returned raw=None
+        idle_since = time.time()
+        last_idle_log = 0.0
         try:
             while self._running:
-                # ── Drain pending control commands first ───────────────────
                 self._drain_ctrl_queue()
 
                 if not self._running:
                     break
 
-                raws = []
-                bids = []
-                ok   = True
-
-                # ── Hard-timeout grab from all sources concurrently ────────────
-                # RetrieveNextBuffer(250) is advisory: the eBUS SDK can deadlock
-                # if the GEV stream gets corrupted. We submit each call to the
-                # pool and wait at most HARD_GRAB_TIMEOUT_S wall-clock.
-                #
-                # CRITICAL: always wait for EVERY submitted future before the
-                # next iteration.  Breaking early on raw=None used to leave
-                # Source1/Source2 grabs running, then the next iteration would
-                # submit overlapping RetrieveNextBuffer calls on the same
-                # pipeline (pool threads are not pinned to sources).  That race
-                # is what turns a brief CPU hiccup (e.g. Save-mode JPEG encode)
-                # into a permanent stream death.
-                HARD_GRAB_TIMEOUT_S = 2.0  # > 250 ms advisory, < 5 s watchdog
-                futures = [
-                    (src, self._grab_executor.submit(src.grab, 250))
-                    for src in self._sources
-                ]
-                results: list[tuple] = []
-                hard_fail = False
-                for src, fut in futures:
-                    try:
-                        raw, bid = fut.result(timeout=HARD_GRAB_TIMEOUT_S)
-                        results.append((src, raw, bid))
-                    except concurrent.futures.TimeoutError:
-                        log.error(
-                            "JAI-grab: RetrieveNextBuffer HARD TIMEOUT on %s "
-                            "(eBUS pipeline deadlocked) - stopping grab loop",
-                            src._source_name,
+                matched = self._match_triplet()
+                if matched is None:
+                    now = time.time()
+                    idle = now - idle_since
+                    if idle >= 2.0 and now - last_idle_log >= 2.0:
+                        log.warning(
+                            "JAI-grab: no synced triplet for %.1f s",
+                            idle,
                         )
-                        hard_fail = True
-                        results.append((src, None, -1))
-                        # Still drain sibling futures below so pool threads free up
-                    except Exception as exc:
-                        log.error("JAI-grab: grab exception on %s: %s",
-                                  src._source_name, exc)
-                        results.append((src, None, -1))
-
-                if hard_fail:
-                    # Abandon remaining in-flight grabs without blocking forever;
-                    # the watchdog will reconnect.
-                    self._running = False
-                    break
-
-                for src, raw, bid in results:
-                    if raw is None:
-                        _none_streak += 1
-                        if _none_streak == 1:
-                            log.warning(
-                                "JAI-grab: raw=None from %s - camera has stopped "
-                                "delivering frames (streak #1)",
-                                src._source_name,
-                            )
-                        elif _none_streak % 10 == 0:
-                            log.warning(
-                                "JAI-grab: still raw=None from %s (streak #%d, "
-                                "%.1f s without a frame)",
-                                src._source_name, _none_streak,
-                                _none_streak * 0.250,
-                            )
-                        ok = False
-                        break
-                    raws.append((raw, src.pixel_format, bid))
-                    bids.append(bid)
-
-                if not ok or len(raws) < len(self._sources):
+                        last_idle_log = now
+                    time.sleep(0.005)
                     continue
 
-                # ── Block ID validation ────────────────────────────────────
-                # All 3 bids must match. After ROI restart, sources may be
-                # 1-2 frames out of phase - advance lagging ones to recover.
-                # Increased from 16 to 32 attempts to handle larger gaps
-                # that arise when the grab loop runs slower than the camera.
-                if not (bids[0] == bids[1] == bids[2]):
-                    max_bid  = max(bids)
-                    log.debug("Sync mismatch bids=%s - re-syncing to bid=%d",
-                              bids, max_bid)
-                    for i, src in enumerate(self._sources):
-                        attempts = 0
-                        while bids[i] < max_bid and self._running and attempts < 32:
-                            raw, bid = src.grab(timeout_ms=250)
-                            if raw is None:
-                                ok = False
-                                break
-                            raws[i] = (raw, src.pixel_format, bid)
-                            bids[i] = bid
-                            attempts += 1
-                        if not ok:
-                            break
+                idle_since = time.time()
+                raws, block_id = matched
 
-                    if not ok or not (bids[0] == bids[1] == bids[2]):
-                        # Attempts exhausted - sources too far apart to converge.
-                        # Drain ALL sources to clear stale buffered frames so the
-                        # next iteration sees a fresh synchronized frame from the
-                        # camera instead of looping here indefinitely.
-                        log.warning(
-                            "JAI-grab: sync recovery exhausted (bids=%s, "
-                            "target=%d) - draining all pipelines for fresh start",
-                            bids, max_bid,
-                        )
-                        for drain_src in self._sources:
-                            drained = 0
-                            while drained < 64:
-                                raw_d, _ = drain_src.grab(timeout_ms=1)
-                                if raw_d is None:
-                                    break
-                                drained += 1
-                        continue
-
-                    log.debug("Sync recovered - bids=%s", bids)
-
-                block_id = bids[0]
-
-                # ── Track actual camera FPS ────────────────────────────────
-                if _none_streak > 0:
-                    log.info(
-                        "JAI-grab: frames resumed after %d × 250ms (%.1f s)",
-                        _none_streak, _none_streak * 0.250,
-                    )
-                    _none_streak = 0
-                self._grab_count  += 1
+                self._grab_count += 1
                 self._last_grab_time = time.time()
                 elapsed = self._last_grab_time - self._grab_fps_t
                 if elapsed >= 1.0:
-                    self._grab_fps   = self._grab_count / elapsed
+                    self._grab_fps = self._grab_count / elapsed
                     self._grab_count = 0
                     self._grab_fps_t = self._last_grab_time
 
@@ -1834,15 +1921,28 @@ class JAICamera:
     def disconnect(self) -> None:
         import eBUS as eb
         self._running = False
-        # Shut down the grab executor before closing sources so any in-flight
-        # RetrieveNextBuffer futures are cancelled rather than waited on.
-        if self._grab_executor is not None:
-            self._grab_executor.shutdown(wait=False, cancel_futures=True)
-            self._grab_executor = None
+        grab_thread = self._grab_thread
+        if (
+            grab_thread is not None
+            and grab_thread.is_alive()
+            and threading.current_thread() is not grab_thread
+        ):
+            grab_thread.join(timeout=2.0)
+        for grabber in self._grabbers:
+            grabber.request_stop()
         for src in self._sources:
-            src.stop_acquisition()
+            try:
+                src.stop_acquisition()
+            except Exception:
+                pass
         for src in self._sources:
-            src.close()
+            try:
+                src.close()
+            except Exception:
+                pass
+        for grabber in self._grabbers:
+            grabber.join(timeout=1.0)
+        self._grabbers.clear()
         self._sources.clear()
         if self._device:
             self._device.Disconnect()

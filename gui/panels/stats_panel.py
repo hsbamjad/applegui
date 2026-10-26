@@ -25,6 +25,8 @@ from gui.styles import (
     BG_SURFACE, BG_CARD, BG_ELEVATED,
     ACCENT, SUCCESS, WARNING, DANGER,
     TEXT_1, TEXT_2, TEXT_3, BORDER,
+    PILL_ONLINE_BG, PILL_OFFLINE_BG, PILL_WARNING_BG,
+    GRAD_CARD, GRAD_SURFACE,
 )
 
 PANEL_WIDTH = 256
@@ -43,9 +45,9 @@ OUTLET_COLORS = {
 
 # Pill badge backgrounds for system status
 PILL = {
-    "online":  {"bg": "#162E1A", "text": SUCCESS},
-    "offline": {"bg": "#2E1310", "text": DANGER},
-    "warning": {"bg": "#2E2210", "text": WARNING},
+    "online":  {"bg": PILL_ONLINE_BG, "text": SUCCESS},
+    "offline": {"bg": PILL_OFFLINE_BG, "text": DANGER},
+    "warning": {"bg": PILL_WARNING_BG, "text": WARNING},
     "idle":    {"bg": "transparent", "text": TEXT_3},
 }
 
@@ -71,7 +73,7 @@ def _section_header(text: str) -> QWidget:
 
 def _card_style() -> str:
     return (
-        f"background-color: {BG_CARD}; border-radius: 8px; "
+        f"background: {GRAD_CARD}; border-radius: 8px; "
         f"border: 1px solid {BORDER};"
     )
 
@@ -363,7 +365,7 @@ class RightStatsPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFixedWidth(PANEL_WIDTH)
-        self.setStyleSheet(f"background-color: {BG_SURFACE};")
+        self.setStyleSheet(f"background: {GRAD_SURFACE};")
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
 
         layout = QVBoxLayout(self)

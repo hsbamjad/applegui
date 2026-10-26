@@ -42,6 +42,10 @@ from gui.styles import (
     APP_STYLESHEET, BG_BASE, BG_SURFACE, BG_CARD,
     ACCENT, ACCENT_HV, ACCENT_DK, SUCCESS, WARNING, DANGER, INFO,
     TEXT_1, TEXT_2, TEXT_3, BORDER, CH_COLORS,
+    BADGE_LIVE_BG, BADGE_LIVE_BDR, BADGE_SIM_BG, BADGE_SIM_BDR,
+    BADGE_MOCK_BG, BADGE_MOCK_BDR,
+    HEADER_GRAD_0, HEADER_GRAD_1, HEADER_GRAD_2,
+    GRAD_BASE,
 )
 from gui.panels.camera_panel import LeftControlPanel
 from gui.panels.stats_panel      import RightStatsPanel
@@ -103,10 +107,10 @@ class HeaderBar(QWidget):
 
         # Mode badge - subtle pill
         if self._mode == "mock":
-            badge_bg, badge_bdr, badge_tc = "#1A2A1C", "#2C3E2F", "#536550"
+            badge_bg, badge_bdr, badge_tc = BADGE_MOCK_BG, BADGE_MOCK_BDR, TEXT_3
             badge_txt = "MOCK MODE"
         else:
-            badge_bg, badge_bdr, badge_tc = "#163320", "#2A5535", SUCCESS
+            badge_bg, badge_bdr, badge_tc = BADGE_LIVE_BG, BADGE_LIVE_BDR, SUCCESS
             badge_txt = "JAI  LIVE"
 
         self._badge = QLabel(f"  {badge_txt}  ")
@@ -123,11 +127,11 @@ class HeaderBar(QWidget):
     def set_mode(self, mode: str) -> None:
         """Update badge at runtime to reflect actual camera mode."""
         if mode == "jai":
-            bg, bdr, tc, txt = "#163320", "#2A5535", SUCCESS, "JAI  LIVE"
+            bg, bdr, tc, txt = BADGE_LIVE_BG, BADGE_LIVE_BDR, SUCCESS, "JAI  LIVE"
         elif mode == "simulation":
-            bg, bdr, tc, txt = "#2A1E08", "#5A3E10", "#D4A843", "VIDEO  SIM"
+            bg, bdr, tc, txt = BADGE_SIM_BG, BADGE_SIM_BDR, WARNING, "VIDEO  SIM"
         else:
-            bg, bdr, tc, txt = "#1A2A1C", "#2C3E2F", "#536550", "MOCK MODE"
+            bg, bdr, tc, txt = BADGE_MOCK_BG, BADGE_MOCK_BDR, TEXT_3, "MOCK MODE"
         self._badge.setText(f"  {txt}  ")
         self._badge.setStyleSheet(f"""
             QLabel {{
@@ -142,12 +146,13 @@ class HeaderBar(QWidget):
     def paintEvent(self, event) -> None:  # type: ignore[override]
         painter = QPainter(self)
         grad = QLinearGradient(0, 0, self.width(), 0)
-        grad.setColorAt(0.0, QColor("#0A1209"))
-        grad.setColorAt(0.5, QColor("#122015"))
-        grad.setColorAt(1.0, QColor("#0A1209"))
+        grad.setColorAt(0.0, QColor(HEADER_GRAD_0))
+        grad.setColorAt(0.35, QColor("#D0E5D8"))
+        grad.setColorAt(0.65, QColor(HEADER_GRAD_1))
+        grad.setColorAt(1.0, QColor(HEADER_GRAD_2))
         painter.fillRect(self.rect(), grad)
         pen = painter.pen()
-        pen.setColor(QColor(ACCENT + "50"))
+        pen.setColor(QColor(ACCENT + "55"))
         pen.setWidth(1)
         painter.setPen(pen)
         painter.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
@@ -215,7 +220,7 @@ class ModelInputPanel(QWidget):
         self._has_frame = False
         self._disp_times: list[float] = []
         self._last_display_fps = 0.0
-        self.setStyleSheet(f"background-color: {BG_BASE};")
+        self.setStyleSheet(f"background: {GRAD_BASE};")
         self._build()
 
     def _build(self) -> None:
@@ -337,7 +342,7 @@ class ModelInputPanel(QWidget):
 class CenterPanel(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setStyleSheet(f"background-color: {BG_BASE};")
+        self.setStyleSheet(f"background: {GRAD_BASE};")
         self._build()
 
     def _build(self) -> None:
@@ -464,7 +469,7 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         central = QWidget()
-        central.setStyleSheet(f"background-color: {BG_BASE};")
+        central.setStyleSheet(f"background: {GRAD_BASE};")
         self.setCentralWidget(central)
 
         root = QVBoxLayout(central)
@@ -1547,12 +1552,15 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(float)
     def _on_cam_fps(self, cam_fps: float) -> None:
-        """Shows real camera FPS vs display target in status bar every second."""
-        disp = int(self._cam_w._display_fps) if self._cam_w else 0
+        """Status bar: measured sensor FPS, measured display FPS, exposure limit."""
+        cam = round(float(cam_fps), 1)
+        disp = round(self._center.channel_display.measured_display_fps(), 1)
+        max_exp = int(round(1_000_000 / cam)) if cam > 0 else 0
+        disp_txt = f"{disp:.1f}" if disp > 0 else "--"
         self.statusBar().showMessage(
-            f"Cam: {cam_fps:.0f} FPS (sensor)   │   "
-            f"Display target: {disp} FPS (actual may be less at high FPS due to processing)   │   "
-            f"Max exposure at {cam_fps:.0f} FPS: {int(1_000_000 / max(cam_fps, 1)):,} µs"
+            f"Cam: {cam:.1f} FPS (sensor)   │   "
+            f"Display: {disp_txt} FPS   │   "
+            f"Max exposure at {cam:.1f} FPS: {max_exp:,} µs"
         )
 
     @pyqtSlot(bool, int, int, int)

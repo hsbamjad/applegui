@@ -63,6 +63,7 @@ class ChannelPanel(QWidget):
         self._frame_w: int = 2048
         self._frame_h: int = 1536
         self._disp_times: list[float] = []
+        self._last_display_fps: float = 0.0
         self._setup()
 
     def _setup(self) -> None:
@@ -234,7 +235,8 @@ class ChannelPanel(QWidget):
         disp_w = orig_shape[0] if orig_shape else w
         disp_h = orig_shape[1] if orig_shape else h
         self._lbl_res.setText(f"{disp_w}×{disp_h}")
-        self._lbl_fps.setText(f"{self._measured_display_fps():.1f} FPS")
+        self._last_display_fps = self._measured_display_fps()
+        self._lbl_fps.setText(f"{self._last_display_fps:.1f} FPS")
         # Track live frame dimensions for accurate overlay aspect-ratio mapping
         self._frame_w = disp_w
         self._frame_h = disp_h
@@ -393,6 +395,7 @@ class ChannelPanel(QWidget):
     def reset(self) -> None:
         self._frames = 0
         self._disp_times.clear()
+        self._last_display_fps = 0.0
         self._lbl_res.setText("No Signal")
         self._lbl_fps.setText("-- FPS")
         self._draw_placeholder()
@@ -429,6 +432,13 @@ class MultiChannelDisplay(QWidget):
         """Update a single channel panel with an annotated frame (e.g. from inference)."""
         if 0 <= ch_idx < len(self._panels):
             self._panels[ch_idx].update_frame(frame, fps, orig_shape)
+
+    def measured_display_fps(self) -> float:
+        """Mean of the three panels' actual paint rates. 0 before the first frames."""
+        rates = [p._last_display_fps for p in self._panels if p._last_display_fps > 0]
+        if not rates:
+            return 0.0
+        return sum(rates) / len(rates)
 
     def reset_all(self) -> None:
         for panel in self._panels:

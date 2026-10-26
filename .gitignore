@@ -62,3 +62,6 @@ docs/hardware/*.jpg
 # Reference PDFs - large binaries (share separately)
 docs/*.pdf
 scripts/api_doc.txt
+# Presentation decks (keep local; not part of app source)
+*.pptx
+

@@ -10,7 +10,7 @@ from __future__ import annotations
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 from PyQt6.QtCore import Qt
 
-from gui.styles import ACCENT, BG_SURFACE, TEXT_1, TEXT_2, TEXT_3, BORDER
+from gui.styles import ACCENT, BG_SURFACE, TEXT_1, TEXT_2, TEXT_3, BORDER, GRAD_SURFACE
 
 
 class PanelHeaderBar(QWidget):
@@ -51,7 +51,7 @@ class PanelHeaderBar(QWidget):
         hdr = QWidget()
         hdr.setFixedHeight(32)
         hdr.setStyleSheet(
-            f"background-color: {BG_SURFACE}; border-bottom: 1px solid {BORDER};"
+            f"background: {GRAD_SURFACE}; border-bottom: 1px solid {BORDER};"
         )
         self._hdr_layout = QHBoxLayout(hdr)
         self._hdr_layout.setContentsMargins(12, 0, 12, 0)

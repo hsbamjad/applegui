@@ -1,64 +1,146 @@
 """
-gui/styles.py - Verdant Grove Theme
-=====================================
-"Forest & Cream" professional dashboard aesthetic.
-Designed for a precision agriculture / fruit sorting context.
+gui/styles.py - Fresh Cull Horizon Theme
+========================================
+Light gradient dashboard for precision agriculture / fruit sorting.
 
-Palette inspiration: old-growth forest, worn parchment, copper tools.
+Palette inspiration: soft light mist with green↔red grade accents.
 
-  Background:  #0E1A10  - Deep Forest Night
-  Surface:     #162019  - Shadowed Grove
-  Card:        #1E2E21  - Undergrowth
-  Elevated:    #263629  - Moss Bank
-  Hover:       #2E4032  - Fern Shadow
+  Background:  #E6EBE7  - Soft orchard mist (base; also painted as gradient)
+  Surface:     #DCE4DE  - Pale leaf wash
+  Card:        #FFFFFF  - Clean white (soft vertical glaze)
+  Elevated:    #F0F4F1  - Lifted panel
+  Hover:       #CDD8D1  - Soft sage hover
 
-  Accent:      #5DA669  - Leaf Green
-  Accent HV:   #77C285  - Young Shoot
-  Accent DK:   #3F8750  - Deep Canopy
+  Accent:      #2F9B55  - Fresh green
+  Accent HV:   #3BB566  - Bright fresh
+  Accent DK:   #247A42  - Deep fresh
+  Accent END:  #C04A3C  - Cull red (gradient end-stop)
+  On Accent:   #FFFFFF  - Button label
 
-  Text 1:      #EEE8D9  - Warm Cream (primary)
-  Text 2:      #A8B89A  - Sage (secondary / label)
-  Text 3:      #536550  - Dim Moss (disabled)
+  Text 1:      #1A2B22  - Near-black green
+  Text 2:      #5A6B60  - Sage secondary
+  Text 3:      #8A9A8E  - Soft muted
 
-  Border:      #2C3E2F  - Dark Bark
-  Border LT:   #3D5440  - Lighter Bark
+  Border:      #D0D9D2  - Soft edge
+  Border LT:   #B4C2B8  - Cool edge
 
-  Success:     #72C472  - Ripe Green
-  Warning:     #D4A843  - Harvest Amber
-  Danger:      #C85C4A  - Autumn Red
-  Info:        #62B6C0  - Morning Mist
+  Success:     #2F9B55  - Fresh green
+  Warning:     #C4841A  - Amber alert
+  Danger:      #C04A3C  - Cull red
+  Info:        #4A8BB0  - Soft steel blue
 """
 
-# ── Verdant Grove Palette ─────────────────────────────────────────────────────
-BG_BASE     = "#0E1A10"   # deep forest night
-BG_SURFACE  = "#162019"   # shadowed grove
-BG_CARD     = "#1E2E21"   # undergrowth
-BG_ELEVATED = "#263629"   # moss bank
-BG_HOVER    = "#2E4032"   # fern shadow
+# ── Fresh Cull Horizon Palette ────────────────────────────────────────────────
+BG_BASE     = "#E6EBE7"   # soft orchard mist (darker)
+BG_SURFACE  = "#DCE4DE"   # pale leaf wash (darker)
+BG_CARD     = "#FFFFFF"   # clean white
+BG_ELEVATED = "#F0F4F1"   # lifted panel
+BG_HOVER    = "#CDD8D1"   # soft sage hover
 
-ACCENT      = "#5DA669"   # leaf green - primary action
-ACCENT_HV   = "#77C285"   # young shoot - hover
-ACCENT_DK   = "#3F8750"   # deep canopy - pressed
+ACCENT      = "#2F9B55"   # fresh green - primary action start
+ACCENT_HV   = "#3BB566"   # bright fresh - hover start
+ACCENT_DK   = "#247A42"   # deep fresh - pressed start
+ACCENT_END  = "#C04A3C"   # cull red - gradient end-stop
+ON_ACCENT   = "#FFFFFF"   # text on accent fills
 
-SUCCESS     = "#72C472"   # ripe green
-WARNING     = "#D4A843"   # harvest amber
-DANGER      = "#C85C4A"   # autumn red
-INFO        = "#62B6C0"   # morning mist
+SUCCESS     = "#2F9B55"   # fresh green
+WARNING     = "#C4841A"   # amber alert
+DANGER      = "#C04A3C"   # cull red
+INFO        = "#4A8BB0"   # soft steel blue
 
-TEXT_1      = "#EEE8D9"   # warm cream - primary text
-TEXT_2      = "#A8B89A"   # sage - secondary / label
-TEXT_3      = "#536550"   # dim moss - disabled / dim
+# Explicit 4-color set for Camera Controls headings / channel labels
+GREEN       = "#2F9B55"
+RED         = "#C04A3C"
+YELLOW      = "#D4A017"
+ORANGE      = "#E07020"
 
-BORDER      = "#2C3E2F"   # dark bark
-BORDER_LT   = "#3D5440"   # lighter bark
+# Channel label colors (CH1 color / CH2–CH3 NIR)
+# CH1 = red (visible color); CH2/CH3 = dark grey (NIR, less emphasis)
+CH_LABEL_COLORS = [RED, "#4A5560", "#4A5560"]
 
-# Channel spectrum accent colors - forest family: warm gold, sky mist, copper
-CH_COLORS   = ["#D4A843", "#62B6C0", "#C87B4A"]   # amber, mist-blue, copper
+TEXT_1      = "#1A2B22"   # near-black green - primary text
+TEXT_2      = "#5A6B60"   # sage - secondary / label
+TEXT_3      = "#8A9A8E"   # soft muted - disabled / dim
+
+BORDER      = "#D0D9D2"   # soft edge
+BORDER_LT   = "#B4C2B8"   # cool edge
+
+# Channel spectrum accents: amber, fresh green, cull red
+CH_COLORS   = ["#C4841A", "#2F9B55", "#C04A3C"]
+
+# Semantic status pill fills (light tinted surfaces)
+PILL_ONLINE_BG  = "#E2F4E9"
+PILL_OFFLINE_BG = "#F8E8E6"
+PILL_WARNING_BG = "#F8F0E0"
+BADGE_LIVE_BG   = "#E0F3E8"
+BADGE_LIVE_BDR  = "#8FCB9E"
+BADGE_SIM_BG    = "#F8F0E0"
+BADGE_SIM_BDR   = "#E0C88A"
+BADGE_MOCK_BG   = "#EEF1EE"
+BADGE_MOCK_BDR  = BORDER
+
+# Header bar gradient - deeper green mist → mid mist → deeper red mist
+HEADER_GRAD_0 = "#BFDCC9"
+HEADER_GRAD_1 = "#E6EBE7"
+HEADER_GRAD_2 = "#E5CEC9"
+
+# QSS gradient fills (stronger green ↔ red / soft glazes)
+GRAD_BASE = (
+    "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+    "stop:0 #C5DFD0, stop:0.5 #E6EBE7, stop:1 #E6D2CD)"
+)
+GRAD_SURFACE = (
+    "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+    "stop:0 #D5E3DA, stop:1 #C8D5CD)"
+)
+GRAD_CARD = (
+    "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+    "stop:0 #FFFFFF, stop:1 #EAF1EC)"
+)
+GRAD_BTN = (
+    "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+    "stop:0 #F5F8F6, stop:1 #D9E3DC)"
+)
+GRAD_ACCENT = (
+    f"qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+    f"stop:0 {ACCENT}, stop:1 {ACCENT_END})"
+)
+GRAD_ACCENT_HV = (
+    "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+    "stop:0 #3BB566, stop:1 #D46A5C)"
+)
+GRAD_ACCENT_DK = (
+    "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+    "stop:0 #247A42, stop:1 #A03C32)"
+)
+# Soft pastel green → coral (primary camera CTAs)
+GRAD_ACCENT_LIGHT = (
+    "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+    "stop:0 #B5E0C2, stop:1 #F0C2BB)"
+)
+GRAD_ACCENT_LIGHT_HV = (
+    "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+    "stop:0 #A0D6B2, stop:1 #E8B0A8)"
+)
+GRAD_ACCENT_LIGHT_DK = (
+    "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+    "stop:0 #8BC9A0, stop:1 #DCA098)"
+)
+ON_ACCENT_LIGHT = "#1A2B22"   # dark label on light gradient fills
+GRAD_DANGER = (
+    "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+    "stop:0 #C04A3C, stop:1 #D46A5C)"
+)
+GRAD_TAB = (
+    "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+    "stop:0 #D5E3DA, stop:1 #C8D5CD)"
+)
 
 COLORS = {
     "bg_base": BG_BASE, "bg_surface": BG_SURFACE, "bg_card": BG_CARD,
     "bg_elevated": BG_ELEVATED, "bg_hover": BG_HOVER,
     "accent": ACCENT, "accent_hv": ACCENT_HV, "accent_dk": ACCENT_DK,
+    "on_accent": ON_ACCENT,
     "success": SUCCESS, "warning": WARNING, "danger": DANGER, "info": INFO,
     "text_1": TEXT_1, "text_2": TEXT_2, "text_3": TEXT_3,
     "border": BORDER, "border_lt": BORDER_LT,
@@ -66,22 +148,25 @@ COLORS = {
 
 APP_STYLESHEET = f"""
 /* ══════════════════════════════════════════════════════════════
-   Apple Sorting GUI  ·  Verdant Grove Theme
+   Apple Sorting GUI  ·  Fresh Cull Horizon Theme
    Michigan State University  ·  ASABE AIM26  ·  2026
    ══════════════════════════════════════════════════════════════ */
 
 /* ── Base ─────────────────────────────────────────────────────── */
-QMainWindow {{ background-color: {BG_BASE}; }}
+QMainWindow {{ background: {GRAD_BASE}; }}
 QWidget {{
-    background-color: transparent;
     color: {TEXT_1};
     font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
     font-size: 12px;
 }}
+/* Transparent fill only where needed — never on QToolTip (Windows paints it black). */
+QLabel, QCheckBox {{
+    background-color: transparent;
+}}
 
 /* ── Group Boxes ──────────────────────────────────────────────── */
 QGroupBox {{
-    background-color: {BG_CARD};
+    background: {GRAD_CARD};
     border: 1px solid {BORDER};
     border-radius: 10px;
     margin-top: 18px;
@@ -101,7 +186,7 @@ QGroupBox::title {{
 
 /* ── Buttons ──────────────────────────────────────────────────── */
 QPushButton {{
-    background-color: {BG_ELEVATED};
+    background: {GRAD_BTN};
     color: {TEXT_2};
     border: 1px solid {BORDER};
     border-radius: 7px;
@@ -116,7 +201,7 @@ QPushButton:hover {{
     border-color: {BORDER_LT};
     color: {TEXT_1};
 }}
-QPushButton:pressed {{
+        QPushButton:pressed {{
     background-color: {ACCENT_DK};
     border-color: {ACCENT_DK};
     color: white;
@@ -127,10 +212,10 @@ QPushButton:disabled {{
     border-color: {BORDER};
 }}
 
-/* ── Primary CTA: solid leaf-green, dark forest text ─────────── */
+/* ── Primary CTA: solid fresh green ──────────────────────────── */
 QPushButton#btn_primary {{
     background-color: {ACCENT};
-    color: #0E1A10;
+    color: {ON_ACCENT};
     border: none;
     font-weight: 700;
     font-size: 12px;
@@ -140,18 +225,18 @@ QPushButton#btn_primary {{
 }}
 QPushButton#btn_primary:hover {{
     background-color: {ACCENT_HV};
-    color: #0E1A10;
+    color: {ON_ACCENT};
 }}
 QPushButton#btn_primary:pressed {{
     background-color: {ACCENT_DK};
-    color: {TEXT_1};
+    color: {ON_ACCENT};
 }}
 QPushButton#btn_primary:disabled {{
     background-color: {BG_ELEVATED};
     color: {TEXT_3};
 }}
 
-/* ── Danger: autumn red ───────────────────────────────────────── */
+/* ── Danger: cull red ─────────────────────────────────────────── */
 QPushButton#btn_danger {{
     background-color: {DANGER};
     color: white;
@@ -162,11 +247,11 @@ QPushButton#btn_danger {{
     border-radius: 8px;
 }}
 QPushButton#btn_danger:hover {{
-    background-color: #D97060;
+    background-color: #D46A5C;
     color: white;
 }}
 QPushButton#btn_danger:pressed {{
-    background-color: #A0473A;
+    background-color: #A03C32;
     color: white;
 }}
 
@@ -210,7 +295,7 @@ QComboBox QAbstractItemView {{
     border-radius: 8px;
     color: {TEXT_1};
     selection-background-color: {ACCENT};
-    selection-color: #0E1A10;
+    selection-color: {ON_ACCENT};
     padding: 4px;
     outline: none;
 }}
@@ -222,7 +307,7 @@ QComboBox QAbstractItemView::item {{
 }}
 QComboBox QAbstractItemView::item:selected {{
     background-color: {ACCENT};
-    color: #0E1A10;
+    color: {ON_ACCENT};
 }}
 
 /* ── SpinBox ──────────────────────────────────────────────────── */
@@ -323,7 +408,7 @@ QSplitter::handle:hover {{ background-color: {ACCENT}; }}
 
 /* ── Status Bar ───────────────────────────────────────────────── */
 QStatusBar {{
-    background-color: {BG_SURFACE};
+    background: {GRAD_SURFACE};
     color: {TEXT_2};
     border-top: 1px solid {BORDER};
     font-size: 11px;
@@ -332,16 +417,34 @@ QStatusBar {{
 QStatusBar::item {{ border: none; }}
 
 /* ── ToolTip ──────────────────────────────────────────────────── */
+/* Styled via TOOLTIP_STYLESHEET on QApplication - do not rely on MainWindow QSS. */
 QToolTip {{
-    background-color: {BG_ELEVATED};
+    background-color: {BG_CARD};
     color: {TEXT_1};
-    border: 1px solid {ACCENT}80;
+    border: 1px solid {BORDER_LT};
     border-radius: 6px;
-    padding: 5px 10px;
+    padding: 6px 10px;
     font-size: 11px;
     font-weight: 400;
 }}
+"""
 
+# Applied on QApplication only. Keep this free of `QWidget { background: transparent }`
+# — that rule makes Windows tooltips render black (QToolTip is a QWidget).
+TOOLTIP_STYLESHEET = f"""
+QToolTip {{
+    background-color: {BG_CARD};
+    color: {TEXT_1};
+    border: 1px solid {BORDER_LT};
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 400;
+}}
+"""
+
+# Keep trailing content that was after QToolTip in APP_STYLESHEET
+_APP_STYLESHEET_TAIL = f"""
 /* ── ScrollArea ───────────────────────────────────────────────── */
 QScrollArea {{ border: none; }}
 QScrollArea > QWidget > QWidget {{ background-color: transparent; }}
@@ -360,7 +463,7 @@ QFrame[frameShape="4"] {{
 /* ── Tab Widget ───────────────────────────────────────────────── */
 QTabWidget::pane {{
     border: none;
-    background-color: {BG_BASE};
+    background: {GRAD_BASE};
 }}
 QTabWidget::tab-bar {{
     alignment: left;
@@ -370,7 +473,7 @@ QTabBar {{
     border-bottom: 1px solid {BORDER};
 }}
 QTabBar::tab {{
-    background-color: {BG_SURFACE};
+    background: {GRAD_TAB};
     color: {TEXT_3};
     border: none;
     border-left: 1px solid {BORDER};
@@ -385,7 +488,7 @@ QTabBar::tab:first {{
     border-left: none;
 }}
 QTabBar::tab:selected {{
-    background-color: {BG_BASE};
+    background: {GRAD_CARD};
     color: {TEXT_1};
     border-bottom: 2px solid {ACCENT};
 }}
@@ -394,3 +497,5 @@ QTabBar::tab:hover:!selected {{
     color: {TEXT_2};
 }}
 """
+
+APP_STYLESHEET = APP_STYLESHEET + _APP_STYLESHEET_TAIL

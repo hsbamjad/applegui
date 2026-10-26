@@ -131,12 +131,12 @@ def _btn_primary(text: str) -> QPushButton:
     # Avoids calling setStyleSheet() again on state change (which resets Qt size constraints).
     btn.setStyleSheet(f"""
         QPushButton {{
-            background-color: {ACCENT}; color: #0E1A10; border: none;
+            background-color: {ACCENT}; color: white; border: none;
             font-weight: 700; font-size: 12px;
             border-radius: 8px;
         }}
-        QPushButton:hover   {{ background-color: {ACCENT_HV}; color: #0E1A10; }}
-        QPushButton:pressed {{ background-color: {ACCENT_DK}; color: {TEXT_1}; }}
+        QPushButton:hover   {{ background-color: {ACCENT_HV}; color: white; }}
+        QPushButton:pressed {{ background-color: {ACCENT_DK}; color: white; }}
         QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3}; }}
         QPushButton[danger="true"] {{
             background-color: {DANGER}; color: white;
@@ -161,6 +161,22 @@ def _btn_secondary(text: str) -> QPushButton:
         QPushButton:pressed {{ background-color: {ACCENT_DK}; color: white; }}
     """)
     return btn
+
+
+def _btn_green_style(font_size: str = "11px", weight: str = "600") -> str:
+    """Solid leaf-green with white text, matching the paper figure."""
+    return f"""
+        QPushButton {{
+            background-color: {ACCENT}; color: white; border: none;
+            font-weight: {weight}; font-size: {font_size};
+            border-radius: 7px; padding: 0 10px;
+        }}
+        QPushButton:hover:enabled   {{ background-color: {ACCENT_HV}; color: white; }}
+        QPushButton:pressed:enabled {{ background-color: {ACCENT_DK}; color: white; }}
+        QPushButton:disabled {{
+            background-color: {BG_ELEVATED}; color: {TEXT_3}; border: 1px solid {BORDER};
+        }}
+    """
 
 
 def _btn_danger_style() -> str:
@@ -1259,16 +1275,7 @@ class LeftControlPanel(QWidget):
         self._btn_reset_exposure.setToolTip(
             "Reset all 3 exposure times to 5,000 µs (safe conveyor default)"
         )
-        self._btn_reset_exposure.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_ELEVATED}; color: {TEXT_2};
-                border: 1px solid {BORDER}; font-weight: 600; font-size: 11px;
-                border-radius: 7px; padding: 0 10px;
-            }}
-            QPushButton:hover   {{ background-color: {WARNING}22; color: {WARNING};
-                                   border-color: {WARNING}55; }}
-            QPushButton:pressed {{ background-color: {WARNING}44; }}
-        """)
+        self._btn_reset_exposure.setStyleSheet(_btn_green_style())
         self._btn_reset_exposure.clicked.connect(self._on_reset_exposure)
 
         exp_btn_hl = QHBoxLayout()
@@ -1363,16 +1370,7 @@ class LeftControlPanel(QWidget):
         self._btn_reset_gain = QPushButton("↺  Reset")
         self._btn_reset_gain.setFixedHeight(34)
         self._btn_reset_gain.setToolTip("Reset all 3 channels to hardware minimum (1 dB)")
-        self._btn_reset_gain.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_ELEVATED}; color: {TEXT_2};
-                border: 1px solid {BORDER}; font-weight: 600; font-size: 11px;
-                border-radius: 7px; padding: 0 10px;
-            }}
-            QPushButton:hover   {{ background-color: {WARNING}22; color: {WARNING};
-                                   border-color: {WARNING}55; }}
-            QPushButton:pressed {{ background-color: {WARNING}44; }}
-        """)
+        self._btn_reset_gain.setStyleSheet(_btn_green_style())
         self._btn_reset_gain.clicked.connect(self._on_reset_gains)
 
         gain_btn_hl = QHBoxLayout()
@@ -1405,7 +1403,7 @@ class LeftControlPanel(QWidget):
         self._row_sep(right)
 
 
-        # Auto WB button (amber accent)
+        # Auto WB button (same leaf-green as the other primary buttons)
         self._btn_awb = QPushButton("Auto WB")
         self._btn_awb.setFixedHeight(34)
         self._btn_awb.setToolTip(
@@ -1414,17 +1412,7 @@ class LeftControlPanel(QWidget):
             "Firmware computes optimal R/G/B ratios under current illumination.\n"
             "Previous ratios are saved automatically for Revert."
         )
-        self._btn_awb.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {WARNING}22; color: {WARNING};
-                border: 1px solid {WARNING}55; font-weight: 700; font-size: 12px;
-                border-radius: 7px;
-            }}
-            QPushButton:hover:enabled   {{ background-color: {WARNING}44; color: #E0B84E;
-                                           border-color: {WARNING}99; }}
-            QPushButton:pressed:enabled {{ background-color: {WARNING}66; }}
-            QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3}; border-color: {BORDER}; }}
-        """)
+        self._btn_awb.setStyleSheet(_btn_green_style(font_size="12px", weight="700"))
         self._btn_awb.clicked.connect(self.sig_awb_triggered.emit)
 
         # Revert WB button (warning/reset style) - disabled until first AWB run
@@ -1486,17 +1474,7 @@ class LeftControlPanel(QWidget):
             "Use this at the start of every apple capture session to ensure\n"
             "the same white balance is applied as during the white reference capture."
         )
-        self._btn_load_locked_wb.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {INFO}22; color: {INFO};
-                border: 1px solid {INFO}55; font-weight: 700; font-size: 11px;
-                border-radius: 7px;
-            }}
-            QPushButton:hover:enabled   {{ background-color: {INFO}44; }}
-            QPushButton:pressed:enabled {{ background-color: {INFO}66; }}
-            QPushButton:disabled {{ background-color: {BG_ELEVATED}; color: {TEXT_3};
-                                    border-color: {BORDER}; }}
-        """)
+        self._btn_load_locked_wb.setStyleSheet(_btn_green_style(font_size="11px", weight="700"))
         self._btn_load_locked_wb.clicked.connect(self.sig_wb_load_locked.emit)
 
         wb_lock_hl = QHBoxLayout()
@@ -1584,16 +1562,7 @@ class LeftControlPanel(QWidget):
         self._btn_reset_bl = QPushButton("↺  Reset")
         self._btn_reset_bl.setFixedHeight(34)
         self._btn_reset_bl.setToolTip("Reset all Black Levels to 0 DN (sensor default).")
-        self._btn_reset_bl.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_ELEVATED}; color: {TEXT_2};
-                border: 1px solid {BORDER}; font-weight: 600; font-size: 11px;
-                border-radius: 7px; padding: 0 10px;
-            }}
-            QPushButton:hover   {{ background-color: {WARNING}22; color: {WARNING};
-                                   border-color: {WARNING}55; }}
-            QPushButton:pressed {{ background-color: {WARNING}44; }}
-        """)
+        self._btn_reset_bl.setStyleSheet(_btn_green_style())
         self._btn_reset_bl.clicked.connect(self._on_reset_black_levels)
 
         bl_btn_hl = QHBoxLayout()

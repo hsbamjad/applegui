@@ -38,6 +38,7 @@ from gui.styles import (
     BG_BASE, BG_CARD, BG_ELEVATED, BG_SURFACE,
     ACCENT, SUCCESS, WARNING, DANGER,
     TEXT_1, TEXT_2, TEXT_3, BORDER,
+    GRAD_BASE, GRAD_CARD,
 )
 from gui.widgets.panel_header import PanelHeaderBar
 
@@ -110,7 +111,7 @@ class GradeBarChart(QWidget):
         super().__init__(parent)
         self._counts: dict[str, int] = {g: 0 for g in GRADE_ORDER}
         self.setStyleSheet(
-            f"background-color: {BG_CARD}; border-radius: 8px; border: none;"
+            f"background: {GRAD_CARD}; border-radius: 8px; border: none;"
         )
 
         root = QVBoxLayout(self)
@@ -307,7 +308,7 @@ class ThroughputLineChart(QWidget):
         self._running = False
 
         self.setStyleSheet(
-            f"background-color: {BG_CARD}; border-radius: 8px; border: none;"
+            f"background: {GRAD_CARD}; border-radius: 8px; border: none;"
         )
 
         root = QVBoxLayout(self)
@@ -546,7 +547,7 @@ class AnalyticsPanel(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setStyleSheet(f"background-color: {BG_BASE};")
+        self.setStyleSheet(f"background: {GRAD_BASE};")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
